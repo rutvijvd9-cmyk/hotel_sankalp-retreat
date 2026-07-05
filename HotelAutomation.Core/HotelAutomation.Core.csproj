@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Treat all warnings as errors: forces null-safety and clean contracts in Core -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Prevent accidental infrastructure dependencies leaking into Core -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <!-- Core has NO project references and NO NuGet packages.
+       This is the architectural guarantee: Core depends on nothing. -->
+
+</Project>

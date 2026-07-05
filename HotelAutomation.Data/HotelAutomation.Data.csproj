@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SQLite driver: the ONLY database technology allowed in this project.
+         Version 10.0.9 includes the patched SQLitePCLRaw that resolves GHSA-2m69-gcr7-jv3q (high severity). -->
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <!-- Dapper: lightweight micro-ORM for clean SQL parameter binding -->
+    <PackageReference Include="Dapper" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Only reference: Core contracts. SQL implementation detail is hidden here. -->
+    <ProjectReference Include="..\HotelAutomation.Core\HotelAutomation.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Schema.sql is embedded so SqliteConnectionFactory can load it at runtime
+         without relying on file paths (works after publish/install too) -->
+    <EmbeddedResource Include="Schema.sql" />
+  </ItemGroup>
+
+</Project>

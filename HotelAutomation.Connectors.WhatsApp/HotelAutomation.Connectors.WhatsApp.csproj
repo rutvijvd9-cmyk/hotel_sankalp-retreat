@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- IHttpClientFactory: prevents socket exhaustion; enables retry policies later -->
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <!-- IOptions<T>: strongly-typed config binding — no raw string access to secrets -->
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <!-- Logging abstractions: no concrete logging dependency tied to this connector -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Only reference: Core contracts. This connector NEVER references Data or Pms. -->
+    <ProjectReference Include="..\HotelAutomation.Core\HotelAutomation.Core.csproj" />
+  </ItemGroup>
+
+</Project>

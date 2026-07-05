@@ -1,0 +1,52 @@
+<Project>
+  <!--
+    Central Package Management — single source of truth for all NuGet versions.
+    To update a package across the entire solution, change it here only.
+    Reference: https://learn.microsoft.com/nuget/consume-packages/central-package-management
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!--
+      NuGet audit is enabled globally. Any HIGH or CRITICAL severity vulnerability
+      in a direct or transitive dependency will FAIL the build.
+      Exception: GHSA-2m69-gcr7-jv3q — see suppression below for justification.
+    -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditLevel>high</NuGetAuditLevel>
+    <NuGetAuditMode>all</NuGetAuditMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ── Core infrastructure ─────────────────────────────── -->
+    <PackageVersion Include="Microsoft.Extensions.Hosting"               Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Http"                  Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Options"               Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions"  Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Resilience"       Version="10.7.0" />
+
+    <!-- ── Data access ─────────────────────────────────────── -->
+    <!--
+      Microsoft.Data.Sqlite 10.0.9 — bundles SQLitePCLRaw.lib.e_sqlite3 2.1.11
+      which carries GHSA-2m69-gcr7-jv3q (CVE-2025-6965, high severity).
+
+      RISK ASSESSMENT (documented 2026-07-05):
+      - CVE affects SQLite aggregate queries with more terms than columns → memory corruption.
+      - This application executes ONLY parameterized, developer-authored SQL; no user-supplied SQL.
+      - The database is local, not network-accessible.
+      - No patched version of SQLitePCLRaw.lib.e_sqlite3 exists on NuGet as of 2026-07-05.
+      - Risk: LOW in this context. Suppressed until a patched NuGet package ships.
+      ACTION: Re-evaluate when SQLitePCLRaw.lib.e_sqlite3 > 2.1.11 is published.
+    -->
+    <PackageVersion Include="Microsoft.Data.Sqlite"  Version="10.0.9" />
+    <PackageVersion Include="Dapper"                 Version="2.1.79" />
+  </ItemGroup>
+
+  <!--
+    Suppression of GHSA-2m69-gcr7-jv3q — documented above.
+    This is NOT a blanket suppression; it targets exactly one advisory.
+  -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+  </ItemGroup>
+
+</Project>

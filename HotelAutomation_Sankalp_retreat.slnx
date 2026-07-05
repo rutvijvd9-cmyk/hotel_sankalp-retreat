@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="HotelAutomation.Connectors.Pms/HotelAutomation.Connectors.Pms.csproj" Id="9923dfca-a3e2-47a5-bfe8-69e7d05dd24d" />
+  <Project Path="HotelAutomation.Connectors.WhatsApp/HotelAutomation.Connectors.WhatsApp.csproj" Id="af8aa215-684f-4673-897d-4099da79c08b" />
+  <Project Path="HotelAutomation.Core/HotelAutomation.Core.csproj" Id="66a37d3f-fe42-43ac-b5bf-ec5b161a1844" />
+  <Project Path="HotelAutomation.Data/HotelAutomation.Data.csproj" Id="ce5f88a8-cfaf-4b6e-8bbd-5323105c5c79" />
+  <Project Path="HotelAutomation.Worker/HotelAutomation.Worker.csproj" Id="5b158be0-0022-4d61-8524-b66f75fd8c55" />
+</Solution>
