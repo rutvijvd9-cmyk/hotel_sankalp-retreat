@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = '/api';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -129,14 +129,14 @@ export default function App() {
                     </thead>
                     <tbody>
                       {outbox.map(msg => (
-                        <tr key={msg.id}>
-                          <td style={{ fontFamily: 'monospace' }}>{msg.toPhoneNumber}</td>
+                        <tr key={msg.Id || msg.id}>
+                          <td style={{ fontFamily: 'monospace' }}>{msg.ToPhoneNumber || msg.toPhoneNumber}</td>
                           <td>
-                            <span className={`badge badge-${msg.status.toLowerCase()}`}>
-                              {msg.status === 'Sent' && <CheckCircle2 size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
-                              {msg.status === 'Failed' && <AlertCircle size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
-                              {msg.status === 'Pending' && <Clock size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
-                              {msg.status}
+                            <span className={`badge badge-${(msg.Status || msg.status || 'unknown').toLowerCase()}`}>
+                              {(msg.Status || msg.status) === 'Sent' && <CheckCircle2 size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
+                              {(msg.Status || msg.status) === 'Failed' && <AlertCircle size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
+                              {(msg.Status || msg.status) === 'Pending' && <Clock size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
+                              {msg.Status || msg.status}
                             </span>
                           </td>
                         </tr>
@@ -162,9 +162,9 @@ export default function App() {
                     </thead>
                     <tbody>
                       {inbox.map(msg => (
-                        <tr key={msg.id}>
-                          <td style={{ fontFamily: 'monospace' }}>{msg.fromPhoneNumber}</td>
-                          <td>{msg.content}</td>
+                        <tr key={msg.Id || msg.id}>
+                          <td style={{ fontFamily: 'monospace' }}>{msg.FromPhoneNumber || msg.fromPhoneNumber}</td>
+                          <td>{msg.Content || msg.content}</td>
                         </tr>
                       ))}
                     </tbody>

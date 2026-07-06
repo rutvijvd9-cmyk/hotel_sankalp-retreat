@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS AutomationRules (
     TemplateId       INTEGER NOT NULL REFERENCES MessageTemplates(Id),
     IsEnabled        INTEGER NOT NULL DEFAULT 1,
     ConditionsJson   TEXT    NULL,
-    DelayMinutes     INTEGER NOT NULL DEFAULT 0
+    DelayMinutes     INTEGER NOT NULL DEFAULT 0,
+    TemplateWeightsJson TEXT NULL
 );
 
 CREATE TABLE IF NOT EXISTS OutboxMessages (
@@ -63,8 +64,12 @@ CREATE TABLE IF NOT EXISTS AppConfig (
 );
 
 INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
-SELECT 'Spa Up-sell Drip', 'spa_promo_1', 'en', 'WhatsApp', datetime('now')
-WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Spa Up-sell Drip');
+SELECT 'Spa Up-sell Drip Variant A', 'spa_promo_1', 'en', 'WhatsApp', datetime('now')
+WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Spa Up-sell Drip Variant A');
+
+INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
+SELECT 'Spa Up-sell Drip Variant B', 'spa_promo_1_var_b', 'en', 'WhatsApp', datetime('now')
+WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Spa Up-sell Drip Variant B');
 
 INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
 SELECT 'Checkout Billing', 'checkout_billing', 'en', 'WhatsApp', datetime('now')
@@ -74,6 +79,11 @@ INSERT INTO AutomationRules (TriggerEventType, TemplateId, IsEnabled, DelayMinut
 SELECT 'CheckOut', (SELECT Id FROM MessageTemplates WHERE Name = 'Checkout Billing'), 1, 0
 WHERE NOT EXISTS (SELECT 1 FROM AutomationRules WHERE TriggerEventType = 'CheckOut' AND DelayMinutes = 0);
 
-INSERT INTO AutomationRules (TriggerEventType, TemplateId, IsEnabled, DelayMinutes)
-SELECT 'CheckIn', (SELECT Id FROM MessageTemplates WHERE Name = 'Spa Up-sell Drip'), 1, 1
+INSERT INTO AutomationRules (TriggerEventType, TemplateId, IsEnabled, DelayMinutes, TemplateWeightsJson)
+SELECT 'CheckIn', 
+       (SELECT Id FROM MessageTemplates WHERE Name = 'Spa Up-sell Drip Variant A'), 
+       1, 
+       1, 
+       '{"1": 50, "2": 50}'
 WHERE NOT EXISTS (SELECT 1 FROM AutomationRules WHERE TriggerEventType = 'CheckIn');
+

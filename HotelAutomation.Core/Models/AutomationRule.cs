@@ -8,4 +8,5 @@ public sealed record AutomationRule
     public bool IsEnabled { get; init; } = true;
     public string? ConditionsJson { get; init; }            // reserved for future extra-matching logic
     public int DelayMinutes { get; init; } = 0;             // Support for Drip Campaigns
+    public string? TemplateWeightsJson { get; init; }       // For A/B Testing
 }

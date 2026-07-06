@@ -35,9 +35,25 @@ public sealed class WhatsAppMessageSender : IMessageChannel
             return false;
         }
 
-        // Deserialize the stored parameters JSON into a list of component parameter objects
-        var parameterValues = JsonSerializer.Deserialize<List<string>>(message.ParametersJson)
-                              ?? new List<string>();
+        List<string> parameterValues = new();
+        try
+        {
+            var dict = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(message.ParametersJson);
+            if (dict is null) throw new JsonException("Deserialized to null");
+            parameterValues = dict.Values.Select(v => v.ToString()).ToList();
+        }
+        catch (JsonException)
+        {
+            try
+            {
+                parameterValues = JsonSerializer.Deserialize<List<string>>(message.ParametersJson)
+                                  ?? new List<string>();
+            }
+            catch
+            {
+                _logger.LogWarning("Failed to parse ParametersJson for OutboxMessage {Id}", message.Id);
+            }
+        }
 
         var payload = new
         {

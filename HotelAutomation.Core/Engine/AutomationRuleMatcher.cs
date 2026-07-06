@@ -22,7 +22,38 @@ public static class AutomationRuleMatcher
         if (matchingRule is null)
             return null;
 
-        var template = allTemplates.FirstOrDefault(t => t.Id == matchingRule.TemplateId);
+        int selectedTemplateId = matchingRule.TemplateId;
+
+        if (!string.IsNullOrWhiteSpace(matchingRule.TemplateWeightsJson))
+        {
+            try
+            {
+                var weights = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<int, int>>(matchingRule.TemplateWeightsJson);
+                if (weights is not null && weights.Count > 0)
+                {
+                    int totalWeight = 0;
+                    foreach (var w in weights.Values) totalWeight += w;
+
+                    int roll = new Random().Next(totalWeight);
+                    int currentSum = 0;
+                    foreach (var kvp in weights)
+                    {
+                        currentSum += kvp.Value;
+                        if (roll < currentSum)
+                        {
+                            selectedTemplateId = kvp.Key;
+                            break;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback to default TemplateId if JSON is malformed
+            }
+        }
+
+        var template = allTemplates.FirstOrDefault(t => t.Id == selectedTemplateId);
         if (template is null)
             return null;
 
