@@ -6,4 +6,5 @@ public interface ITemplateRepository
 {
     Task<MessageTemplate?> GetByIdAsync(int id, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<MessageTemplate>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task<int> AddAsync(MessageTemplate template, CancellationToken cancellationToken = default);
 }

@@ -19,6 +19,8 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState('');
   const [isFiring, setIsFiring] = useState(false);
   const [testPhoneNumber, setTestPhoneNumber] = useState('+15556585587');
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp' });
 
   useEffect(() => {
     fetchData();
@@ -327,14 +329,59 @@ export default function App() {
     }
 
     if (activeTab === 'templates') {
+      const handleCreateTemplate = async () => {
+        if (!newTemplate.Name || !newTemplate.ExternalTemplateName) {
+          alert('Name and External Template Name are required');
+          return;
+        }
+        try {
+          const res = await fetch(`${API_BASE}/templates`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newTemplate)
+          });
+          if (res.ok) {
+            setShowTemplateModal(false);
+            setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp' });
+            fetchData();
+          } else {
+            alert('Failed to create template');
+          }
+        } catch (err) {
+          alert('Error creating template');
+        }
+      };
+
       return (
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
             <h3 className="card-title">Message Templates</h3>
-            <button className="btn btn-primary" onClick={() => alert('Template Builder coming soon!')}>
+            <button className="btn btn-primary" onClick={() => setShowTemplateModal(true)}>
               <Plus size={16} /> Create Template
             </button>
           </div>
+          
+          {showTemplateModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+              <div className="card" style={{ width: '400px' }}>
+                <h3 className="card-title" style={{ marginBottom: '16px' }}>New Template</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <input type="text" className="input" placeholder="Display Name (e.g. CheckIn Welcome)" value={newTemplate.Name} onChange={e => setNewTemplate({...newTemplate, Name: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                  <input type="text" className="input" placeholder="Meta Template Name (e.g. hotel_checkin)" value={newTemplate.ExternalTemplateName} onChange={e => setNewTemplate({...newTemplate, ExternalTemplateName: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                  <input type="text" className="input" placeholder="Language (e.g. en)" value={newTemplate.LanguageCode} onChange={e => setNewTemplate({...newTemplate, LanguageCode: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                  <select className="input" value={newTemplate.ChannelType} onChange={e => setNewTemplate({...newTemplate, ChannelType: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                    <option value="WhatsApp">WhatsApp</option>
+                    <option value="SMS">SMS</option>
+                  </select>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
+                    <button className="btn btn-secondary" onClick={() => setShowTemplateModal(false)}>Cancel</button>
+                    <button className="btn btn-primary" onClick={handleCreateTemplate}>Save</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="data-table-container">
             <table className="data-table">
               <thead><tr><th>Name</th><th>Subject</th><th>Channel</th></tr></thead>

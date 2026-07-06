@@ -101,9 +101,10 @@ app.MapGet("/api/logs", async (EventLogRepository repo) =>
 });
 
 // Boilerplate stubs to support UI Builder saves if not implemented
-app.MapPost("/api/templates", (HotelAutomation.Core.Models.MessageTemplate template) => 
+app.MapPost("/api/templates", async (HotelAutomation.Core.Models.MessageTemplate template, ITemplateRepository repo) => 
 {
-    return Results.Ok(template);
+    var id = await repo.AddAsync(template);
+    return Results.Ok(new { id });
 });
 
 app.MapPost("/api/rules", (HotelAutomation.Core.Models.AutomationRule rule) => 

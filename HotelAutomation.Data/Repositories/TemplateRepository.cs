@@ -23,4 +23,22 @@ public sealed class TemplateRepository : ITemplateRepository
         var results = await conn.QueryAsync<MessageTemplate>("SELECT * FROM MessageTemplates");
         return results.AsList();
     }
+
+    public async Task<int> AddAsync(MessageTemplate template, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        var sql = @"
+            INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
+            VALUES (@Name, @ExternalTemplateName, @LanguageCode, @ChannelType, @CreatedAt);
+            SELECT last_insert_rowid();";
+        
+        return await conn.ExecuteScalarAsync<int>(sql, new
+        {
+            template.Name,
+            template.ExternalTemplateName,
+            template.LanguageCode,
+            template.ChannelType,
+            CreatedAt = DateTimeOffset.UtcNow.ToString("O")
+        });
+    }
 }
