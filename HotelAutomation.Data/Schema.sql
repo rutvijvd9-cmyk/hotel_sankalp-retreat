@@ -106,18 +106,7 @@ INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelT
 SELECT 'Seasonal Marketing Offer', 'hotel_seasonal_offer', 'en', 'WhatsApp', datetime('now')
 WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Seasonal Marketing Offer');
 
--- Legacy templates (kept for backwards compatibility)
-INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
-SELECT 'Spa Up-sell Drip Variant A', 'spa_promo_1', 'en', 'WhatsApp', datetime('now')
-WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Spa Up-sell Drip Variant A');
-
-INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
-SELECT 'Spa Up-sell Drip Variant B', 'spa_promo_1_var_b', 'en', 'WhatsApp', datetime('now')
-WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Spa Up-sell Drip Variant B');
-
-INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, FallbackChannelType, CreatedAt)
-SELECT 'Checkout Billing', 'checkout_billing', 'en_US', 'WhatsApp', 'SMS', datetime('now')
-WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Checkout Billing');
+-- (Legacy templates removed as per user request)
 
 -- ───────────────────────────────────────────────
 -- Seed: Automation Rules  
@@ -138,13 +127,5 @@ INSERT INTO AutomationRules (TriggerEventType, TemplateId, IsEnabled, DelayMinut
 SELECT 'CheckOut', (SELECT Id FROM MessageTemplates WHERE Name = 'Post-Stay Feedback Request'), 1, 1440
 WHERE NOT EXISTS (SELECT 1 FROM AutomationRules WHERE TriggerEventType = 'CheckOut' AND DelayMinutes = 1440);
 
--- Rule: Legacy spa drip (kept for backwards compatibility with A/B test)
-INSERT INTO AutomationRules (TriggerEventType, TemplateId, IsEnabled, DelayMinutes, TemplateWeightsJson)
-SELECT 'CheckIn', 
-       (SELECT Id FROM MessageTemplates WHERE Name = 'Spa Up-sell Drip Variant A'), 
-       0,   -- disabled by default, was the legacy rule
-       1, 
-       '{"1": 50, "2": 50}'
-WHERE NOT EXISTS (SELECT 1 FROM AutomationRules WHERE TriggerEventType = 'CheckIn' AND DelayMinutes = 1);
 
 
