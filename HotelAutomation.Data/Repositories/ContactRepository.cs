@@ -65,22 +65,62 @@ public sealed class ContactRepository
         transaction.Commit();
     }
 
-    public async Task<IReadOnlyList<Contact>> GetAllAsync(int? categoryId = null, CancellationToken ct = default)
+    public async Task<(IReadOnlyList<Contact> Contacts, int TotalCount)> GetAllAsync(int? categoryId = null, int page = 1, int limit = 50, CancellationToken ct = default)
     {
         await using var conn = await _factory.OpenAsync(ct);
+        int offset = (page - 1) * limit;
         
-        if (categoryId.HasValue)
+        string baseQuery = categoryId.HasValue ? "FROM Contacts WHERE CategoryId = @categoryId" : "FROM Contacts";
+        
+        var totalCount = await conn.ExecuteScalarAsync<int>($"SELECT COUNT(*) {baseQuery}", new { categoryId });
+        
+        var results = await conn.QueryAsync<Contact>(
+            $"SELECT * {baseQuery} ORDER BY CreatedAt DESC LIMIT @limit OFFSET @offset",
+            new { categoryId, limit, offset });
+            
+        return (results.AsList(), totalCount);
+    }
+
+    public async Task<int> DeleteAllAsync(CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        return await conn.ExecuteAsync("DELETE FROM Contacts");
+    }
+
+    public async Task<bool> DeleteByIdAsync(int id, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        var rows = await conn.ExecuteAsync("DELETE FROM Contacts WHERE Id = @id", new { id });
+        return rows > 0;
+    }
+
+    public async Task<bool> UpdateAsync(int id, Contact contact, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        var sql = @"
+            UPDATE Contacts 
+            SET PhoneNumber = @PhoneNumber, FirstName = @FirstName, LastName = @LastName, CategoryId = @CategoryId, CustomFieldsJson = @CustomFieldsJson
+            WHERE Id = @id";
+        
+        var rows = await conn.ExecuteAsync(sql, new
         {
-            var results = await conn.QueryAsync<Contact>(
-                "SELECT * FROM Contacts WHERE CategoryId = @categoryId ORDER BY CreatedAt DESC",
-                new { categoryId });
-            return results.AsList();
-        }
-        else
-        {
-            var results = await conn.QueryAsync<Contact>("SELECT * FROM Contacts ORDER BY CreatedAt DESC");
-            return results.AsList();
-        }
+            id,
+            contact.PhoneNumber,
+            contact.FirstName,
+            contact.LastName,
+            contact.CategoryId,
+            contact.CustomFieldsJson
+        });
+        return rows > 0;
+    }
+
+    public async Task<IReadOnlyList<string>> GetDynamicColumnsAsync(CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        // Extracts all unique keys from CustomFieldsJson across all contacts
+        // SQLite json_each function creates a virtual table with 'key' and 'value' columns for the JSON object
+        var results = await conn.QueryAsync<string>("SELECT DISTINCT key FROM Contacts, json_each(CustomFieldsJson)");
+        return results.AsList();
     }
 
     public async Task<int> DeleteCustomFieldColumnAsync(string columnName, CancellationToken ct = default)

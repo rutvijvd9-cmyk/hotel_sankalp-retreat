@@ -10,6 +10,13 @@ export default function App() {
   const [inbox, setInbox] = useState([]);
   const [categories, setCategories] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [totalContacts, setTotalContacts] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [dynamicHeaders, setDynamicHeaders] = useState([]);
+  const [showEditContactModal, setShowEditContactModal] = useState(false);
+  const [editingContactId, setEditingContactId] = useState(null);
+  const [editContactData, setEditContactData] = useState({ PhoneNumber: '', FirstName: '', LastName: '', CustomFieldsJson: '{}' });
   const [logs, setLogs] = useState([]);
   const [templatesList, setTemplatesList] = useState([]);
   const [rulesList, setRulesList] = useState([]);
@@ -28,7 +35,7 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
-  }, [activeTab]);
+  }, [activeTab, currentPage, pageSize]);
 
   const fetchData = async () => {
     try {
@@ -75,9 +82,18 @@ export default function App() {
       const catRes = await fetch(`${API_BASE}/categories`).catch(() => null);
       if (catRes) setCategories(await catRes.json());
       
-      const conUrl = selectedCategory ? `${API_BASE}/contacts?categoryId=${selectedCategory}` : `${API_BASE}/contacts`;
+      const conUrl = selectedCategory ? `${API_BASE}/contacts?categoryId=${selectedCategory}&page=${currentPage}&limit=${pageSize}` : `${API_BASE}/contacts?page=${currentPage}&limit=${pageSize}`;
       const conRes = await fetch(conUrl).catch(() => null);
-      if (conRes) setContacts(await conRes.json());
+      if (conRes) {
+        const data = await conRes.json();
+        setContacts(data.Contacts || data.contacts || []);
+        setTotalContacts(data.TotalCount || data.totalCount || 0);
+      }
+      
+      const colRes = await fetch(`${API_BASE}/contacts/columns/all`).catch(() => null);
+      if (colRes) {
+        setDynamicHeaders(await colRes.json());
+      }
     } catch (e) {
       console.error(e);
     }
@@ -275,9 +291,61 @@ export default function App() {
         fetchData();
       };
 
-      const dynamicHeaders = Array.from(new Set(contacts.flatMap(c => {
-        try { return Object.keys(JSON.parse(c.CustomFieldsJson || c.customFieldsJson || '{}')); } catch(e) { return []; }
-      })));
+      const handleDeleteAllContacts = async () => {
+        if (!window.confirm("WARNING: Are you sure you want to delete ALL contacts? This cannot be undone!")) return;
+        try {
+          const res = await fetch(`${API_BASE}/contacts`, { method: 'DELETE' });
+          if (res.ok) {
+            alert("All contacts deleted.");
+            setCurrentPage(1);
+            fetchData();
+          }
+        } catch (e) {
+          alert("Error deleting contacts.");
+        }
+      };
+
+      const handleDeleteContact = async (id) => {
+        if (!window.confirm("Delete this contact?")) return;
+        try {
+          const res = await fetch(`${API_BASE}/contacts/${id}`, { method: 'DELETE' });
+          if (res.ok) fetchData();
+        } catch(e) {
+          alert("Error deleting contact.");
+        }
+      };
+
+      const handleEditContactClick = (c) => {
+        setEditingContactId(c.Id || c.id);
+        setEditContactData({
+            PhoneNumber: c.PhoneNumber || c.phoneNumber || '',
+            FirstName: c.FirstName || c.firstName || '',
+            LastName: c.LastName || c.lastName || '',
+            CustomFieldsJson: c.CustomFieldsJson || c.customFieldsJson || '{}'
+        });
+        setShowEditContactModal(true);
+      };
+
+      const handleSaveContact = async () => {
+          try {
+              const res = await fetch(`${API_BASE}/contacts/${editingContactId}`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      ...editContactData,
+                      CategoryId: selectedCategory || null
+                  })
+              });
+              if (res.ok) {
+                  setShowEditContactModal(false);
+                  fetchData();
+              } else {
+                  alert("Failed to update contact.");
+              }
+          } catch(e) {
+              alert("Error updating contact.");
+          }
+      };
 
       const handleDeleteColumn = async (colName) => {
         if (!window.confirm(`Are you sure you want to permanently delete the column "${colName}" and all its data from ALL contacts?`)) return;
@@ -311,6 +379,9 @@ export default function App() {
             <div style={{ flex: 1 }}></div>
             <button className="btn btn-secondary" onClick={() => setShowColumnModal(true)}>
               <Settings size={16} /> Manage Columns
+            </button>
+            <button className="btn btn-secondary" onClick={handleDeleteAllContacts} style={{ color: '#ef4444', borderColor: '#ef4444' }}>
+              <Trash2 size={16} /> Delete All
             </button>
             <label className="btn btn-primary" style={{ cursor: isImporting ? 'not-allowed' : 'pointer', backgroundColor: isImporting ? '#94a3b8' : '#10b981' }}>
               {isImporting ? 'Importing...' : <><Upload size={16} /> Import CSV</>}
@@ -359,6 +430,7 @@ export default function App() {
                       <th>First Name</th>
                       <th>Last Name</th>
                       {dynamicHeaders.map(h => <th key={h}>{h}</th>)}
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -371,6 +443,16 @@ export default function App() {
                           <td>{c.FirstName || c.firstName}</td>
                           <td>{c.LastName || c.lastName}</td>
                           {dynamicHeaders.map(h => <td key={h}>{fields[h] || '-'}</td>)}
+                          <td>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button className="btn btn-secondary" style={{ padding: '4px', border: 'none' }} onClick={() => handleEditContactClick(c)}>
+                                <Edit2 size={16} color="#3b82f6" />
+                              </button>
+                              <button className="btn btn-secondary" style={{ padding: '4px', border: 'none' }} onClick={() => handleDeleteContact(c.Id || c.id)}>
+                                <Trash2 size={16} color="#ef4444" />
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       );
                     })}
@@ -378,7 +460,80 @@ export default function App() {
                 </table>
               </div>
             )}
+            {contacts.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', padding: '16px', borderTop: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ color: '#64748b' }}>Rows per page:</span>
+                  <select 
+                    value={pageSize} 
+                    onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+                    style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                  <span style={{ color: '#64748b', marginLeft: '16px' }}>Total: {totalContacts}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <button 
+                    className="btn btn-secondary" 
+                    disabled={currentPage === 1} 
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  >
+                    Previous
+                  </button>
+                  <span style={{ fontWeight: 500 }}>Page {currentPage} of {Math.ceil(totalContacts / pageSize) || 1}</span>
+                  <button 
+                    className="btn btn-secondary" 
+                    disabled={currentPage >= Math.ceil(totalContacts / pageSize)} 
+                    onClick={() => setCurrentPage(p => p + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
+          
+          {showEditContactModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+              <div className="card" style={{ width: '500px' }}>
+                <h3 className="card-title" style={{ marginBottom: '16px' }}>Edit Contact</h3>
+                
+                <div className="form-group" style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Phone Number</label>
+                  <input type="text" value={editContactData.PhoneNumber} onChange={e => setEditContactData({...editContactData, PhoneNumber: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                </div>
+                
+                <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>First Name</label>
+                    <input type="text" value={editContactData.FirstName} onChange={e => setEditContactData({...editContactData, FirstName: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Last Name</label>
+                    <input type="text" value={editContactData.LastName} onChange={e => setEditContactData({...editContactData, LastName: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                  </div>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Custom Fields (JSON)</label>
+                  <textarea 
+                    value={editContactData.CustomFieldsJson} 
+                    onChange={e => setEditContactData({...editContactData, CustomFieldsJson: e.target.value})} 
+                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', minHeight: '100px', fontFamily: 'monospace' }} 
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                  <button className="btn btn-secondary" onClick={() => setShowEditContactModal(false)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleSaveContact}>Save</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }

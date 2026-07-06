@@ -325,10 +325,34 @@ app.MapPost("/api/categories", async (HotelAutomation.Core.Models.ContactCategor
     return Results.Ok(new { id });
 });
 
-app.MapGet("/api/contacts", async (ContactRepository repo, int? categoryId) => 
+app.MapGet("/api/contacts", async (ContactRepository repo, int? categoryId, int page = 1, int limit = 50) => 
 {
-    var list = await repo.GetAllAsync(categoryId);
-    return Results.Ok(list);
+    var (list, total) = await repo.GetAllAsync(categoryId, page, limit);
+    return Results.Ok(new { Contacts = list, TotalCount = total });
+});
+
+app.MapGet("/api/contacts/columns/all", async (ContactRepository repo) => 
+{
+    var columns = await repo.GetDynamicColumnsAsync();
+    return Results.Ok(columns);
+});
+
+app.MapDelete("/api/contacts", async (ContactRepository repo) => 
+{
+    var deletedCount = await repo.DeleteAllAsync();
+    return Results.Ok(new { message = $"Deleted {deletedCount} contacts." });
+});
+
+app.MapDelete("/api/contacts/{id}", async (int id, ContactRepository repo) => 
+{
+    var success = await repo.DeleteByIdAsync(id);
+    return success ? Results.Ok() : Results.NotFound();
+});
+
+app.MapPut("/api/contacts/{id}", async (int id, HotelAutomation.Core.Models.Contact contact, ContactRepository repo) => 
+{
+    var success = await repo.UpdateAsync(id, contact);
+    return success ? Results.Ok() : Results.NotFound();
 });
 
 app.MapDelete("/api/contacts/columns/{columnName}", async (string columnName, ContactRepository repo) => 
