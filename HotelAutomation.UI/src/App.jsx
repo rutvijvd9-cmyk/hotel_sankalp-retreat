@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2 } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings } from 'lucide-react';
 
 const API_BASE = '/api';
 
@@ -20,6 +20,7 @@ export default function App() {
   const [isFiring, setIsFiring] = useState(false);
   const [testPhoneNumber, setTestPhoneNumber] = useState('+15556585587');
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showColumnModal, setShowColumnModal] = useState(false);
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
   const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp' });
@@ -272,6 +273,21 @@ export default function App() {
         try { return Object.keys(JSON.parse(c.CustomFieldsJson || c.customFieldsJson || '{}')); } catch(e) { return []; }
       })));
 
+      const handleDeleteColumn = async (colName) => {
+        if (!window.confirm(`Are you sure you want to permanently delete the column "${colName}" and all its data from ALL contacts?`)) return;
+        try {
+          const res = await fetch(`${API_BASE}/contacts/columns/${encodeURIComponent(colName)}`, { method: 'DELETE' });
+          if (res.ok) {
+            alert(`Column ${colName} deleted successfully.`);
+            fetchData();
+          } else {
+            alert("Failed to delete column.");
+          }
+        } catch (err) {
+          alert("Error deleting column.");
+        }
+      };
+
       return (
         <div>
           <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', alignItems: 'center' }}>
@@ -287,11 +303,42 @@ export default function App() {
               <Plus size={16} /> New Category
             </button>
             <div style={{ flex: 1 }}></div>
+            <button className="btn btn-secondary" onClick={() => setShowColumnModal(true)}>
+              <Settings size={16} /> Manage Columns
+            </button>
             <label className="btn btn-primary" style={{ cursor: 'pointer', backgroundColor: '#10b981' }}>
               <Upload size={16} /> Import CSV
               <input type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
             </label>
           </div>
+
+          {showColumnModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+              <div className="card" style={{ width: '400px' }}>
+                <h3 className="card-title" style={{ marginBottom: '16px' }}>Manage Custom Columns</h3>
+                <p style={{ fontSize: '0.9em', color: '#64748b', marginBottom: '16px' }}>
+                  These columns were generated dynamically from your CSV imports. Deleting a column here will remove it from all contacts permanently.
+                </p>
+                {dynamicHeaders.length === 0 ? (
+                  <div className="empty-state">No custom columns found.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+                    {dynamicHeaders.map(h => (
+                      <div key={h} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
+                        <span style={{ fontWeight: 500 }}>{h}</span>
+                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#ef4444' }} onClick={() => handleDeleteColumn(h)}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+                  <button className="btn btn-primary" onClick={() => setShowColumnModal(false)}>Close</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="card">
             <h3 className="card-title">Contacts Directory</h3>

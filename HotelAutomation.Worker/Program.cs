@@ -315,7 +315,18 @@ app.MapPost("/api/categories", async (HotelAutomation.Core.Models.ContactCategor
     return Results.Ok(new { id });
 });
 
-app.MapGet("/api/contacts", async (int? categoryId, ContactRepository repo) => await repo.GetAllAsync(categoryId));
+app.MapGet("/api/contacts", async (ContactRepository repo, int? categoryId) => 
+{
+    var list = await repo.GetAllAsync(categoryId);
+    return Results.Ok(list);
+});
+
+app.MapDelete("/api/contacts/columns/{columnName}", async (string columnName, ContactRepository repo) => 
+{
+    var updatedRows = await repo.DeleteCustomFieldColumnAsync(columnName);
+    return Results.Ok(new { message = $"Column '{columnName}' deleted from {updatedRows} contacts." });
+});
+
 app.MapPost("/api/contacts", async (HotelAutomation.Core.Models.Contact contact, ContactRepository repo) => 
 {
     await repo.UpsertAsync(contact);

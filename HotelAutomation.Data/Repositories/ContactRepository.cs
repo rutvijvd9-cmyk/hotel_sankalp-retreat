@@ -54,4 +54,15 @@ public sealed class ContactRepository
             return results.AsList();
         }
     }
+
+    public async Task<int> DeleteCustomFieldColumnAsync(string columnName, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        
+        // SQLite json_remove allows deleting a specific key from a JSON object.
+        // We use JSON path format: '$.ColumnName'
+        var sql = "UPDATE Contacts SET CustomFieldsJson = json_remove(CustomFieldsJson, '$.' || @columnName)";
+        
+        return await conn.ExecuteAsync(sql, new { columnName });
+    }
 }
