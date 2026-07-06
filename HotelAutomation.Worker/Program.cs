@@ -48,6 +48,9 @@ builder.Services.AddHostedService<OutboxProcessor>();
 var app = builder.Build();
 app.UseCors();
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // ── API Endpoints for UI ──────────────────────────────────────────────────────
 app.MapGet("/api/templates", async (ITemplateRepository repo) => 
 {
@@ -80,6 +83,22 @@ app.MapPost("/api/test-event", (ManualPmsConnector pms) =>
         Timestamp = DateTimeOffset.UtcNow
     });
     return Results.Ok(new { message = "Test event fired successfully" });
+});
+
+app.Lifetime.ApplicationStarted.Register(() => 
+{
+    try
+    {
+        // On Windows, you can launch a URL directly using UseShellExecute.
+        // It will open the user's default browser (e.g. Edge, Chrome).
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "http://localhost:5000",
+            UseShellExecute = true
+        };
+        System.Diagnostics.Process.Start(startInfo);
+    }
+    catch { }
 });
 
 app.Run();

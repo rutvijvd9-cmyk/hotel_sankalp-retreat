@@ -24,5 +24,11 @@
     <ProjectReference Include="..\HotelAutomation.Connectors.WhatsApp\HotelAutomation.Connectors.WhatsApp.csproj" />
     <ProjectReference Include="..\HotelAutomation.Connectors.Pms\HotelAutomation.Connectors.Pms.csproj" />
   </ItemGroup>
+  <Target Name="CopyReactApp" BeforeTargets="Build">
+    <ItemGroup>
+      <ReactAppFiles Include="..\HotelAutomation.UI\dist\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ReactAppFiles)" DestinationFolder="$(MSBuildProjectDirectory)\wwwroot\%(RecursiveDir)" />
+  </Target>
 
 </Project>
