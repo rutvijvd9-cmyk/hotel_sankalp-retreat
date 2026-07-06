@@ -21,6 +21,18 @@ export default function App() {
         setOutbox(outboxData);
         setStats(s => ({ ...s, outbox: outboxData.length }));
       }
+      
+      const rulesRes = await fetch(`${API_BASE}/rules`).catch(() => null);
+      if (rulesRes) {
+        const rulesData = await rulesRes.json();
+        setStats(s => ({ ...s, rules: rulesData.length }));
+      }
+
+      const templatesRes = await fetch(`${API_BASE}/templates`).catch(() => null);
+      if (templatesRes) {
+        const templatesData = await templatesRes.json();
+        setStats(s => ({ ...s, templates: templatesData.length }));
+      }
     } catch (e) {
       console.error(e);
     }
@@ -49,11 +61,11 @@ export default function App() {
             </div>
             <div className="card" style={{ flex: 1 }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Active Rules</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>1</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{stats.rules}</div>
             </div>
             <div className="card" style={{ flex: 1 }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Templates</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>1</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{stats.templates}</div>
             </div>
           </div>
 
