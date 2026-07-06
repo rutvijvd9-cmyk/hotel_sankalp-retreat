@@ -38,7 +38,7 @@ namespace HotelAutomation.Worker
                         {
                             ToPhoneNumber = job.PhoneNumber,
                             TemplateId = job.TemplateId,
-                            ParametersJson = System.Text.Json.JsonSerializer.Serialize(new List<string> { job.GuestName }),
+                            ParametersJson = job.ParametersJson,
                             Status = "Pending",
                             CreatedAt = DateTimeOffset.UtcNow
                         };

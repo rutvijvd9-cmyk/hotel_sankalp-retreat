@@ -8,6 +8,7 @@ namespace HotelAutomation.Core.Models
         public string GuestName { get; set; } = string.Empty;
         public string PhoneNumber { get; set; } = string.Empty;
         public int TemplateId { get; set; }
+        public string ParametersJson { get; set; } = "{}";
         
         // This is the time when the job should be picked up and processed
         public DateTimeOffset TriggerTime { get; set; }

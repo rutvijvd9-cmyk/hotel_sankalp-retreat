@@ -74,6 +74,12 @@ public sealed class HotelWorker : BackgroundService
                 GuestName = pmsEvent.GuestName,
                 PhoneNumber = pmsEvent.PhoneNumber,
                 TemplateId = matchedTemplate.Id,
+                ParametersJson = System.Text.Json.JsonSerializer.Serialize(new 
+                { 
+                    Name = pmsEvent.GuestName, 
+                    Room = pmsEvent.RoomNumber, 
+                    Bill = pmsEvent.Amount 
+                }),
                 TriggerTime = DateTimeOffset.UtcNow.AddMinutes(matchedRule.DelayMinutes),
                 Status = "Pending"
             };

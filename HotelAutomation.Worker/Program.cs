@@ -111,6 +111,46 @@ app.MapPost("/api/webhooks/whatsapp", async (WebhookPayload payload, InboxReposi
     return Results.Ok();
 });
 
+
+
+app.MapPost("/api/pms/checkin", async (HotelAutomation.Core.Models.PmsEventPayload payload, ManualPmsConnector pms) => 
+{
+    pms.RaiseTestEvent(new HotelAutomation.Core.Models.PmsEvent
+    {
+        EventType = "CheckIn",
+        GuestName = payload.GuestName,
+        PhoneNumber = payload.PhoneNumber,
+        RoomNumber = payload.RoomNumber,
+        Amount = payload.TotalBill,
+        Timestamp = DateTimeOffset.UtcNow
+    });
+    return Results.Ok(new { status = "success", message = "CheckIn event queued." });
+}).AddEndpointFilter(async (ctx, next) =>
+{
+    if (!ctx.HttpContext.Request.Headers.TryGetValue("X-API-Key", out var extractedApiKey)) return Results.Unauthorized();
+    if (extractedApiKey != "SUPER_SECRET_SCALIFTS_KEY_2026") return Results.Unauthorized();
+    return await next(ctx);
+});
+
+app.MapPost("/api/pms/checkout", async (HotelAutomation.Core.Models.PmsEventPayload payload, ManualPmsConnector pms) => 
+{
+    pms.RaiseTestEvent(new HotelAutomation.Core.Models.PmsEvent
+    {
+        EventType = "CheckOut",
+        GuestName = payload.GuestName,
+        PhoneNumber = payload.PhoneNumber,
+        RoomNumber = payload.RoomNumber,
+        Amount = payload.TotalBill,
+        Timestamp = DateTimeOffset.UtcNow
+    });
+    return Results.Ok(new { status = "success", message = "CheckOut event queued." });
+}).AddEndpointFilter(async (ctx, next) =>
+{
+    if (!ctx.HttpContext.Request.Headers.TryGetValue("X-API-Key", out var extractedApiKey)) return Results.Unauthorized();
+    if (extractedApiKey != "SUPER_SECRET_SCALIFTS_KEY_2026") return Results.Unauthorized();
+    return await next(ctx);
+});
+
 app.Lifetime.ApplicationStarted.Register(() => 
 {
     try

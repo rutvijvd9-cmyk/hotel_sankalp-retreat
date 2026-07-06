@@ -19,15 +19,16 @@ namespace HotelAutomation.Data.Repositories
         {
             using var connection = await _dbFactory.OpenAsync();
             const string sql = @"
-                INSERT INTO ScheduledJobs (Id, GuestName, PhoneNumber, TemplateId, TriggerTime, Status, CreatedAt)
-                VALUES (@Id, @GuestName, @PhoneNumber, @TemplateId, @TriggerTime, @Status, @CreatedAt);";
+                INSERT INTO ScheduledJobs (Id, GuestName, PhoneNumber, TemplateId, ParametersJson, TriggerTime, Status, CreatedAt)
+                VALUES (@Id, @GuestName, @PhoneNumber, @TemplateId, @ParametersJson, @TriggerTime, @Status, @CreatedAt);";
             
             await connection.ExecuteAsync(sql, new {
                 Id = job.Id,
                 job.GuestName,
                 job.PhoneNumber,
                 job.TemplateId,
-                job.TriggerTime,
+                job.ParametersJson,
+                TriggerTime = job.TriggerTime.ToString("o"),
                 job.Status,
                 job.CreatedAt
             });
@@ -40,7 +41,7 @@ namespace HotelAutomation.Data.Repositories
                 SELECT * FROM ScheduledJobs 
                 WHERE Status = 'Pending' AND TriggerTime <= @Now";
             
-            return await connection.QueryAsync<ScheduledJob>(sql, new { Now = DateTimeOffset.UtcNow });
+            return await connection.QueryAsync<ScheduledJob>(sql, new { Now = DateTimeOffset.UtcNow.ToString("o") });
         }
 
         public async Task MarkAsProcessedAsync(string id)
