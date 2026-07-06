@@ -43,6 +43,7 @@ public sealed class CsvImportService
         var headers = csv.HeaderRecord.Select(h => h.ToLowerInvariant()).ToArray();
         
         int importedCount = 0;
+        var batch = new List<Contact>(10000);
 
         while (await csv.ReadAsync())
         {
@@ -66,7 +67,7 @@ public sealed class CsvImportService
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(phone)) continue; // skip rows without phone
+            if (string.IsNullOrWhiteSpace(phone)) continue;
 
             var contact = new Contact
             {
@@ -77,8 +78,20 @@ public sealed class CsvImportService
                 CustomFieldsJson = JsonSerializer.Serialize(customFields)
             };
 
-            await _contactRepository.UpsertAsync(contact, ct);
-            importedCount++;
+            batch.Add(contact);
+            
+            if (batch.Count >= 10000)
+            {
+                await _contactRepository.UpsertBulkAsync(batch, ct);
+                importedCount += batch.Count;
+                batch.Clear();
+            }
+        }
+
+        if (batch.Count > 0)
+        {
+            await _contactRepository.UpsertBulkAsync(batch, ct);
+            importedCount += batch.Count;
         }
 
         return importedCount;

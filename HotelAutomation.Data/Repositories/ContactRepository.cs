@@ -37,6 +37,34 @@ public sealed class ContactRepository
         });
     }
 
+    public async Task UpsertBulkAsync(IEnumerable<Contact> contacts, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        using var transaction = conn.BeginTransaction();
+        
+        var sql = """
+            INSERT INTO Contacts (PhoneNumber, FirstName, LastName, CategoryId, CustomFieldsJson, CreatedAt)
+            VALUES (@PhoneNumber, @FirstName, @LastName, @CategoryId, @CustomFieldsJson, @CreatedAt)
+            ON CONFLICT(PhoneNumber) DO UPDATE SET
+                FirstName = excluded.FirstName,
+                LastName = excluded.LastName,
+                CategoryId = excluded.CategoryId,
+                CustomFieldsJson = excluded.CustomFieldsJson;
+            """;
+
+        await conn.ExecuteAsync(sql, contacts.Select(c => new
+        {
+            c.PhoneNumber,
+            c.FirstName,
+            c.LastName,
+            c.CategoryId,
+            c.CustomFieldsJson,
+            CreatedAt = c.CreatedAt.ToString("O")
+        }), transaction: transaction);
+        
+        transaction.Commit();
+    }
+
     public async Task<IReadOnlyList<Contact>> GetAllAsync(int? categoryId = null, CancellationToken ct = default)
     {
         await using var conn = await _factory.OpenAsync(ct);

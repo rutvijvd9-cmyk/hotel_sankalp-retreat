@@ -18,6 +18,7 @@ export default function App() {
   const [selectedBroadcastTemplate, setSelectedBroadcastTemplate] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [isFiring, setIsFiring] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [testPhoneNumber, setTestPhoneNumber] = useState('+15556585587');
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showColumnModal, setShowColumnModal] = useState(false);
@@ -248,13 +249,18 @@ export default function App() {
         formData.append('file', file);
         if (selectedCategory) formData.append('categoryId', selectedCategory);
         
+        setIsImporting(true);
         try {
           const res = await fetch(`${API_BASE}/contacts/import`, { method: 'POST', body: formData });
+          if (!res.ok) throw new Error('Upload failed');
           const data = await res.json();
-          alert(`Imported ${data.importedCount} contacts!`);
+          alert(`Success! Imported ${data.importedCount} contacts.`);
           fetchData();
         } catch (err) {
-          alert("Import failed!");
+          alert("Import failed! Ensure the file is a valid CSV.");
+        } finally {
+          setIsImporting(false);
+          e.target.value = null;
         }
       };
 
@@ -306,9 +312,9 @@ export default function App() {
             <button className="btn btn-secondary" onClick={() => setShowColumnModal(true)}>
               <Settings size={16} /> Manage Columns
             </button>
-            <label className="btn btn-primary" style={{ cursor: 'pointer', backgroundColor: '#10b981' }}>
-              <Upload size={16} /> Import CSV
-              <input type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
+            <label className="btn btn-primary" style={{ cursor: isImporting ? 'not-allowed' : 'pointer', backgroundColor: isImporting ? '#94a3b8' : '#10b981' }}>
+              {isImporting ? 'Importing...' : <><Upload size={16} /> Import CSV</>}
+              <input type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} disabled={isImporting} />
             </label>
           </div>
 
