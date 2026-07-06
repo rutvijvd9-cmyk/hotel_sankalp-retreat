@@ -3,12 +3,32 @@ namespace HotelAutomation.Data;
 using Microsoft.Data.Sqlite;
 using System.Reflection;
 
+using Dapper;
+
+public class DateTimeOffsetTypeHandler : SqlMapper.TypeHandler<DateTimeOffset>
+{
+    public override void SetValue(System.Data.IDbDataParameter parameter, DateTimeOffset value)
+    {
+        parameter.Value = value.ToString("O");
+    }
+
+    public override DateTimeOffset Parse(object value)
+    {
+        return DateTimeOffset.Parse((string)value);
+    }
+}
+
 /// <summary>
 /// Opens a SQLite connection to the local .db file.
 /// On first call, runs Schema.sql to create any missing tables (idempotent).
 /// </summary>
 public sealed class SqliteConnectionFactory
 {
+    static SqliteConnectionFactory()
+    {
+        SqlMapper.AddTypeHandler(new DateTimeOffsetTypeHandler());
+    }
+
     private readonly string _connectionString;
     private bool _schemaEnsured;
     private readonly SemaphoreSlim _lock = new(1, 1);

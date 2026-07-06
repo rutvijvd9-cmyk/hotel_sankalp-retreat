@@ -4,8 +4,19 @@ using HotelAutomation.Core.Interfaces;
 using HotelAutomation.Data;
 using HotelAutomation.Data.Repositories;
 using HotelAutomation.Worker;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Http;
+using Dapper;
 
-var builder = Host.CreateApplicationBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
+
+// Enable CORS for the React UI
+builder.Services.AddCors(options => {
+    options.AddDefaultPolicy(policy => {
+        policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+    });
+});
 
 // ── Database ──────────────────────────────────────────────────────────────────
 var connectionString = builder.Configuration.GetConnectionString("Sqlite")
@@ -27,15 +38,48 @@ builder.Services.AddHttpClient<WhatsAppApiClient>();
 builder.Services.AddSingleton<IMessageChannel, WhatsAppMessageSender>();
 
 // ── PMS Connector ─────────────────────────────────────────────────────────────
-// Register as both the interface AND the concrete type so Worker.cs can
-// access RaiseTestEvent() directly for manual testing.
 builder.Services.AddSingleton<ManualPmsConnector>();
 builder.Services.AddSingleton<IPmsEventSource>(sp => sp.GetRequiredService<ManualPmsConnector>());
 
-// ── Hosted Services ───────────────────────────────────────────────────────────
-// Temporarily commented out until Phase 16 and 17 implement these classes.
+// ── Hosted Services (Background Engine) ───────────────────────────────────────
 builder.Services.AddHostedService<HotelWorker>();
 builder.Services.AddHostedService<OutboxProcessor>();
 
-var host = builder.Build();
-host.Run();
+var app = builder.Build();
+app.UseCors();
+
+// ── API Endpoints for UI ──────────────────────────────────────────────────────
+app.MapGet("/api/templates", async (ITemplateRepository repo) => 
+{
+    return await repo.GetAllAsync();
+});
+
+app.MapGet("/api/rules", async (SqliteConnectionFactory factory) => 
+{
+    using var conn = await factory.OpenAsync();
+    var rules = await conn.QueryAsync<HotelAutomation.Core.Models.AutomationRule>("SELECT * FROM AutomationRules");
+    return rules;
+});
+
+app.MapGet("/api/outbox", async (SqliteConnectionFactory factory) => 
+{
+    using var conn = await factory.OpenAsync();
+    var outbox = await conn.QueryAsync("SELECT * FROM OutboxMessages ORDER BY CreatedAt DESC LIMIT 50");
+    return outbox;
+});
+
+app.MapPost("/api/test-event", (ManualPmsConnector pms) => 
+{
+    pms.RaiseTestEvent(new HotelAutomation.Core.Models.PmsEvent
+    {
+        EventType = "CheckOut",
+        GuestName = "Test Guest",
+        PhoneNumber = "+1234567890", // dummy test number
+        RoomNumber = "101",
+        Amount = 150.00m,
+        Timestamp = DateTimeOffset.UtcNow
+    });
+    return Results.Ok(new { message = "Test event fired successfully" });
+});
+
+app.Run();
