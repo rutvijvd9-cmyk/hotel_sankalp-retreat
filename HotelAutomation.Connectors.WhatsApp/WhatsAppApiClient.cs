@@ -31,10 +31,7 @@ public sealed class WhatsAppApiClient
     {
         var response = await _httpClient.PostAsJsonAsync(_options.BaseUrl, payload, ct);
 
-        if (response.IsSuccessStatusCode)
-            return (true, null);
-
-        var errorBody = await response.Content.ReadAsStringAsync(ct);
-        return (false, errorBody);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+        return (response.IsSuccessStatusCode, responseBody);
     }
 }

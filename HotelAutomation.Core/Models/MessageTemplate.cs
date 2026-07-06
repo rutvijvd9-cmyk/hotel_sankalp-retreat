@@ -7,5 +7,6 @@ public sealed record MessageTemplate
     public required string ExternalTemplateName { get; init; }   // exact Meta-approved name
     public string LanguageCode { get; init; } = "en";
     public string ChannelType { get; init; } = "WhatsApp";
+    public string? FallbackChannelType { get; init; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 }

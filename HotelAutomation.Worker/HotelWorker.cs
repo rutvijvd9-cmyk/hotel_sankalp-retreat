@@ -76,7 +76,7 @@ public sealed class HotelWorker : BackgroundService
                 TemplateId = matchedTemplate.Id,
                 ParametersJson = System.Text.Json.JsonSerializer.Serialize(new 
                 { 
-                    Name = pmsEvent.GuestName, 
+                    Name = SpintaxParser.Parse("{Hi|Hello|Hey} ") + pmsEvent.GuestName, 
                     Room = pmsEvent.RoomNumber, 
                     Bill = pmsEvent.Amount 
                 }),

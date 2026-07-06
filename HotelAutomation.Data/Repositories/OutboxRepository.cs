@@ -38,13 +38,13 @@ public sealed class OutboxRepository : IOutboxRepository
     }
 
     public async Task UpdateStatusAsync(int id, string status, int retryCount,
-        DateTimeOffset? sentAt, CancellationToken ct = default)
+        DateTimeOffset? sentAt, string? externalMessageId, CancellationToken ct = default)
     {
         await using var conn = await _factory.OpenAsync(ct);
         await conn.ExecuteAsync("""
             UPDATE OutboxMessages
-            SET Status = @status, RetryCount = @retryCount, SentAt = @sentAt
+            SET Status = @status, RetryCount = @retryCount, SentAt = @sentAt, ExternalMessageId = @externalMessageId
             WHERE Id = @id
-            """, new { id, status, retryCount, sentAt = sentAt?.ToString("O") });
+            """, new { id, status, retryCount, sentAt = sentAt?.ToString("O"), externalMessageId });
     }
 }

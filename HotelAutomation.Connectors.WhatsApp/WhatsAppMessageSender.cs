@@ -15,6 +15,8 @@ public sealed class WhatsAppMessageSender : IMessageChannel
     private readonly ITemplateRepository _templateRepository;
     private readonly ILogger<WhatsAppMessageSender> _logger;
 
+    public string ChannelType => "WhatsApp";
+
     public WhatsAppMessageSender(
         WhatsAppApiClient apiClient,
         ITemplateRepository templateRepository,
@@ -25,14 +27,14 @@ public sealed class WhatsAppMessageSender : IMessageChannel
         _logger = logger;
     }
 
-    public async Task<bool> SendAsync(OutboxMessage message, CancellationToken ct = default)
+    public async Task<(bool Success, string? ExternalId)> SendAsync(OutboxMessage message, CancellationToken ct = default)
     {
         var template = await _templateRepository.GetByIdAsync(message.TemplateId, ct);
         if (template is null)
         {
             _logger.LogError("Template {TemplateId} not found for OutboxMessage {Id}",
                 message.TemplateId, message.Id);
-            return false;
+            return (false, null);
         }
 
         List<string> parameterValues = new();
@@ -77,12 +79,33 @@ public sealed class WhatsAppMessageSender : IMessageChannel
             }
         };
 
-        var (success, errorBody) = await _apiClient.PostAsync(payload, ct);
+        var (success, responseBody) = await _apiClient.PostAsync(payload, ct);
+
+        string? externalId = null;
 
         if (!success)
+        {
             _logger.LogWarning("WhatsApp send failed for OutboxMessage {Id}: {Error}",
-                message.Id, errorBody);
+                message.Id, responseBody);
+        }
+        else if (!string.IsNullOrEmpty(responseBody))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(responseBody);
+                if (doc.RootElement.TryGetProperty("messages", out var messagesArray) &&
+                    messagesArray.GetArrayLength() > 0 &&
+                    messagesArray[0].TryGetProperty("id", out var idProp))
+                {
+                    externalId = idProp.GetString();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse WhatsApp response for wamid");
+            }
+        }
 
-        return success;
+        return (success, externalId);
     }
 }

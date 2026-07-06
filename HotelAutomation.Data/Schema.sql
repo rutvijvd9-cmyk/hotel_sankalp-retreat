@@ -5,8 +5,9 @@ CREATE TABLE IF NOT EXISTS MessageTemplates (
     Id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     Name                 TEXT    NOT NULL,
     ExternalTemplateName TEXT    NOT NULL,
-    LanguageCode         TEXT    NOT NULL DEFAULT 'en',
-    ChannelType          TEXT    NOT NULL DEFAULT 'WhatsApp',
+    LanguageCode         TEXT    NOT NULL,
+    ChannelType          TEXT    NOT NULL,
+    FallbackChannelType  TEXT,
     CreatedAt            TEXT    NOT NULL
 );
 
@@ -28,7 +29,8 @@ CREATE TABLE IF NOT EXISTS OutboxMessages (
     Status         TEXT    NOT NULL DEFAULT 'Pending',
     RetryCount     INTEGER NOT NULL DEFAULT 0,
     CreatedAt      TEXT    NOT NULL,
-    SentAt         TEXT    NULL
+    SentAt         TEXT,
+    ExternalMessageId TEXT
 );
 
 CREATE TABLE IF NOT EXISTS EventLog (
@@ -63,6 +65,23 @@ CREATE TABLE IF NOT EXISTS AppConfig (
     Value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ContactCategories (
+    Id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    Name        TEXT    NOT NULL UNIQUE,
+    Description TEXT,
+    CreatedAt   TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS Contacts (
+    Id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    PhoneNumber      TEXT    NOT NULL UNIQUE,
+    FirstName        TEXT,
+    LastName         TEXT,
+    CategoryId       INTEGER REFERENCES ContactCategories(Id) ON DELETE SET NULL,
+    CustomFieldsJson TEXT    NOT NULL DEFAULT '{}',
+    CreatedAt        TEXT    NOT NULL
+);
+
 INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
 SELECT 'Spa Up-sell Drip Variant A', 'spa_promo_1', 'en', 'WhatsApp', datetime('now')
 WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Spa Up-sell Drip Variant A');
@@ -71,8 +90,8 @@ INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelT
 SELECT 'Spa Up-sell Drip Variant B', 'spa_promo_1_var_b', 'en', 'WhatsApp', datetime('now')
 WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Spa Up-sell Drip Variant B');
 
-INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
-SELECT 'Checkout Billing', 'checkout_billing', 'en', 'WhatsApp', datetime('now')
+INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, FallbackChannelType, CreatedAt)
+SELECT 'Checkout Billing', 'checkout_billing', 'en_US', 'WhatsApp', 'SMS', datetime('now')
 WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Checkout Billing');
 
 INSERT INTO AutomationRules (TriggerEventType, TemplateId, IsEnabled, DelayMinutes)

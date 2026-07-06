@@ -31,6 +31,9 @@ builder.Services.AddSingleton<IOutboxRepository, OutboxRepository>();
 builder.Services.AddSingleton<EventLogRepository>();
 builder.Services.AddSingleton<JobRepository>();
 builder.Services.AddSingleton<InboxRepository>();
+builder.Services.AddSingleton<CategoryRepository>();
+builder.Services.AddSingleton<ContactRepository>();
+builder.Services.AddSingleton<CsvImportService>();
 
 // ── WhatsApp Connector ────────────────────────────────────────────────────────
 builder.Services.Configure<WhatsAppOptions>(
@@ -38,6 +41,7 @@ builder.Services.Configure<WhatsAppOptions>(
 
 builder.Services.AddHttpClient<WhatsAppApiClient>();
 builder.Services.AddSingleton<IMessageChannel, WhatsAppMessageSender>();
+builder.Services.AddSingleton<IMessageChannel, SmsMessageSender>();
 
 // ── PMS Connector ─────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<ManualPmsConnector>();
@@ -74,13 +78,29 @@ app.MapGet("/api/outbox", async (SqliteConnectionFactory factory) =>
     return outbox;
 });
 
-app.MapPost("/api/test-event", (ManualPmsConnector pms) => 
+app.MapGet("/api/logs", async (EventLogRepository repo) => 
+{
+    return await repo.GetRecentLogsAsync(100);
+});
+
+// Boilerplate stubs to support UI Builder saves if not implemented
+app.MapPost("/api/templates", (HotelAutomation.Core.Models.MessageTemplate template) => 
+{
+    return Results.Ok(template);
+});
+
+app.MapPost("/api/rules", (HotelAutomation.Core.Models.AutomationRule rule) => 
+{
+    return Results.Ok(rule);
+});
+
+app.MapPost("/api/test-event", (string? phone, ManualPmsConnector pms) => 
 {
     pms.RaiseTestEvent(new HotelAutomation.Core.Models.PmsEvent
     {
         EventType = "CheckOut",
         GuestName = "Test Guest",
-        PhoneNumber = "+1234567890", // dummy test number
+        PhoneNumber = string.IsNullOrWhiteSpace(phone) ? "+1234567890" : phone,
         RoomNumber = "101",
         Amount = 150.00m,
         Timestamp = DateTimeOffset.UtcNow
@@ -93,20 +113,68 @@ app.MapGet("/api/inbox", async (InboxRepository repo) =>
     return await repo.GetRecentMessagesAsync();
 });
 
-app.MapPost("/api/webhooks/whatsapp", async (WebhookPayload payload, InboxRepository inboxRepo, JobRepository jobRepo) => 
+app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository inboxRepo, JobRepository jobRepo, SqliteConnectionFactory dbFactory) => 
 {
-    // 1. Log to Inbox
-    var msg = new HotelAutomation.Core.Models.InboxMessage
+    using var reader = new StreamReader(ctx.Request.Body);
+    var body = await reader.ReadToEndAsync();
+    
+    try
     {
-        FromPhoneNumber = payload.From,
-        Content = payload.Body,
-        IsRead = false,
-        ReceivedAt = DateTimeOffset.UtcNow
-    };
-    await inboxRepo.AddAsync(msg);
-
-    // 2. CANCEL any pending drip campaign messages for this guest!
-    await jobRepo.CancelJobsForPhoneNumberAsync(payload.From);
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        var entryArray = doc.RootElement.GetProperty("entry");
+        foreach (var entry in entryArray.EnumerateArray())
+        {
+            var changesArray = entry.GetProperty("changes");
+            foreach (var change in changesArray.EnumerateArray())
+            {
+                var value = change.GetProperty("value");
+                
+                // Handle inbound messages (Replies)
+                if (value.TryGetProperty("messages", out var messages))
+                {
+                    foreach (var msg in messages.EnumerateArray())
+                    {
+                        var from = msg.GetProperty("from").GetString();
+                        var text = msg.GetProperty("text").GetProperty("body").GetString();
+                        
+                        var inboxMsg = new HotelAutomation.Core.Models.InboxMessage
+                        {
+                            FromPhoneNumber = from ?? "unknown",
+                            Content = text ?? "",
+                            IsRead = false,
+                            ReceivedAt = DateTimeOffset.UtcNow
+                        };
+                        await inboxRepo.AddAsync(inboxMsg);
+                        await jobRepo.CancelJobsForPhoneNumberAsync(from ?? "");
+                    }
+                }
+                
+                // Handle statuses (Delivered, Read)
+                if (value.TryGetProperty("statuses", out var statuses))
+                {
+                    foreach (var status in statuses.EnumerateArray())
+                    {
+                        var id = status.GetProperty("id").GetString();
+                        var statusStr = status.GetProperty("status").GetString(); // e.g., 'delivered', 'read'
+                        
+                        if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(statusStr))
+                        {
+                            // Update our DB mapping
+                            using var conn = await dbFactory.OpenAsync();
+                            // Only update if it's progressing forward (e.g. Sent -> Delivered -> Read)
+                            // For simplicity, we just overwrite if it's Delivered or Read.
+                            var capitalizedStatus = char.ToUpper(statusStr[0]) + statusStr.Substring(1);
+                            await conn.ExecuteAsync("UPDATE OutboxMessages SET Status = @Status WHERE ExternalMessageId = @Id", new { Status = capitalizedStatus, Id = id });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Webhook parsing failed: {ex.Message}");
+    }
 
     return Results.Ok();
 });
@@ -177,6 +245,36 @@ app.Lifetime.ApplicationStarted.Register(() =>
         app.Logger.LogError(ex, "Failed to initialize DB or open browser");
     }
 });
+
+app.MapPost("/api/test-webhook", async (string wamid, string status, SqliteConnectionFactory dbFactory) => 
+{
+    using var conn = await dbFactory.OpenAsync();
+    await conn.ExecuteAsync("UPDATE OutboxMessages SET Status = @Status WHERE ExternalMessageId = @Id OR Id = @Id", new { Status = status, Id = wamid });
+    return Results.Ok(new { message = $"Status updated to {status}" });
+});
+
+app.MapGet("/api/categories", async (CategoryRepository repo) => await repo.GetAllAsync());
+app.MapPost("/api/categories", async (HotelAutomation.Core.Models.ContactCategory cat, CategoryRepository repo) => 
+{
+    var id = await repo.AddAsync(cat);
+    return Results.Ok(new { id });
+});
+
+app.MapGet("/api/contacts", async (int? categoryId, ContactRepository repo) => await repo.GetAllAsync(categoryId));
+app.MapPost("/api/contacts", async (HotelAutomation.Core.Models.Contact contact, ContactRepository repo) => 
+{
+    await repo.UpsertAsync(contact);
+    return Results.Ok();
+});
+
+app.MapPost("/api/contacts/import", async (HttpContext ctx, [Microsoft.AspNetCore.Mvc.FromForm] int? categoryId, CsvImportService importService) => 
+{
+    if (!ctx.Request.HasFormContentType || ctx.Request.Form.Files.Count == 0) return Results.BadRequest("No file uploaded");
+    var file = ctx.Request.Form.Files[0];
+    using var stream = file.OpenReadStream();
+    var count = await importService.ProcessCsvAsync(stream, categoryId);
+    return Results.Ok(new { importedCount = count });
+}).DisableAntiforgery();
 
 app.Run();
 

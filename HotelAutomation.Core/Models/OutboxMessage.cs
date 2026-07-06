@@ -10,4 +10,5 @@ public sealed record OutboxMessage
     public int RetryCount { get; init; } = 0;
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SentAt { get; init; }
+    public string? ExternalMessageId { get; init; }
 }

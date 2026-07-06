@@ -23,4 +23,10 @@ public sealed class EventLogRepository
             OccurredAt = pmsEvent.Timestamp.ToString("O")
         });
     }
+
+    public async Task<IEnumerable<dynamic>> GetRecentLogsAsync(int limit = 100, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        return await conn.QueryAsync("SELECT * FROM EventLog ORDER BY OccurredAt DESC LIMIT @Limit", new { Limit = limit });
+    }
 }

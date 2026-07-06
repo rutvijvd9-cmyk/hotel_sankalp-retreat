@@ -6,6 +6,6 @@ public interface IOutboxRepository
 {
     Task<int> AddAsync(OutboxMessage message, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<OutboxMessage>> GetPendingAsync(int limit, CancellationToken cancellationToken = default);
-    Task UpdateStatusAsync(int id, string status, int retryCount, DateTimeOffset? sentAt,
+    Task UpdateStatusAsync(int id, string status, int retryCount, DateTimeOffset? sentAt, string? externalMessageId,
         CancellationToken cancellationToken = default);
 }

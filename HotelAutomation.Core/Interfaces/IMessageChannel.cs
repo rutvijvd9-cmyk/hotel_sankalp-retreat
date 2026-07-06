@@ -8,5 +8,6 @@ using HotelAutomation.Core.Models;
 /// </summary>
 public interface IMessageChannel
 {
-    Task<bool> SendAsync(OutboxMessage message, CancellationToken cancellationToken);
+    string ChannelType { get; }
+    Task<(bool Success, string? ExternalId)> SendAsync(OutboxMessage message, CancellationToken cancellationToken);
 }
