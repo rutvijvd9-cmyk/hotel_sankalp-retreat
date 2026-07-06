@@ -34,6 +34,7 @@ builder.Services.AddSingleton<InboxRepository>();
 builder.Services.AddSingleton<CategoryRepository>();
 builder.Services.AddSingleton<ContactRepository>();
 builder.Services.AddSingleton<CsvImportService>();
+builder.Services.AddSingleton<BroadcastRepository>();
 
 // ── WhatsApp Connector ────────────────────────────────────────────────────────
 builder.Services.Configure<WhatsAppOptions>(
@@ -44,8 +45,24 @@ builder.Services.AddSingleton<IMessageChannel, WhatsAppMessageSender>();
 builder.Services.AddSingleton<IMessageChannel, SmsMessageSender>();
 
 // ── PMS Connector ─────────────────────────────────────────────────────────────
-builder.Services.AddSingleton<ManualPmsConnector>();
-builder.Services.AddSingleton<IPmsEventSource>(sp => sp.GetRequiredService<ManualPmsConnector>());
+var pmsType = builder.Configuration.GetValue<string>("PmsConnectorType") ?? "Manual";
+if (pmsType == "Database")
+{
+    var pmsOptions = new DatabasePmsOptions();
+    builder.Configuration.GetSection(DatabasePmsOptions.SectionName).Bind(pmsOptions);
+    builder.Services.AddSingleton(pmsOptions);
+    builder.Services.AddSingleton<IPmsEventSource>(sp => 
+        new DatabasePmsConnector(
+            sp.GetRequiredService<DatabasePmsOptions>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DatabasePmsConnector>>(),
+            builder.Configuration.GetConnectionString("Sqlite")!
+        ));
+}
+else
+{
+    builder.Services.AddSingleton<ManualPmsConnector>();
+    builder.Services.AddSingleton<IPmsEventSource>(sp => sp.GetRequiredService<ManualPmsConnector>());
+}
 
 // ── Hosted Services (Background Engine) ───────────────────────────────────────
 builder.Services.AddHostedService<HotelWorker>();
@@ -93,6 +110,17 @@ app.MapPost("/api/rules", (HotelAutomation.Core.Models.AutomationRule rule) =>
 {
     return Results.Ok(rule);
 });
+
+// ── Broadcast Campaign Endpoint ────────────────────────────────────────────
+app.MapPost("/api/broadcast", async (BroadcastRequest req, BroadcastRepository broadcastRepo) =>
+{
+    if (req.TemplateId <= 0) return Results.BadRequest("TemplateId is required.");
+    var count = await broadcastRepo.QueueBroadcastAsync(req.TemplateId, req.CategoryId, req.CustomParametersJson ?? "{}");
+    return Results.Ok(new { queued = count, message = $"{count} messages queued for broadcast." });
+});
+
+app.MapGet("/api/broadcast", async (BroadcastRepository broadcastRepo) =>
+    await broadcastRepo.GetRecentBroadcastsAsync(50));
 
 app.MapPost("/api/test-event", (string? phone, ManualPmsConnector pms) => 
 {
@@ -190,6 +218,13 @@ app.MapPost("/api/pms/checkin", async (HotelAutomation.Core.Models.PmsEventPaylo
         PhoneNumber = payload.PhoneNumber,
         RoomNumber = payload.RoomNumber,
         Amount = payload.TotalBill,
+        CheckInDate = payload.CheckInDate ?? DateTimeOffset.UtcNow.ToString("d MMM yyyy"),
+        CheckOutDate = payload.CheckOutDate,
+        WifiPassword = payload.WifiPassword,
+        BookingReference = payload.BookingReference,
+        GuestFeedbackLink = payload.GuestFeedbackLink,
+        HotelName = payload.HotelName,
+        ExtraNote = payload.ExtraNote,
         Timestamp = DateTimeOffset.UtcNow
     });
     return Results.Ok(new { status = "success", message = "CheckIn event queued." });
@@ -209,6 +244,13 @@ app.MapPost("/api/pms/checkout", async (HotelAutomation.Core.Models.PmsEventPayl
         PhoneNumber = payload.PhoneNumber,
         RoomNumber = payload.RoomNumber,
         Amount = payload.TotalBill,
+        CheckInDate = payload.CheckInDate,
+        CheckOutDate = payload.CheckOutDate ?? DateTimeOffset.UtcNow.ToString("d MMM yyyy"),
+        WifiPassword = payload.WifiPassword,
+        BookingReference = payload.BookingReference,
+        GuestFeedbackLink = payload.GuestFeedbackLink,
+        HotelName = payload.HotelName,
+        ExtraNote = payload.ExtraNote,
         Timestamp = DateTimeOffset.UtcNow
     });
     return Results.Ok(new { status = "success", message = "CheckOut event queued." });
@@ -279,3 +321,16 @@ app.MapPost("/api/contacts/import", async (HttpContext ctx, [Microsoft.AspNetCor
 app.Run();
 
 public class WebhookPayload { public string From { get; set; } = ""; public string Body { get; set; } = ""; }
+
+/// <summary>Request body for POST /api/broadcast</summary>
+public record BroadcastRequest
+{
+    /// <summary>The ID of the MessageTemplate to send.</summary>
+    public int TemplateId { get; init; }
+
+    /// <summary>If set, only send to contacts in this category. Null = all contacts.</summary>
+    public int? CategoryId { get; init; }
+
+    /// <summary>Optional JSON with extra template parameters to include in every message.</summary>
+    public string? CustomParametersJson { get; init; }
+}

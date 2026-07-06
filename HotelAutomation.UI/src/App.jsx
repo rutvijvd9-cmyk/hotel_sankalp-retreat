@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone } from 'lucide-react';
 
 const API_BASE = '/api';
 
@@ -13,6 +13,9 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [templatesList, setTemplatesList] = useState([]);
   const [rulesList, setRulesList] = useState([]);
+  const [broadcasts, setBroadcasts] = useState([]);
+  const [selectedBroadcastCategory, setSelectedBroadcastCategory] = useState('');
+  const [selectedBroadcastTemplate, setSelectedBroadcastTemplate] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [isFiring, setIsFiring] = useState(false);
   const [testPhoneNumber, setTestPhoneNumber] = useState('+15556585587');
@@ -30,22 +33,31 @@ export default function App() {
         setStats(s => ({ ...s, outbox: outboxData.length }));
       }
       
+      if (activeTab === 'templates' || activeTab === 'broadcasts') {
+        const templatesRes = await fetch(`${API_BASE}/templates`).catch(() => null);
+        if (templatesRes) setTemplatesList(await templatesRes.json());
+      }
+      
       const rulesRes = await fetch(`${API_BASE}/rules`).catch(() => null);
       if (rulesRes) {
         const rulesData = await rulesRes.json();
         setRulesList(rulesData);
         setStats(s => ({ ...s, rules: rulesData.length }));
       }
-
-      const templatesRes = await fetch(`${API_BASE}/templates`).catch(() => null);
-      if (templatesRes) {
-        const templatesData = await templatesRes.json();
-        setTemplatesList(templatesData);
-        setStats(s => ({ ...s, templates: templatesData.length }));
-      }
       
-      const logsRes = await fetch(`${API_BASE}/logs`).catch(() => null);
-      if (logsRes) setLogs(await logsRes.json());
+      if (activeTab === 'logs') {
+        const logsRes = await fetch(`${API_BASE}/logs`).catch(() => null);
+        if (logsRes) setLogs(await logsRes.json());
+      }
+
+      if (activeTab === 'broadcasts') {
+        const bRes = await fetch(`${API_BASE}/broadcast`).catch(() => null);
+        if (bRes) setBroadcasts(await bRes.json());
+        if (categories.length === 0) {
+          const catRes = await fetch(`${API_BASE}/categories`).catch(() => null);
+          if (catRes) setCategories(await catRes.json());
+        }
+      }
       
       const inboxRes = await fetch(`${API_BASE}/inbox`).catch(() => null);
       if (inboxRes) {
@@ -393,6 +405,88 @@ export default function App() {
       );
     }
 
+    if (activeTab === 'broadcasts') {
+      const handleSendBroadcast = async () => {
+        if (!selectedBroadcastTemplate) { alert("Please select a template"); return; }
+        try {
+          const res = await fetch(`${API_BASE}/broadcast`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              TemplateId: parseInt(selectedBroadcastTemplate),
+              CategoryId: selectedBroadcastCategory ? parseInt(selectedBroadcastCategory) : null
+            })
+          });
+          const data = await res.json();
+          alert(data.message);
+          fetchData();
+        } catch (err) {
+          alert("Failed to queue broadcast");
+        }
+      };
+
+      return (
+        <div>
+          <div className="card" style={{ marginBottom: '24px' }}>
+            <h3 className="card-title">New Broadcast Campaign</h3>
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Target Audience</label>
+                <select 
+                  className="input" 
+                  value={selectedBroadcastCategory}
+                  onChange={e => setSelectedBroadcastCategory(e.target.value)}
+                  style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0' }}
+                >
+                  <option value="">All Contacts</option>
+                  {categories.map(c => <option key={c.Id || c.id} value={c.Id || c.id}>{c.Name || c.name}</option>)}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Message Template</label>
+                <select 
+                  className="input"
+                  value={selectedBroadcastTemplate}
+                  onChange={e => setSelectedBroadcastTemplate(e.target.value)}
+                  style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0' }}
+                >
+                  <option value="">Select a template...</option>
+                  {templatesList.map(t => <option key={t.Id || t.id} value={t.Id || t.id}>{t.Name || t.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <button className="btn btn-primary" onClick={handleSendBroadcast} style={{ padding: '10px 24px' }}>
+                  <Megaphone size={16} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
+                  Send Broadcast
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3 className="card-title">Recent Broadcasts</h3>
+            <div className="data-table-container">
+              <table className="data-table">
+                <thead><tr><th>Started At</th><th>Template</th><th>Total Queued</th><th>Delivered</th><th>Pending</th></tr></thead>
+                <tbody>
+                  {broadcasts.map((b, i) => (
+                    <tr key={i}>
+                      <td>{new Date(b.StartedAt || b.startedAt).toLocaleString()}</td>
+                      <td>{b.TemplateName || b.templateName}</td>
+                      <td>{b.TotalSent || b.totalSent}</td>
+                      <td><span className="badge badge-delivered">{b.Delivered || b.delivered}</span></td>
+                      <td><span className="badge badge-pending">{b.Pending || b.pending}</span></td>
+                    </tr>
+                  ))}
+                  {broadcasts.length === 0 && <tr><td colSpan="5" style={{ textAlign: 'center', padding: '24px' }}>No broadcasts sent yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return null;
   };
 
@@ -411,6 +505,9 @@ export default function App() {
           </div>
           <div className={`nav-item ${activeTab === 'templates' ? 'active' : ''}`} onClick={() => setActiveTab('templates')}>
             <MessagesSquare size={20} /> Templates
+          </div>
+          <div className={`nav-item ${activeTab === 'broadcasts' ? 'active' : ''}`} onClick={() => setActiveTab('broadcasts')}>
+            <Megaphone size={20} /> Broadcasts
           </div>
           <div className={`nav-item ${activeTab === 'rules' ? 'active' : ''}`} onClick={() => setActiveTab('rules')}>
             <Workflow size={20} /> Automation Rules

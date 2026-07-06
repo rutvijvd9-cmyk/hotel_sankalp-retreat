@@ -76,13 +76,25 @@ public sealed class HotelWorker : BackgroundService
                 TemplateId = matchedTemplate.Id,
                 ParametersJson = System.Text.Json.JsonSerializer.Serialize(new 
                 { 
-                    Name = SpintaxParser.Parse("{Hi|Hello|Hey} ") + pmsEvent.GuestName, 
+                    // Core guest info
+                    Name = pmsEvent.GuestName,
                     Room = pmsEvent.RoomNumber, 
-                    Bill = pmsEvent.Amount 
+                    Amount = pmsEvent.Amount?.ToString("N2") ?? "0.00",
+                    HotelName = pmsEvent.HotelName ?? "Sankalp Retreat",
+                    // Rich check-in/out fields
+                    CheckInDate = pmsEvent.CheckInDate ?? DateTimeOffset.UtcNow.ToString("d MMM yyyy"),
+                    CheckOutDate = pmsEvent.CheckOutDate ?? DateTimeOffset.UtcNow.AddDays(1).ToString("d MMM yyyy"),
+                    WifiPassword = pmsEvent.WifiPassword ?? "SankalpGuest@2026",
+                    BookingReference = pmsEvent.BookingReference ?? $"BK-{DateTimeOffset.UtcNow:yyyyMMdd}-{pmsEvent.RoomNumber}",
+                    FeedbackLink = pmsEvent.GuestFeedbackLink ?? "https://g.page/sankalp-retreat/review",
+                    ExtraNote = pmsEvent.ExtraNote ?? string.Empty,
+                    // Greeting with spintax for variety
+                    Greeting = SpintaxParser.Parse("{Hi|Hello|Namaste} ")
                 }),
                 TriggerTime = DateTimeOffset.UtcNow.AddMinutes(matchedRule.DelayMinutes),
                 Status = "Pending"
             };
+
 
             await _jobRepository.AddAsync(job);
             
