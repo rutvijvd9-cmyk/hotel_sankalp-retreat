@@ -41,4 +41,33 @@ public sealed class TemplateRepository : ITemplateRepository
             CreatedAt = DateTimeOffset.UtcNow.ToString("O")
         });
     }
+
+    public async Task<bool> UpdateAsync(int id, MessageTemplate template, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        var sql = @"
+            UPDATE MessageTemplates 
+            SET Name = @Name, ExternalTemplateName = @ExternalTemplateName, LanguageCode = @LanguageCode, ChannelType = @ChannelType
+            WHERE Id = @id";
+        
+        var rows = await conn.ExecuteAsync(sql, new
+        {
+            id,
+            template.Name,
+            template.ExternalTemplateName,
+            template.LanguageCode,
+            template.ChannelType
+        });
+        return rows > 0;
+    }
+
+    public async Task<bool> DeleteAsync(int id, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        // Ensure no automation rules are using this template before deleting (or cascade)
+        // For simplicity, we just delete
+        var sql = "DELETE FROM MessageTemplates WHERE Id = @id";
+        var rows = await conn.ExecuteAsync(sql, new { id });
+        return rows > 0;
+    }
 }

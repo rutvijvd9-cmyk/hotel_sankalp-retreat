@@ -107,6 +107,18 @@ app.MapPost("/api/templates", async (HotelAutomation.Core.Models.MessageTemplate
     return Results.Ok(new { id });
 });
 
+app.MapPut("/api/templates/{id}", async (int id, HotelAutomation.Core.Models.MessageTemplate template, ITemplateRepository repo) => 
+{
+    var success = await repo.UpdateAsync(id, template);
+    return success ? Results.Ok() : Results.NotFound();
+});
+
+app.MapDelete("/api/templates/{id}", async (int id, ITemplateRepository repo) => 
+{
+    var success = await repo.DeleteAsync(id);
+    return success ? Results.Ok() : Results.NotFound();
+});
+
 app.MapPost("/api/rules", (HotelAutomation.Core.Models.AutomationRule rule) => 
 {
     return Results.Ok(rule);

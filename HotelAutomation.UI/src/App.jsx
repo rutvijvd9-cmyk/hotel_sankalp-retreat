@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2 } from 'lucide-react';
 
 const API_BASE = '/api';
 
@@ -20,6 +20,8 @@ export default function App() {
   const [isFiring, setIsFiring] = useState(false);
   const [testPhoneNumber, setTestPhoneNumber] = useState('+15556585587');
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [isEditingTemplate, setIsEditingTemplate] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState(null);
   const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp' });
 
   useEffect(() => {
@@ -329,26 +331,56 @@ export default function App() {
     }
 
     if (activeTab === 'templates') {
-      const handleCreateTemplate = async () => {
+      const handleSaveTemplate = async () => {
         if (!newTemplate.Name || !newTemplate.ExternalTemplateName) {
           alert('Name and External Template Name are required');
           return;
         }
         try {
-          const res = await fetch(`${API_BASE}/templates`, {
-            method: 'POST',
+          const url = isEditingTemplate ? `${API_BASE}/templates/${editingTemplateId}` : `${API_BASE}/templates`;
+          const method = isEditingTemplate ? 'PUT' : 'POST';
+          const res = await fetch(url, {
+            method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(newTemplate)
           });
           if (res.ok) {
             setShowTemplateModal(false);
             setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp' });
+            setIsEditingTemplate(false);
+            setEditingTemplateId(null);
             fetchData();
           } else {
-            alert('Failed to create template');
+            alert('Failed to save template');
           }
         } catch (err) {
-          alert('Error creating template');
+          alert('Error saving template');
+        }
+      };
+
+      const handleEditTemplate = (t) => {
+        setNewTemplate({
+          Name: t.Name || t.name,
+          ExternalTemplateName: t.ExternalTemplateName || t.externalTemplateName || '',
+          LanguageCode: t.LanguageCode || t.languageCode || 'en',
+          ChannelType: t.ChannelType || t.channelType || 'WhatsApp'
+        });
+        setEditingTemplateId(t.Id || t.id);
+        setIsEditingTemplate(true);
+        setShowTemplateModal(true);
+      };
+
+      const handleDeleteTemplate = async (id) => {
+        if (!window.confirm('Are you sure you want to delete this template?')) return;
+        try {
+          const res = await fetch(`${API_BASE}/templates/${id}`, { method: 'DELETE' });
+          if (res.ok) {
+            fetchData();
+          } else {
+            alert('Failed to delete template');
+          }
+        } catch (err) {
+          alert('Error deleting template');
         }
       };
 
@@ -356,7 +388,12 @@ export default function App() {
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
             <h3 className="card-title">Message Templates</h3>
-            <button className="btn btn-primary" onClick={() => setShowTemplateModal(true)}>
+            <button className="btn btn-primary" onClick={() => {
+              setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp' });
+              setIsEditingTemplate(false);
+              setEditingTemplateId(null);
+              setShowTemplateModal(true);
+            }}>
               <Plus size={16} /> Create Template
             </button>
           </div>
@@ -364,7 +401,7 @@ export default function App() {
           {showTemplateModal && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
               <div className="card" style={{ width: '400px' }}>
-                <h3 className="card-title" style={{ marginBottom: '16px' }}>New Template</h3>
+                <h3 className="card-title" style={{ marginBottom: '16px' }}>{isEditingTemplate ? 'Edit Template' : 'New Template'}</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <input type="text" className="input" placeholder="Display Name (e.g. CheckIn Welcome)" value={newTemplate.Name} onChange={e => setNewTemplate({...newTemplate, Name: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
                   <input type="text" className="input" placeholder="Meta Template Name (e.g. hotel_checkin)" value={newTemplate.ExternalTemplateName} onChange={e => setNewTemplate({...newTemplate, ExternalTemplateName: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
@@ -375,7 +412,7 @@ export default function App() {
                   </select>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
                     <button className="btn btn-secondary" onClick={() => setShowTemplateModal(false)}>Cancel</button>
-                    <button className="btn btn-primary" onClick={handleCreateTemplate}>Save</button>
+                    <button className="btn btn-primary" onClick={handleSaveTemplate}>Save</button>
                   </div>
                 </div>
               </div>
@@ -384,13 +421,23 @@ export default function App() {
 
           <div className="data-table-container">
             <table className="data-table">
-              <thead><tr><th>Name</th><th>Subject</th><th>Channel</th></tr></thead>
+              <thead><tr><th>Name</th><th>External Name</th><th>Channel</th><th>Actions</th></tr></thead>
               <tbody>
                 {templatesList.map(t => (
                   <tr key={t.Id || t.id}>
                     <td>{t.Name || t.name}</td>
-                    <td>{t.Subject || t.subject || '-'}</td>
-                    <td><span className="badge badge-sent">WhatsApp</span></td>
+                    <td>{t.ExternalTemplateName || t.externalTemplateName || '-'}</td>
+                    <td><span className="badge badge-sent">{t.ChannelType || t.channelType}</span></td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={() => handleEditTemplate(t)}>
+                          <Edit2 size={14} />
+                        </button>
+                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#ef4444' }} onClick={() => handleDeleteTemplate(t.Id || t.id)}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
