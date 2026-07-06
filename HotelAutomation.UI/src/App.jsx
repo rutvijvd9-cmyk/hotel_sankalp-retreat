@@ -406,10 +406,24 @@ export default function App() {
         setShowEditContactModal(true);
       };
 
+      const handleAddContactClick = () => {
+        setEditingContactId(null);
+        setEditContactData({
+            PhoneNumber: '',
+            FirstName: '',
+            LastName: '',
+            CustomFieldsJson: '{}'
+        });
+        setShowEditContactModal(true);
+      };
+
       const handleSaveContact = async () => {
           try {
-              const res = await fetch(`${API_BASE}/contacts/${editingContactId}`, {
-                  method: 'PUT',
+              const url = editingContactId ? `${API_BASE}/contacts/${editingContactId}` : `${API_BASE}/contacts`;
+              const method = editingContactId ? 'PUT' : 'POST';
+              
+              const res = await fetch(url, {
+                  method,
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                       ...editContactData,
@@ -420,10 +434,10 @@ export default function App() {
                   setShowEditContactModal(false);
                   fetchData();
               } else {
-                  alert("Failed to update contact.");
+                  alert("Failed to save contact.");
               }
           } catch(e) {
-              alert("Error updating contact.");
+              alert("Error saving contact.");
           }
       };
 
@@ -459,6 +473,9 @@ export default function App() {
             <div style={{ flex: 1 }}></div>
             <button className="btn btn-secondary" onClick={() => setShowColumnModal(true)}>
               <Settings size={16} /> Manage Columns
+            </button>
+            <button className="btn btn-secondary" onClick={handleAddContactClick}>
+              <Plus size={16} /> Add Contact
             </button>
             <button className="btn btn-secondary" onClick={handleDeleteAllContacts} style={{ color: '#ef4444', borderColor: '#ef4444' }}>
               <Trash2 size={16} /> Delete All
@@ -580,7 +597,7 @@ export default function App() {
           {showEditContactModal && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
               <div className="card" style={{ width: '500px' }}>
-                <h3 className="card-title" style={{ marginBottom: '16px' }}>Edit Contact</h3>
+                <h3 className="card-title" style={{ marginBottom: '16px' }}>{editingContactId ? 'Edit Contact' : 'Add Contact'}</h3>
                 
                 <div className="form-group" style={{ marginBottom: '16px' }}>
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Phone Number</label>

@@ -94,6 +94,25 @@ public sealed class ContactRepository
         return rows > 0;
     }
 
+    public async Task<int> InsertAsync(Contact contact, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        var sql = @"
+            INSERT INTO Contacts (PhoneNumber, FirstName, LastName, CategoryId, CustomFieldsJson, CreatedAt)
+            VALUES (@PhoneNumber, @FirstName, @LastName, @CategoryId, @CustomFieldsJson, @CreatedAt);
+            SELECT last_insert_rowid();";
+        
+        return await conn.ExecuteScalarAsync<int>(sql, new
+        {
+            contact.PhoneNumber,
+            contact.FirstName,
+            contact.LastName,
+            contact.CategoryId,
+            contact.CustomFieldsJson,
+            CreatedAt = contact.CreatedAt.ToString("O")
+        });
+    }
+
     public async Task<bool> UpdateAsync(int id, Contact contact, CancellationToken ct = default)
     {
         await using var conn = await _factory.OpenAsync(ct);

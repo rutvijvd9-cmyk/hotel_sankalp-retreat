@@ -349,6 +349,12 @@ app.MapDelete("/api/contacts/{id}", async (int id, ContactRepository repo) =>
     return success ? Results.Ok() : Results.NotFound();
 });
 
+app.MapPost("/api/contacts", async (HotelAutomation.Core.Models.Contact contact, ContactRepository repo) => 
+{
+    var newId = await repo.InsertAsync(contact);
+    return Results.Ok(new { id = newId });
+});
+
 app.MapPut("/api/contacts/{id}", async (int id, HotelAutomation.Core.Models.Contact contact, ContactRepository repo) => 
 {
     var success = await repo.UpdateAsync(id, contact);
