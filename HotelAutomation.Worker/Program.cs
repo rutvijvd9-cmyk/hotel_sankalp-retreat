@@ -11,6 +11,16 @@ using Dapper;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.WebHost.ConfigureKestrel(options => 
+{
+    options.Limits.MaxRequestBodySize = 250_000_000; // 250 MB
+});
+
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 250_000_000; // 250 MB
+});
+
 // Enable CORS for the React UI
 builder.Services.AddCors(options => {
     options.AddDefaultPolicy(policy => {
