@@ -367,12 +367,6 @@ app.MapDelete("/api/contacts/columns/{columnName}", async (string columnName, Co
     return Results.Ok(new { message = $"Column '{columnName}' deleted from {updatedRows} contacts." });
 });
 
-app.MapPost("/api/contacts", async (HotelAutomation.Core.Models.Contact contact, ContactRepository repo) => 
-{
-    await repo.UpsertAsync(contact);
-    return Results.Ok();
-});
-
 app.MapPost("/api/contacts/import/chunk", async (List<HotelAutomation.Core.Models.Contact> contacts, ContactRepository repo) => 
 {
     await repo.UpsertBulkAsync(contacts);
