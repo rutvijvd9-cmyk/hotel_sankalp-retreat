@@ -367,6 +367,12 @@ app.MapPost("/api/contacts", async (HotelAutomation.Core.Models.Contact contact,
     return Results.Ok();
 });
 
+app.MapPost("/api/contacts/import/chunk", async (List<HotelAutomation.Core.Models.Contact> contacts, ContactRepository repo) => 
+{
+    await repo.UpsertBulkAsync(contacts);
+    return Results.Ok(new { importedCount = contacts.Count });
+});
+
 app.MapPost("/api/contacts/import", async (HttpContext ctx, [Microsoft.AspNetCore.Mvc.FromForm] int? categoryId, CsvImportService importService) => 
 {
     if (!ctx.Request.HasFormContentType || ctx.Request.Form.Files.Count == 0) return Results.BadRequest("No file uploaded");

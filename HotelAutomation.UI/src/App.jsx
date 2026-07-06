@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Papa from 'papaparse';
 import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings } from 'lucide-react';
 
 const API_BASE = '/api';
@@ -29,6 +30,15 @@ export default function App() {
   const [testPhoneNumber, setTestPhoneNumber] = useState('+15556585587');
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showColumnModal, setShowColumnModal] = useState(false);
+  
+  // Interactive CSV Import States
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [previewData, setPreviewData] = useState([]);
+  const [previewHeaders, setPreviewHeaders] = useState([]);
+  const [importTotalRows, setImportTotalRows] = useState(0);
+  const [importProgress, setImportProgress] = useState(0);
+  const [parsedContacts, setParsedContacts] = useState([]);
+
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
   const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp' });
@@ -258,26 +268,96 @@ export default function App() {
     }
 
     if (activeTab === 'contacts') {
-      const handleImport = async (e) => {
+      const handleFileSelect = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        const formData = new FormData();
-        formData.append('file', file);
-        if (selectedCategory) formData.append('categoryId', selectedCategory);
         
+        setIsImporting(true); // show loading state while parsing
+        Papa.parse(file, {
+          header: true,
+          skipEmptyLines: true,
+          complete: function(results) {
+            const data = results.data;
+            if (data.length === 0) {
+              alert("CSV is empty");
+              setIsImporting(false);
+              return;
+            }
+            
+            const headers = Object.keys(data[0]);
+            setPreviewHeaders(headers);
+            setPreviewData(data.slice(0, 100)); // Show first 100 for preview
+            
+            const contactsList = data.map(row => {
+                let phone = null;
+                let firstName = null;
+                let lastName = null;
+                let customFields = {};
+                
+                Object.keys(row).forEach(h => {
+                    const hLower = h.toLowerCase();
+                    const val = row[h];
+                    if (!val || val.trim() === '') return;
+                    
+                    if (hLower === 'phone' || hLower === 'phonenumber') phone = val;
+                    else if (hLower === 'firstname' || hLower === 'first_name' || hLower === 'first name') firstName = val;
+                    else if (hLower === 'lastname' || hLower === 'last_name' || hLower === 'last name') lastName = val;
+                    else customFields[h] = val;
+                });
+                
+                return {
+                    PhoneNumber: phone,
+                    FirstName: firstName,
+                    LastName: lastName,
+                    CustomFieldsJson: JSON.stringify(customFields)
+                };
+            }).filter(c => c.PhoneNumber);
+            
+            setParsedContacts(contactsList);
+            setImportTotalRows(contactsList.length);
+            setImportProgress(0);
+            
+            setIsImporting(false);
+            setImportModalOpen(true);
+            e.target.value = null;
+          }
+        });
+      };
+
+      const handleStartImport = async () => {
         setIsImporting(true);
-        try {
-          const res = await fetch(`${API_BASE}/contacts/import`, { method: 'POST', body: formData });
-          if (!res.ok) throw new Error('Upload failed');
-          const data = await res.json();
-          alert(`Success! Imported ${data.importedCount} contacts.`);
-          fetchData();
-        } catch (err) {
-          alert("Import failed! Ensure the file is a valid CSV.");
-        } finally {
-          setIsImporting(false);
-          e.target.value = null;
+        const chunkSize = 5000;
+        let imported = 0;
+        
+        for (let i = 0; i < parsedContacts.length; i += chunkSize) {
+            const chunk = parsedContacts.slice(i, i + chunkSize).map(c => ({
+                ...c,
+                CategoryId: selectedCategory || null
+            }));
+            
+            try {
+                const res = await fetch(`${API_BASE}/contacts/import/chunk`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(chunk)
+                });
+                if (res.ok) {
+                    imported += chunk.length;
+                    setImportProgress(Math.min(imported, importTotalRows));
+                } else {
+                    throw new Error("Failed chunk");
+                }
+            } catch(e) {
+                alert("Import failed at chunk " + (Math.floor(i / chunkSize) + 1));
+                break;
+            }
         }
+        
+        alert(`Finished importing! Total imported: ${imported}`);
+        setIsImporting(false);
+        setImportModalOpen(false);
+        setParsedContacts([]);
+        fetchData();
       };
 
       const handleAddCategory = async () => {
@@ -384,8 +464,8 @@ export default function App() {
               <Trash2 size={16} /> Delete All
             </button>
             <label className="btn btn-primary" style={{ cursor: isImporting ? 'not-allowed' : 'pointer', backgroundColor: isImporting ? '#94a3b8' : '#10b981' }}>
-              {isImporting ? 'Importing...' : <><Upload size={16} /> Import CSV</>}
-              <input type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} disabled={isImporting} />
+              {isImporting ? 'Loading CSV...' : <><Upload size={16} /> Import CSV</>}
+              <input type="file" accept=".csv" style={{ display: 'none' }} onChange={handleFileSelect} disabled={isImporting} />
             </label>
           </div>
 
@@ -530,6 +610,74 @@ export default function App() {
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
                   <button className="btn btn-secondary" onClick={() => setShowEditContactModal(false)}>Cancel</button>
                   <button className="btn btn-primary" onClick={handleSaveContact}>Save</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {importModalOpen && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+              <div className="card" style={{ width: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
+                <h3 className="card-title" style={{ marginBottom: '16px' }}>Import Contacts Preview</h3>
+                
+                <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', alignItems: 'center' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Select Category for these contacts</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <select 
+                        value={selectedCategory} 
+                        onChange={e => setSelectedCategory(e.target.value)} 
+                        style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1 }}
+                      >
+                        <option value="">No Category (All Contacts)</option>
+                        {categories.map(c => <option key={c.Id || c.id} value={c.Id || c.id}>{c.Name || c.name}</option>)}
+                      </select>
+                      <button className="btn btn-secondary" onClick={handleAddCategory}>
+                        <Plus size={16} /> Create New
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ fontWeight: 500 }}>Total Valid Contacts Detected: {importTotalRows}</p>
+                  <p style={{ color: '#64748b', fontSize: '0.9em' }}>Previewing first 100 rows:</p>
+                </div>
+
+                <div className="data-table-container" style={{ maxHeight: '300px', marginBottom: '24px' }}>
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        {previewHeaders.map(h => <th key={h}>{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewData.map((row, i) => (
+                        <tr key={i}>
+                          {previewHeaders.map(h => <td key={h}>{row[h]}</td>)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {isImporting && (
+                  <div style={{ marginBottom: '24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <span style={{ fontWeight: 500 }}>Importing Contacts...</span>
+                      <span>{importProgress} / {importTotalRows}</span>
+                    </div>
+                    <div style={{ width: '100%', height: '8px', backgroundColor: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div style={{ width: `${(importProgress / importTotalRows) * 100}%`, height: '100%', backgroundColor: '#10b981', transition: 'width 0.3s ease' }}></div>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                  <button className="btn btn-secondary" onClick={() => setImportModalOpen(false)} disabled={isImporting}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleStartImport} disabled={isImporting || importTotalRows === 0}>
+                    {isImporting ? 'Processing...' : 'Start Import'}
+                  </button>
                 </div>
               </div>
             </div>
