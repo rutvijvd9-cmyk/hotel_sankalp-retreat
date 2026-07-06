@@ -7,4 +7,5 @@ public sealed record AutomationRule
     public int TemplateId { get; init; }
     public bool IsEnabled { get; init; } = true;
     public string? ConditionsJson { get; init; }            // reserved for future extra-matching logic
+    public int DelayMinutes { get; init; } = 0;             // Support for Drip Campaigns
 }

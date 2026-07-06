@@ -9,7 +9,7 @@ using HotelAutomation.Core.Models;
 /// </summary>
 public static class AutomationRuleMatcher
 {
-    public static MessageTemplate? Match(
+    public static (MessageTemplate Template, AutomationRule Rule)? Match(
         PmsEvent pmsEvent,
         IReadOnlyList<AutomationRule> enabledRules,
         IReadOnlyList<MessageTemplate> allTemplates)
@@ -22,6 +22,10 @@ public static class AutomationRuleMatcher
         if (matchingRule is null)
             return null;
 
-        return allTemplates.FirstOrDefault(t => t.Id == matchingRule.TemplateId);
+        var template = allTemplates.FirstOrDefault(t => t.Id == matchingRule.TemplateId);
+        if (template is null)
+            return null;
+
+        return (template, matchingRule);
     }
 }

@@ -15,6 +15,7 @@ public sealed class HotelWorker : BackgroundService
     private readonly ITemplateRepository _templateRepository;
     private readonly IOutboxRepository _outboxRepository;
     private readonly EventLogRepository _eventLog;
+    private readonly JobRepository _jobRepository;
     private readonly ILogger<HotelWorker> _logger;
 
     public HotelWorker(
@@ -23,6 +24,7 @@ public sealed class HotelWorker : BackgroundService
         ITemplateRepository templateRepository,
         IOutboxRepository outboxRepository,
         EventLogRepository eventLog,
+        JobRepository jobRepository,
         ILogger<HotelWorker> logger)
     {
         _pmsSource = pmsSource;
@@ -30,6 +32,7 @@ public sealed class HotelWorker : BackgroundService
         _templateRepository = templateRepository;
         _outboxRepository = outboxRepository;
         _eventLog = eventLog;
+        _jobRepository = jobRepository;
         _logger = logger;
     }
 
@@ -54,33 +57,32 @@ public sealed class HotelWorker : BackgroundService
 
             var rules = await _ruleRepository.GetEnabledRulesForEventTypeAsync(pmsEvent.EventType);
             var templates = await _templateRepository.GetAllAsync();
-            var matchedTemplate = AutomationRuleMatcher.Match(pmsEvent, rules, templates);
+            var match = AutomationRuleMatcher.Match(pmsEvent, rules, templates);
 
-            if (matchedTemplate is null)
+            if (match is null)
             {
                 _logger.LogWarning("No matching rule for event type: {EventType}", pmsEvent.EventType);
                 await _eventLog.LogAsync(pmsEvent);
                 return;
             }
 
-            // Build parameters for the template (guest name, room, amount)
-            var parameters = new List<string> { pmsEvent.GuestName, pmsEvent.RoomNumber };
-            if (pmsEvent.Amount.HasValue)
-                parameters.Add(pmsEvent.Amount.Value.ToString("F2"));
+            var (matchedTemplate, matchedRule) = match.Value;
 
-            var outboxMessage = new OutboxMessage
+            // Enqueue into ScheduledJobs to support Drip Campaigns (Phase 1)
+            var job = new ScheduledJob
             {
-                ToPhoneNumber = pmsEvent.PhoneNumber,
+                GuestName = pmsEvent.GuestName,
+                PhoneNumber = pmsEvent.PhoneNumber,
                 TemplateId = matchedTemplate.Id,
-                ParametersJson = System.Text.Json.JsonSerializer.Serialize(parameters),
-                Status = "Pending",
-                CreatedAt = DateTimeOffset.UtcNow
+                TriggerTime = DateTimeOffset.UtcNow.AddMinutes(matchedRule.DelayMinutes),
+                Status = "Pending"
             };
 
-            var outboxId = await _outboxRepository.AddAsync(outboxMessage);
-            await _eventLog.LogAsync(pmsEvent, outboxId);
+            await _jobRepository.AddAsync(job);
+            
+            await _eventLog.LogAsync(pmsEvent, null); // We don't have OutboxMessageId yet
 
-            _logger.LogInformation("OutboxMessage {Id} queued for {Phone}", outboxId, pmsEvent.PhoneNumber);
+            _logger.LogInformation("ScheduledJob {Id} queued for {Phone} to execute in {Delay} minutes", job.Id, pmsEvent.PhoneNumber, matchedRule.DelayMinutes);
         }
         catch (Exception ex)
         {

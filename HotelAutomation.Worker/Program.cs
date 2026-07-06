@@ -29,6 +29,8 @@ builder.Services.AddSingleton<ITemplateRepository, TemplateRepository>();
 builder.Services.AddSingleton<IRuleRepository, RuleRepository>();
 builder.Services.AddSingleton<IOutboxRepository, OutboxRepository>();
 builder.Services.AddSingleton<EventLogRepository>();
+builder.Services.AddSingleton<JobRepository>();
+builder.Services.AddSingleton<InboxRepository>();
 
 // ── WhatsApp Connector ────────────────────────────────────────────────────────
 builder.Services.Configure<WhatsAppOptions>(
@@ -44,6 +46,7 @@ builder.Services.AddSingleton<IPmsEventSource>(sp => sp.GetRequiredService<Manua
 // ── Hosted Services (Background Engine) ───────────────────────────────────────
 builder.Services.AddHostedService<HotelWorker>();
 builder.Services.AddHostedService<OutboxProcessor>();
+builder.Services.AddHostedService<JobProcessor>();
 
 var app = builder.Build();
 app.UseCors();
@@ -85,20 +88,56 @@ app.MapPost("/api/test-event", (ManualPmsConnector pms) =>
     return Results.Ok(new { message = "Test event fired successfully" });
 });
 
+app.MapGet("/api/inbox", async (InboxRepository repo) => 
+{
+    return await repo.GetRecentMessagesAsync();
+});
+
+app.MapPost("/api/webhooks/whatsapp", async (WebhookPayload payload, InboxRepository inboxRepo, JobRepository jobRepo) => 
+{
+    // 1. Log to Inbox
+    var msg = new HotelAutomation.Core.Models.InboxMessage
+    {
+        FromPhoneNumber = payload.From,
+        Content = payload.Body,
+        IsRead = false,
+        ReceivedAt = DateTimeOffset.UtcNow
+    };
+    await inboxRepo.AddAsync(msg);
+
+    // 2. CANCEL any pending drip campaign messages for this guest!
+    await jobRepo.CancelJobsForPhoneNumberAsync(payload.From);
+
+    return Results.Ok();
+});
+
 app.Lifetime.ApplicationStarted.Register(() => 
 {
     try
     {
-        // On Windows, you can launch a URL directly using UseShellExecute.
-        // It will open the user's default browser (e.g. Edge, Chrome).
-        var startInfo = new System.Diagnostics.ProcessStartInfo
+        var dbFactory = app.Services.GetRequiredService<SqliteConnectionFactory>();
+        var schemaPath = Path.Combine(Directory.GetCurrentDirectory(), "..", "HotelAutomation.Data", "Schema.sql");
+        var initScript = File.ReadAllText(schemaPath);
+        using var conn = dbFactory.OpenAsync().GetAwaiter().GetResult();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = initScript;
+        cmd.ExecuteNonQuery();
+        
+        // Open browser automatically
+        var url = app.Urls.FirstOrDefault() ?? "http://localhost:5000";
+        var processStartInfo = new System.Diagnostics.ProcessStartInfo
         {
-            FileName = "http://localhost:5000",
+            FileName = url,
             UseShellExecute = true
         };
-        System.Diagnostics.Process.Start(startInfo);
+        System.Diagnostics.Process.Start(processStartInfo);
     }
-    catch { }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Failed to initialize DB or open browser");
+    }
 });
 
 app.Run();
+
+public class WebhookPayload { public string From { get; set; } = ""; public string Body { get; set; } = ""; }
