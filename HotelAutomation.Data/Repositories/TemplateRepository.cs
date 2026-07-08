@@ -28,8 +28,8 @@ public sealed class TemplateRepository : ITemplateRepository
     {
         await using var conn = await _factory.OpenAsync(ct);
         var sql = @"
-            INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, BodyParamCount, CreatedAt)
-            VALUES (@Name, @ExternalTemplateName, @LanguageCode, @ChannelType, @BodyParamCount, @CreatedAt);
+            INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, BodyParamCount, Category, CreatedAt)
+            VALUES (@Name, @ExternalTemplateName, @LanguageCode, @ChannelType, @BodyParamCount, @Category, @CreatedAt);
             SELECT last_insert_rowid();";
         
         return await conn.ExecuteScalarAsync<int>(sql, new
@@ -39,6 +39,7 @@ public sealed class TemplateRepository : ITemplateRepository
             template.LanguageCode,
             template.ChannelType,
             template.BodyParamCount,
+            template.Category,
             CreatedAt = DateTimeOffset.UtcNow.ToString("O")
         });
     }
@@ -48,7 +49,7 @@ public sealed class TemplateRepository : ITemplateRepository
         await using var conn = await _factory.OpenAsync(ct);
         var sql = @"
             UPDATE MessageTemplates 
-            SET Name = @Name, ExternalTemplateName = @ExternalTemplateName, LanguageCode = @LanguageCode, ChannelType = @ChannelType, BodyParamCount = @BodyParamCount
+            SET Name = @Name, ExternalTemplateName = @ExternalTemplateName, LanguageCode = @LanguageCode, ChannelType = @ChannelType, BodyParamCount = @BodyParamCount, Category = @Category
             WHERE Id = @id";
         
         var rows = await conn.ExecuteAsync(sql, new
@@ -58,7 +59,8 @@ public sealed class TemplateRepository : ITemplateRepository
             template.ExternalTemplateName,
             template.LanguageCode,
             template.ChannelType,
-            template.BodyParamCount
+            template.BodyParamCount,
+            template.Category
         });
         return rows > 0;
     }

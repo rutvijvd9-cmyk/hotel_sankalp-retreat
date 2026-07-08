@@ -133,5 +133,28 @@ public sealed class SqliteConnectionFactory
             await migCmd.ExecuteNonQueryAsync(ct);
         }
         catch { }
+
+        // Template Category migration
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE MessageTemplates ADD COLUMN Category TEXT NOT NULL DEFAULT 'Utility';";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // UnsubscribedContacts table
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS UnsubscribedContacts (
+                    PhoneNumber TEXT PRIMARY KEY,
+                    UnsubscribedAt TEXT NOT NULL,
+                    Source TEXT NOT NULL
+                );";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
     }
 }

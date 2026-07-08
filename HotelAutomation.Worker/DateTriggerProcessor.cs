@@ -58,10 +58,17 @@ public class DateTriggerProcessor : BackgroundService
         var contacts = await conn.QueryAsync("SELECT PhoneNumber, FirstName, LastName, CustomFieldsJson FROM Contacts");
         var contactList = contacts.AsList();
         
+        // 3. Fetch unsubscribed contacts for quick lookup
+        var unsubbedList = await conn.QueryAsync<string>("SELECT PhoneNumber FROM UnsubscribedContacts");
+        var unsubbed = unsubbedList.ToHashSet();
+
         var today = DateTime.UtcNow.Date;
 
         foreach (var rule in ruleList)
         {
+            var templateCategory = await conn.QueryFirstOrDefaultAsync<string>(
+                "SELECT Category FROM MessageTemplates WHERE Id = @id", new { id = rule.TemplateId });
+
             if (string.IsNullOrWhiteSpace(rule.ConditionsJson)) continue;
             
             Dictionary<string, object> conditions;
@@ -99,6 +106,8 @@ public class DateTriggerProcessor : BackgroundService
             {
                 var phone = (string)(contact.PhoneNumber ?? "");
                 if (string.IsNullOrWhiteSpace(phone)) continue;
+
+                if (templateCategory == "Marketing" && unsubbed.Contains(phone)) continue;
 
                 var customJson = (string)(contact.CustomFieldsJson ?? "{}");
                 Dictionary<string, object> fields;

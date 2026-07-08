@@ -45,6 +45,7 @@ builder.Services.AddSingleton<CategoryRepository>();
 builder.Services.AddSingleton<ContactRepository>();
 builder.Services.AddSingleton<CsvImportService>();
 builder.Services.AddSingleton<BroadcastRepository>();
+builder.Services.AddSingleton<UnsubscribedContactRepository>();
 
 // ── WhatsApp Connector ────────────────────────────────────────────────────────
 builder.Services.Configure<WhatsAppOptions>(
@@ -196,13 +197,37 @@ app.MapGet("/api/rules/{id}/stats", async (int id, SqliteConnectionFactory facto
 
 app.MapGet("/api/rules/{id}/failures", async (int id, SqliteConnectionFactory factory) => 
 {
-    using var conn = await factory.OpenAsync();
-    var failures = await conn.QueryAsync(@"
-        SELECT ToPhoneNumber, FailureReason, CreatedAt 
-        FROM OutboxMessages 
-        WHERE RuleId = @Id AND Status = 'Failed' 
-        ORDER BY CreatedAt DESC", new { Id = id });
+    await using var conn = await factory.OpenAsync();
+    var failures = await conn.QueryAsync(
+        "SELECT ToPhoneNumber, FailureReason, CreatedAt FROM OutboxMessages WHERE RuleId = @id AND Status = 'Failed' ORDER BY CreatedAt DESC LIMIT 100", 
+        new { id });
     return Results.Ok(failures);
+});
+
+app.MapGet("/api/rules/{id}/analytics-details", async (int id, SqliteConnectionFactory factory) => 
+{
+    await using var conn = await factory.OpenAsync();
+    var details = await conn.QueryAsync(@"
+        SELECT o.ToPhoneNumber, o.Status, o.FailureReason, o.CreatedAt, 
+               CASE WHEN u.PhoneNumber IS NOT NULL THEN 1 ELSE 0 END as IsUnsubscribed 
+        FROM OutboxMessages o
+        LEFT JOIN UnsubscribedContacts u ON o.ToPhoneNumber = u.PhoneNumber
+        WHERE o.RuleId = @id 
+        ORDER BY o.CreatedAt DESC LIMIT 500", new { id });
+    return Results.Ok(details);
+});
+
+app.MapGet("/api/broadcast/analytics-details", async (int templateId, string startedAt, SqliteConnectionFactory factory) => 
+{
+    await using var conn = await factory.OpenAsync();
+    var details = await conn.QueryAsync(@"
+        SELECT o.ToPhoneNumber, o.Status, o.FailureReason, o.CreatedAt,
+               CASE WHEN u.PhoneNumber IS NOT NULL THEN 1 ELSE 0 END as IsUnsubscribed 
+        FROM OutboxMessages o
+        LEFT JOIN UnsubscribedContacts u ON o.ToPhoneNumber = u.PhoneNumber
+        WHERE o.TemplateId = @TemplateId AND o.CreatedAt = @StartedAt 
+        ORDER BY o.CreatedAt DESC LIMIT 500", new { TemplateId = templateId, StartedAt = startedAt });
+    return Results.Ok(details);
 });
 
 app.MapDelete("/api/rules/{id}", async (int id, SqliteConnectionFactory factory) => 
@@ -254,7 +279,7 @@ app.MapGet("/api/inbox", async (InboxRepository repo) =>
     return await repo.GetRecentMessagesAsync();
 });
 
-app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository inboxRepo, JobRepository jobRepo, SqliteConnectionFactory dbFactory) => 
+app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository inboxRepo, JobRepository jobRepo, SqliteConnectionFactory dbFactory, UnsubscribedContactRepository unsubRepo) => 
 {
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
@@ -287,6 +312,28 @@ app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository in
                         };
                         await inboxRepo.AddAsync(inboxMsg);
                         await jobRepo.CancelJobsForPhoneNumberAsync(from ?? "");
+                        if (!string.IsNullOrEmpty(from) && !string.IsNullOrEmpty(text) && text.Trim().Equals("STOP", StringComparison.OrdinalIgnoreCase))
+                        {
+                            await unsubRepo.AddAsync(from, "STOP_Keyword");
+                        }
+                    }
+                }
+                
+                // Handle user_preferences (Marketing opt-out toggles)
+                if (value.TryGetProperty("user_preferences", out var userPreferences))
+                {
+                    foreach (var pref in userPreferences.EnumerateArray())
+                    {
+                        var from = pref.GetProperty("wa_id").GetString();
+                        var prefValue = pref.GetProperty("value").GetString();
+                        
+                        if (!string.IsNullOrEmpty(from))
+                        {
+                            if (prefValue == "stop")
+                                await unsubRepo.AddAsync(from, "WhatsApp_Native");
+                            else if (prefValue == "resume")
+                                await unsubRepo.RemoveAsync(from);
+                        }
                     }
                 }
                 

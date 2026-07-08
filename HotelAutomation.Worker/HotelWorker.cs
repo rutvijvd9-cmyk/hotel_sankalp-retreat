@@ -16,6 +16,7 @@ public sealed class HotelWorker : BackgroundService
     private readonly IOutboxRepository _outboxRepository;
     private readonly EventLogRepository _eventLog;
     private readonly JobRepository _jobRepository;
+    private readonly UnsubscribedContactRepository _unsubRepo;
     private readonly ILogger<HotelWorker> _logger;
 
     public HotelWorker(
@@ -25,6 +26,7 @@ public sealed class HotelWorker : BackgroundService
         IOutboxRepository outboxRepository,
         EventLogRepository eventLog,
         JobRepository jobRepository,
+        UnsubscribedContactRepository unsubRepo,
         ILogger<HotelWorker> logger)
     {
         _pmsSource = pmsSource;
@@ -33,6 +35,7 @@ public sealed class HotelWorker : BackgroundService
         _outboxRepository = outboxRepository;
         _eventLog = eventLog;
         _jobRepository = jobRepository;
+        _unsubRepo = unsubRepo;
         _logger = logger;
     }
 
@@ -67,6 +70,17 @@ public sealed class HotelWorker : BackgroundService
             }
 
             var (matchedTemplate, matchedRule) = match.Value;
+
+            // Stop Marketing messages if the user is unsubscribed
+            if (matchedTemplate.Category == "Marketing")
+            {
+                var isUnsub = await _unsubRepo.IsUnsubscribedAsync(pmsEvent.PhoneNumber);
+                if (isUnsub)
+                {
+                    _logger.LogInformation("Skipping marketing automation {RuleId} for {Phone} because user is unsubscribed.", matchedRule.Id, pmsEvent.PhoneNumber);
+                    return;
+                }
+            }
 
             // Enqueue into ScheduledJobs to support Drip Campaigns (Phase 1)
             var job = new ScheduledJob

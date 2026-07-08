@@ -28,10 +28,18 @@ public sealed class BroadcastRepository
     {
         await using var conn = await _factory.OpenAsync(ct);
 
+        var templateCategory = await conn.QueryFirstOrDefaultAsync<string>(
+            "SELECT Category FROM MessageTemplates WHERE Id = @TemplateId", new { TemplateId = templateId });
+
         // Get all target contacts
         string contactSql = categoryId.HasValue
             ? "SELECT PhoneNumber, FirstName, LastName, CustomFieldsJson FROM Contacts WHERE CategoryId = @CategoryId"
             : "SELECT PhoneNumber, FirstName, LastName, CustomFieldsJson FROM Contacts";
+
+        if (templateCategory == "Marketing")
+        {
+            contactSql += " AND PhoneNumber NOT IN (SELECT PhoneNumber FROM UnsubscribedContacts)";
+        }
 
         var contacts = await conn.QueryAsync(contactSql, new { CategoryId = categoryId });
         var contactList = contacts.AsList();

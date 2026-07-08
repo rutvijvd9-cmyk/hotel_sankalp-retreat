@@ -912,6 +912,10 @@ export default function App() {
                     <option value="WhatsApp">WhatsApp</option>
                     <option value="SMS">SMS</option>
                   </select>
+                  <select className="input" value={newTemplate.Category || 'Utility'} onChange={e => setNewTemplate({...newTemplate, Category: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                    <option value="Utility">Utility (Transactional)</option>
+                    <option value="Marketing">Marketing (Promotional)</option>
+                  </select>
                   <div>
                     <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Body Parameters</label>
                     <select className="input" value={newTemplate.BodyParamCount} onChange={e => setNewTemplate({...newTemplate, BodyParamCount: parseInt(e.target.value)})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
@@ -1132,13 +1136,18 @@ export default function App() {
         setAnalyticsRule(rule);
         setRuleFailures([]);
         try {
-          const res = await fetch(`${API_BASE}/rules/${rule.Id || rule.id}/failures`);
-          if (res.ok) {
-            setRuleFailures(await res.json());
-          }
-        } catch (e) {
-          console.error("Failed to fetch failures", e);
-        }
+          const res = await fetch(`${API_BASE}/rules/${rule.Id || rule.id}/analytics-details`);
+          if (res.ok) setRuleFailures(await res.json());
+        } catch (e) { console.error(e); }
+      };
+
+      const handleShowBroadcastAnalytics = async (b) => {
+        setAnalyticsRule({ ...b, Name: b.TemplateName || b.templateName, isBroadcast: true });
+        setRuleFailures([]);
+        try {
+          const res = await fetch(`${API_BASE}/broadcast/analytics-details?templateId=${b.TemplateId || b.templateId}&startedAt=${encodeURIComponent(b.StartedAt || b.startedAt)}`);
+          if (res.ok) setRuleFailures(await res.json());
+        } catch (e) { console.error(e); }
       };
 
       // Aggregate overall stats
@@ -1213,7 +1222,7 @@ export default function App() {
                             style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                             onClick={() => handleShowAnalytics(r)}
                           >
-                            <BarChart2 size={12} /> View Failures
+                            <BarChart2 size={12} /> View Details
                           </button>
                         </td>
                       </tr>
@@ -1244,6 +1253,7 @@ export default function App() {
                     <th style={{ textAlign: 'center' }}>Failed</th>
                     <th style={{ textAlign: 'center' }}>Pending</th>
                     <th style={{ textAlign: 'center' }}>Success Rate</th>
+                    <th style={{ textAlign: 'center' }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1262,6 +1272,15 @@ export default function App() {
                         <td style={{ textAlign: 'center', color: '#ef4444', fontWeight: 600 }}>{f}</td>
                         <td style={{ textAlign: 'center', color: '#eab308', fontWeight: 600 }}>{p}</td>
                         <td style={{ textAlign: 'center', fontWeight: 600 }}>{rate}%</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <button 
+                            className="btn btn-secondary" 
+                            style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            onClick={() => handleShowBroadcastAnalytics(b)}
+                          >
+                            <BarChart2 size={12} /> View Details
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1304,26 +1323,50 @@ export default function App() {
                   </div>
                 </div>
 
-                <h4 style={{ marginBottom: '8px', color: '#334155', fontWeight: 600 }}>Failure Log (Recent Failed Numbers & Reasons)</h4>
+                <h4 style={{ marginBottom: '8px', color: '#334155', fontWeight: 600 }}>Delivery Details Log</h4>
                 <div style={{ flex: 1, overflowY: 'auto', maxHeight: '350px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc', padding: '12px' }}>
                   {ruleFailures.length === 0 ? (
                     <div style={{ textAlign: 'center', color: '#64748b', padding: '24px 0' }}>
-                      No failed messages recorded for this rule.
+                      No messages recorded.
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {ruleFailures.map((f, i) => (
-                        <div key={i} style={{ padding: '10px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                            <span style={{ fontWeight: 600, color: '#334155' }}>Phone: {f.ToPhoneNumber || f.toPhoneNumber}</span>
-                            <span style={{ color: '#64748b' }}>{new Date(f.CreatedAt || f.createdAt).toLocaleString()}</span>
-                          </div>
-                          <div style={{ fontSize: '0.8rem', color: '#ef4444', backgroundColor: '#fef2f2', padding: '6px 8px', borderRadius: '4px', border: '1px solid #fee2e2' }}>
-                            <strong>Reason:</strong> {f.FailureReason || f.failureReason || 'Failed to connect to Meta WhatsApp API.'}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    <table className="data-table" style={{ margin: 0, backgroundColor: 'white' }}>
+                      <thead>
+                        <tr>
+                          <th>Phone</th>
+                          <th>Status</th>
+                          <th>Date</th>
+                          <th>Details</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ruleFailures.map((f, i) => (
+                          <tr key={i}>
+                            <td style={{ fontWeight: 600 }}>
+                              {f.ToPhoneNumber || f.toPhoneNumber}
+                              {(f.IsUnsubscribed || f.isUnsubscribed) === 1 && (
+                                <span style={{ marginLeft: '6px', fontSize: '10px', backgroundColor: '#ef4444', color: 'white', padding: '2px 4px', borderRadius: '4px' }}>Unsubscribed</span>
+                              )}
+                            </td>
+                            <td>
+                              <span className={`badge badge-${(f.Status || f.status || '').toLowerCase()}`}>
+                                {f.Status || f.status}
+                              </span>
+                            </td>
+                            <td style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                              {new Date(f.CreatedAt || f.createdAt).toLocaleString()}
+                            </td>
+                            <td style={{ fontSize: '0.85rem' }}>
+                              {(f.Status || f.status) === 'Failed' ? (
+                                <span style={{ color: '#ef4444' }}>{f.FailureReason || f.failureReason || 'Failed to connect to Meta WhatsApp API.'}</span>
+                              ) : (
+                                <span style={{ color: '#10b981' }}>-</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   )}
                 </div>
                 
