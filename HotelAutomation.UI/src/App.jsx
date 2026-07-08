@@ -70,7 +70,7 @@ export default function App() {
         setStats(s => ({ ...s, outbox: outboxData.length }));
       }
       
-      if (activeTab === 'templates' || activeTab === 'broadcasts') {
+      if (activeTab === 'templates' || activeTab === 'broadcasts' || activeTab === 'analytics') {
         const templatesRes = await fetch(`${API_BASE}/templates`).catch(() => null);
         if (templatesRes && templatesRes.ok) setTemplatesList(await templatesRes.json());
       }
@@ -98,7 +98,7 @@ export default function App() {
         if (logsRes && logsRes.ok) setLogs(await logsRes.json());
       }
 
-      if (activeTab === 'broadcasts') {
+      if (activeTab === 'broadcasts' || activeTab === 'analytics') {
         const bRes = await fetch(`${API_BASE}/broadcast`).catch(() => null);
         if (bRes && bRes.ok) setBroadcasts(await bRes.json());
       }
@@ -1127,6 +1127,216 @@ export default function App() {
       );
     }
 
+    if (activeTab === 'analytics') {
+      const handleShowAnalytics = async (rule) => {
+        setAnalyticsRule(rule);
+        setRuleFailures([]);
+        try {
+          const res = await fetch(`${API_BASE}/rules/${rule.Id || rule.id}/failures`);
+          if (res.ok) {
+            setRuleFailures(await res.json());
+          }
+        } catch (e) {
+          console.error("Failed to fetch failures", e);
+        }
+      };
+
+      // Aggregate overall stats
+      const totalAutomationsTriggered = (rulesList || []).reduce((acc, r) => acc + (r.stats?.Triggered ?? r.stats?.triggered ?? 0), 0);
+      const totalAutomationsSent = (rulesList || []).reduce((acc, r) => acc + (r.stats?.TotalSent ?? r.stats?.totalSent ?? 0), 0);
+      const totalAutomationsFailed = (rulesList || []).reduce((acc, r) => acc + (r.stats?.Failed ?? r.stats?.failed ?? 0), 0);
+
+      const totalBroadcastsQueued = (broadcasts || []).reduce((acc, b) => acc + (b.TotalQueued ?? b.totalQueued ?? b.TotalSent ?? b.totalSent ?? 0), 0);
+      const totalBroadcastsSent = (broadcasts || []).reduce((acc, b) => acc + (b.Delivered ?? b.delivered ?? 0), 0);
+      const totalBroadcastsFailed = (broadcasts || []).reduce((acc, b) => acc + (b.Failed ?? b.failed ?? 0), 0);
+
+      const overallTriggered = totalAutomationsTriggered + totalBroadcastsQueued;
+      const overallSent = totalAutomationsSent + totalBroadcastsSent;
+      const overallFailed = totalAutomationsFailed + totalBroadcastsFailed;
+      const successRate = overallTriggered > 0 ? ((overallSent / (overallSent + overallFailed || 1)) * 100).toFixed(1) : '100.0';
+
+      return (
+        <div>
+          <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
+            <div className="card" style={{ flex: 1, borderLeft: '4px solid #3b82f6' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>OVERALL TRIGGERED</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{overallTriggered}</div>
+            </div>
+            <div className="card" style={{ flex: 1, borderLeft: '4px solid #10b981' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>SUCCESSFULLY SENT</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#10b981' }}>{overallSent}</div>
+            </div>
+            <div className="card" style={{ flex: 1, borderLeft: '4px solid #ef4444' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>FAILED DELIVERIES</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#ef4444' }}>{overallFailed}</div>
+            </div>
+            <div className="card" style={{ flex: 1, borderLeft: '4px solid #eab308' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>DELIVERY SUCCESS RATE</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#eab308' }}>{successRate}%</div>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginBottom: '32px' }}>
+            <h3 className="card-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Workflow size={20} color="var(--primary)" /> Automation Rules Performance
+            </h3>
+            <div className="data-table-container">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Rule Name</th>
+                    <th>Trigger Event</th>
+                    <th style={{ textAlign: 'center' }}>Triggered</th>
+                    <th style={{ textAlign: 'center' }}>Sent</th>
+                    <th style={{ textAlign: 'center' }}>Failed</th>
+                    <th style={{ textAlign: 'center' }}>Success Rate</th>
+                    <th style={{ textAlign: 'center' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(rulesList || []).map(r => {
+                    const trig = r.stats?.Triggered ?? r.stats?.triggered ?? 0;
+                    const s = r.stats?.TotalSent ?? r.stats?.totalSent ?? 0;
+                    const f = r.stats?.Failed ?? r.stats?.failed ?? 0;
+                    const ruleRate = trig > 0 ? ((s / (s + f || 1)) * 100).toFixed(1) : '100.0';
+                    return (
+                      <tr key={r.Id || r.id}>
+                        <td style={{ fontWeight: 600 }}>{r.Name || r.name}</td>
+                        <td><span className="badge badge-pending">{r.TriggerEventType || r.triggerEventType}</span></td>
+                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{trig}</td>
+                        <td style={{ textAlign: 'center', color: '#10b981', fontWeight: 600 }}>{s}</td>
+                        <td style={{ textAlign: 'center', color: '#ef4444', fontWeight: 600 }}>{f}</td>
+                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{ruleRate}%</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <button 
+                            className="btn btn-secondary" 
+                            style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            onClick={() => handleShowAnalytics(r)}
+                          >
+                            <BarChart2 size={12} /> View Failures
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {(rulesList || []).length === 0 && (
+                    <tr>
+                      <td colSpan="7" style={{ textAlign: 'center', padding: '24px' }}>No automation rules found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3 className="card-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Megaphone size={20} color="var(--primary)" /> Broadcast Campaigns Performance
+            </h3>
+            <div className="data-table-container">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Started At</th>
+                    <th>Template Name</th>
+                    <th style={{ textAlign: 'center' }}>Total Queued</th>
+                    <th style={{ textAlign: 'center' }}>Sent</th>
+                    <th style={{ textAlign: 'center' }}>Failed</th>
+                    <th style={{ textAlign: 'center' }}>Pending</th>
+                    <th style={{ textAlign: 'center' }}>Success Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(broadcasts || []).map((b, i) => {
+                    const total = b.TotalQueued ?? b.totalQueued ?? b.TotalSent ?? b.totalSent ?? 0;
+                    const s = b.Delivered ?? b.delivered ?? 0;
+                    const f = b.Failed ?? b.failed ?? 0;
+                    const p = b.Pending ?? b.pending ?? 0;
+                    const rate = total > 0 ? ((s / (s + f || 1)) * 100).toFixed(1) : '100.0';
+                    return (
+                      <tr key={i}>
+                        <td>{new Date(b.StartedAt || b.startedAt).toLocaleString()}</td>
+                        <td style={{ fontWeight: 600 }}>{b.TemplateName || b.templateName}</td>
+                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{total}</td>
+                        <td style={{ textAlign: 'center', color: '#10b981', fontWeight: 600 }}>{s}</td>
+                        <td style={{ textAlign: 'center', color: '#ef4444', fontWeight: 600 }}>{f}</td>
+                        <td style={{ textAlign: 'center', color: '#eab308', fontWeight: 600 }}>{p}</td>
+                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{rate}%</td>
+                      </tr>
+                    );
+                  })}
+                  {(broadcasts || []).length === 0 && (
+                    <tr>
+                      <td colSpan="7" style={{ textAlign: 'center', padding: '24px' }}>No broadcasts sent yet.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {analyticsRule && createPortal((
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+              <div className="card" style={{ width: '600px', maxWidth: '95%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
+                  <h3 className="card-title" style={{ margin: 0 }}>Analytics: {analyticsRule.Name || analyticsRule.name}</h3>
+                  <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={() => setAnalyticsRule(null)}>✕</button>
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                  <div style={{ padding: '16px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 600 }}>TRIGGERED</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#15803d' }}>
+                      {analyticsRule.stats?.Triggered ?? analyticsRule.stats?.triggered ?? 0}
+                    </div>
+                  </div>
+                  <div style={{ padding: '16px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.8rem', color: '#1e40af', fontWeight: 600 }}>SENT SUCCESSFULLY</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#1d4ed8' }}>
+                      {analyticsRule.stats?.TotalSent ?? analyticsRule.stats?.totalSent ?? 0}
+                    </div>
+                  </div>
+                  <div style={{ padding: '16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.8rem', color: '#991b1b', fontWeight: 600 }}>FAILED</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#b91c1c' }}>
+                      {analyticsRule.stats?.Failed ?? analyticsRule.stats?.failed ?? 0}
+                    </div>
+                  </div>
+                </div>
+
+                <h4 style={{ marginBottom: '8px', color: '#334155', fontWeight: 600 }}>Failure Log (Recent Failed Numbers & Reasons)</h4>
+                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '350px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc', padding: '12px' }}>
+                  {ruleFailures.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#64748b', padding: '24px 0' }}>
+                      No failed messages recorded for this rule.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {ruleFailures.map((f, i) => (
+                        <div key={i} style={{ padding: '10px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                            <span style={{ fontWeight: 600, color: '#334155' }}>Phone: {f.ToPhoneNumber || f.toPhoneNumber}</span>
+                            <span style={{ color: '#64748b' }}>{new Date(f.CreatedAt || f.createdAt).toLocaleString()}</span>
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: '#ef4444', backgroundColor: '#fef2f2', padding: '6px 8px', borderRadius: '4px', border: '1px solid #fee2e2' }}>
+                            <strong>Reason:</strong> {f.FailureReason || f.failureReason || 'Failed to connect to Meta WhatsApp API.'}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
+                  <button className="btn btn-primary" onClick={() => setAnalyticsRule(null)}>Close</button>
+                </div>
+              </div>
+            </div>
+          ), document.body)}
+        </div>
+      );
+    }
+
     if (activeTab === 'logs') {
       return (
         <div className="card">
@@ -1310,6 +1520,9 @@ export default function App() {
           </div>
           <div className={`nav-item ${activeTab === 'rules' ? 'active' : ''}`} onClick={() => setActiveTab('rules')}>
             <Workflow size={20} /> Automation Rules
+          </div>
+          <div className={`nav-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
+            <BarChart2 size={20} /> Analytics
           </div>
           <div className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}>
             <ScrollText size={20} /> Event Logs
