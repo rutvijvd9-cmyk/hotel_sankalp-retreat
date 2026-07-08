@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Papa from 'papaparse';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2 } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX } from 'lucide-react';
 import AutomationBuilder from './components/AutomationBuilder';
 
 const API_BASE = '/api';
@@ -52,6 +52,7 @@ export default function App() {
   const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1 });
   const [isBuildingRule, setIsBuildingRule] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
+  const [optOutsList, setOptOutsList] = useState([]);
 
   useEffect(() => {
     fetchData();
@@ -63,6 +64,11 @@ export default function App() {
 
   const fetchData = async () => {
     try {
+      if (activeTab === 'optouts') {
+        const res = await fetch(`${API_BASE}/unsubscribes`).catch(() => null);
+        if (res && res.ok) setOptOutsList(await res.json());
+      }
+
       const outboxRes = await fetch(`${API_BASE}/outbox`).catch(() => null);
       if (outboxRes && outboxRes.ok) {
         const outboxData = await outboxRes.json();
@@ -1380,6 +1386,67 @@ export default function App() {
       );
     }
 
+    if (activeTab === 'optouts') {
+      const handleResubscribe = async (phone) => {
+        if (!confirm(`Are you sure you want to re-subscribe ${phone}?`)) return;
+        try {
+          await fetch(`${API_BASE}/unsubscribes/${encodeURIComponent(phone)}`, { method: 'DELETE' });
+          fetchData(); // refresh
+        } catch (e) {
+          console.error("Failed to resubscribe", e);
+        }
+      };
+
+      return (
+        <div className="card">
+          <h3 className="card-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <UserX size={20} color="var(--primary)" /> Marketing Opt-Outs (Unsubscribed)
+          </h3>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>
+            Users who have replied "STOP" or opted out of "Offers and announcements" on WhatsApp. They will not receive marketing templates.
+          </p>
+          <div className="data-table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Phone Number</th>
+                  <th>Contact Name</th>
+                  <th>Unsubscribed At</th>
+                  <th>Source</th>
+                  <th style={{ textAlign: 'center' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(Array.isArray(optOutsList) ? optOutsList : []).map(o => (
+                  <tr key={o.PhoneNumber || o.phoneNumber}>
+                    <td style={{ fontWeight: 600 }}>{o.PhoneNumber || o.phoneNumber}</td>
+                    <td>{o.FirstName || o.firstName ? `${o.FirstName || o.firstName} ${o.LastName || o.lastName}` : '-'}</td>
+                    <td>{new Date(o.UnsubscribedAt || o.unsubscribedAt).toLocaleString()}</td>
+                    <td><span className="badge badge-pending">{o.Source || o.source}</span></td>
+                    <td style={{ textAlign: 'center' }}>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ padding: '6px 12px', fontSize: '0.8rem', color: '#10b981' }}
+                        onClick={() => handleResubscribe(o.PhoneNumber || o.phoneNumber)}
+                        title="Re-Subscribe User"
+                      >
+                        Re-Subscribe
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {(optOutsList || []).length === 0 && (
+                  <tr>
+                    <td colSpan="5" style={{ textAlign: 'center', padding: '24px' }}>No unsubscribed contacts found.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
     if (activeTab === 'logs') {
       return (
         <div className="card">
@@ -1566,6 +1633,9 @@ export default function App() {
           </div>
           <div className={`nav-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
             <BarChart2 size={20} /> Analytics
+          </div>
+          <div className={`nav-item ${activeTab === 'optouts' ? 'active' : ''}`} onClick={() => setActiveTab('optouts')}>
+            <UserX size={20} /> Opt-Outs
           </div>
           <div className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}>
             <ScrollText size={20} /> Event Logs

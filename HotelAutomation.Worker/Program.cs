@@ -237,6 +237,25 @@ app.MapDelete("/api/rules/{id}", async (int id, SqliteConnectionFactory factory)
     return rows > 0 ? Results.Ok() : Results.NotFound();
 });
 
+// ── Opt-Outs Endpoint ──────────────────────────────────────────────────────
+app.MapGet("/api/unsubscribes", async (SqliteConnectionFactory factory) => 
+{
+    await using var conn = await factory.OpenAsync();
+    var unsubscribes = await conn.QueryAsync(@"
+        SELECT u.PhoneNumber, u.UnsubscribedAt, u.Source, c.FirstName, c.LastName 
+        FROM UnsubscribedContacts u
+        LEFT JOIN Contacts c ON u.PhoneNumber = c.PhoneNumber
+        ORDER BY u.UnsubscribedAt DESC
+    ");
+    return Results.Ok(unsubscribes);
+});
+
+app.MapDelete("/api/unsubscribes/{phoneNumber}", async (string phoneNumber, UnsubscribedContactRepository repo) => 
+{
+    await repo.RemoveAsync(phoneNumber);
+    return Results.Ok();
+});
+
 // ── Broadcast Campaign Endpoint ────────────────────────────────────────────
 app.MapPost("/api/broadcast", async (BroadcastRequest req, BroadcastRepository broadcastRepo) =>
 {
