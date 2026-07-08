@@ -136,9 +136,22 @@ public sealed class ContactRepository
     public async Task<IReadOnlyList<string>> GetDynamicColumnsAsync(CancellationToken ct = default)
     {
         await using var conn = await _factory.OpenAsync(ct);
-        // Extracts all unique keys from CustomFieldsJson across all contacts
-        // SQLite json_each function creates a virtual table with 'key' and 'value' columns for the JSON object
         var results = await conn.QueryAsync<string>("SELECT DISTINCT key FROM Contacts, json_each(CustomFieldsJson)");
+        return results.AsList();
+    }
+
+    public async Task<IReadOnlyList<string>> GetDateColumnsAsync(CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        // SQLite: Find keys whose values look like dates (YYYY-MM-DD or DD-MM-YYYY)
+        var results = await conn.QueryAsync<string>(@"
+            SELECT DISTINCT key 
+            FROM Contacts, json_each(CustomFieldsJson) 
+            WHERE value LIKE '____-__-__' 
+               OR value LIKE '__-__-____' 
+               OR value LIKE '____/__/__' 
+               OR value LIKE '__/__/____'
+        ");
         return results.AsList();
     }
 

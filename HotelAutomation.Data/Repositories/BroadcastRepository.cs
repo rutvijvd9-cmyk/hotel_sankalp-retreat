@@ -39,6 +39,7 @@ public sealed class BroadcastRepository
         if (contactList.Count == 0) return 0;
 
         int queued = 0;
+        var batchTime = DateTimeOffset.UtcNow.ToString("O");
         foreach (var contact in contactList)
         {
             var phone = (string)(contact.PhoneNumber ?? "");
@@ -79,7 +80,7 @@ public sealed class BroadcastRepository
                 ToPhoneNumber = phone,
                 TemplateId = templateId,
                 ParametersJson = parametersJson,
-                CreatedAt = DateTimeOffset.UtcNow.ToString("O")
+                CreatedAt = batchTime
             });
 
             queued++;
@@ -98,16 +99,41 @@ public sealed class BroadcastRepository
             SELECT 
                 o.TemplateId,
                 t.Name AS TemplateName,
-                COUNT(*) AS TotalSent,
+                COUNT(*) AS TotalQueued,
                 SUM(CASE WHEN o.Status = 'Sent' THEN 1 ELSE 0 END) AS Delivered,
                 SUM(CASE WHEN o.Status = 'Pending' THEN 1 ELSE 0 END) AS Pending,
                 SUM(CASE WHEN o.Status = 'Failed' THEN 1 ELSE 0 END) AS Failed,
-                MIN(o.CreatedAt) AS StartedAt
+                o.CreatedAt AS StartedAt
             FROM OutboxMessages o
             JOIN MessageTemplates t ON o.TemplateId = t.Id
-            GROUP BY o.TemplateId, o.CreatedAt / 600  -- group by 10-minute windows
+            GROUP BY o.TemplateId, o.CreatedAt
             ORDER BY StartedAt DESC
             LIMIT @Limit
             """, new { Limit = limit });
+    }
+
+    /// <summary>
+    /// Cancels all pending messages for a specific broadcast campaign.
+    /// </summary>
+    public async Task<int> DeleteBroadcastAsync(int templateId, string startedAt, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        return await conn.ExecuteAsync("""
+            DELETE FROM OutboxMessages 
+            WHERE TemplateId = @TemplateId 
+              AND CreatedAt = @StartedAt
+            """, new { TemplateId = templateId, StartedAt = startedAt });
+    }
+
+    public async Task<int> StopBroadcastAsync(int templateId, string startedAt, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        return await conn.ExecuteAsync("""
+            UPDATE OutboxMessages 
+            SET Status = 'Failed' 
+            WHERE TemplateId = @TemplateId 
+              AND CreatedAt = @StartedAt 
+              AND Status = 'Pending'
+            """, new { TemplateId = templateId, StartedAt = startedAt });
     }
 }

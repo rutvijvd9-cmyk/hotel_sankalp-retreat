@@ -14,8 +14,8 @@ public sealed class OutboxRepository : IOutboxRepository
     {
         await using var conn = await _factory.OpenAsync(ct);
         return await conn.ExecuteScalarAsync<int>("""
-            INSERT INTO OutboxMessages (ToPhoneNumber, TemplateId, ParametersJson, Status, RetryCount, CreatedAt)
-            VALUES (@ToPhoneNumber, @TemplateId, @ParametersJson, @Status, @RetryCount, @CreatedAt);
+            INSERT INTO OutboxMessages (ToPhoneNumber, TemplateId, ParametersJson, Status, RetryCount, CreatedAt, RuleId)
+            VALUES (@ToPhoneNumber, @TemplateId, @ParametersJson, @Status, @RetryCount, @CreatedAt, @RuleId);
             SELECT last_insert_rowid();
             """, new
         {
@@ -24,7 +24,8 @@ public sealed class OutboxRepository : IOutboxRepository
             message.ParametersJson,
             message.Status,
             message.RetryCount,
-            CreatedAt = message.CreatedAt.ToString("O")
+            CreatedAt = message.CreatedAt.ToString("O"),
+            message.RuleId
         });
     }
 
@@ -38,13 +39,13 @@ public sealed class OutboxRepository : IOutboxRepository
     }
 
     public async Task UpdateStatusAsync(int id, string status, int retryCount,
-        DateTimeOffset? sentAt, string? externalMessageId, CancellationToken ct = default)
+        DateTimeOffset? sentAt, string? externalMessageId, string? failureReason = null, CancellationToken ct = default)
     {
         await using var conn = await _factory.OpenAsync(ct);
         await conn.ExecuteAsync("""
             UPDATE OutboxMessages
-            SET Status = @status, RetryCount = @retryCount, SentAt = @sentAt, ExternalMessageId = @externalMessageId
+            SET Status = @status, RetryCount = @retryCount, SentAt = @sentAt, ExternalMessageId = @externalMessageId, FailureReason = @failureReason
             WHERE Id = @id
-            """, new { id, status, retryCount, sentAt = sentAt?.ToString("O"), externalMessageId });
+            """, new { id, status, retryCount, sentAt = sentAt?.ToString("O"), externalMessageId, failureReason });
     }
 }

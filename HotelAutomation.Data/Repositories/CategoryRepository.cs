@@ -36,4 +36,10 @@ public sealed class CategoryRepository
         var results = await conn.QueryAsync<ContactCategory>("SELECT * FROM ContactCategories ORDER BY Name");
         return results.AsList();
     }
+    public async Task<bool> DeleteAsync(int id, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        var rows = await conn.ExecuteAsync("DELETE FROM ContactCategories WHERE Id = @id", new { id });
+        return rows > 0;
+    }
 }

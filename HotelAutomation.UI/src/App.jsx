@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Papa from 'papaparse';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2 } from 'lucide-react';
+import AutomationBuilder from './components/AutomationBuilder';
 
 const API_BASE = '/api';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('hotelAuto_activeTab') || 'dashboard');
+  
+  useEffect(() => {
+    localStorage.setItem('hotelAuto_activeTab', activeTab);
+  }, [activeTab]);
   const [stats, setStats] = useState({ templates: 0, rules: 0, outbox: 0, inbox: 0 });
   const [outbox, setOutbox] = useState([]);
   const [inbox, setInbox] = useState([]);
@@ -37,20 +43,28 @@ export default function App() {
   const [previewHeaders, setPreviewHeaders] = useState([]);
   const [importTotalRows, setImportTotalRows] = useState(0);
   const [importProgress, setImportProgress] = useState(0);
+  const [analyticsRule, setAnalyticsRule] = useState(null);
+  const [ruleFailures, setRuleFailures] = useState([]);
   const [parsedContacts, setParsedContacts] = useState([]);
 
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
-  const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp' });
+  const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1 });
+  const [isBuildingRule, setIsBuildingRule] = useState(false);
+  const [editingRule, setEditingRule] = useState(null);
 
   useEffect(() => {
     fetchData();
-  }, [activeTab, currentPage, pageSize]);
+    const interval = setInterval(() => {
+      fetchData();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [activeTab, currentPage, pageSize, selectedCategory]);
 
   const fetchData = async () => {
     try {
       const outboxRes = await fetch(`${API_BASE}/outbox`).catch(() => null);
-      if (outboxRes) {
+      if (outboxRes && outboxRes.ok) {
         const outboxData = await outboxRes.json();
         setOutbox(outboxData);
         setStats(s => ({ ...s, outbox: outboxData.length }));
@@ -58,50 +72,57 @@ export default function App() {
       
       if (activeTab === 'templates' || activeTab === 'broadcasts') {
         const templatesRes = await fetch(`${API_BASE}/templates`).catch(() => null);
-        if (templatesRes) setTemplatesList(await templatesRes.json());
+        if (templatesRes && templatesRes.ok) setTemplatesList(await templatesRes.json());
       }
       
       const rulesRes = await fetch(`${API_BASE}/rules`).catch(() => null);
-      if (rulesRes) {
+      if (rulesRes && rulesRes.ok) {
         const rulesData = await rulesRes.json();
-        setRulesList(rulesData);
+        // Fetch stats for each rule
+        const rulesWithStats = await Promise.all(rulesData.map(async r => {
+          try {
+            const statsRes = await fetch(`${API_BASE}/rules/${r.Id || r.id}/stats`);
+            if (statsRes.ok) {
+              const stats = await statsRes.json();
+              return { ...r, stats };
+            }
+          } catch (e) {}
+          return r;
+        }));
+        setRulesList(rulesWithStats);
         setStats(s => ({ ...s, rules: rulesData.length }));
       }
       
       if (activeTab === 'logs') {
         const logsRes = await fetch(`${API_BASE}/logs`).catch(() => null);
-        if (logsRes) setLogs(await logsRes.json());
+        if (logsRes && logsRes.ok) setLogs(await logsRes.json());
       }
 
       if (activeTab === 'broadcasts') {
         const bRes = await fetch(`${API_BASE}/broadcast`).catch(() => null);
-        if (bRes) setBroadcasts(await bRes.json());
-        if (categories.length === 0) {
-          const catRes = await fetch(`${API_BASE}/categories`).catch(() => null);
-          if (catRes) setCategories(await catRes.json());
-        }
+        if (bRes && bRes.ok) setBroadcasts(await bRes.json());
       }
       
       const inboxRes = await fetch(`${API_BASE}/inbox`).catch(() => null);
-      if (inboxRes) {
+      if (inboxRes && inboxRes.ok) {
         const inboxData = await inboxRes.json();
         setInbox(inboxData);
         setStats(s => ({ ...s, inbox: inboxData.length }));
       }
 
       const catRes = await fetch(`${API_BASE}/categories`).catch(() => null);
-      if (catRes) setCategories(await catRes.json());
+      if (catRes && catRes.ok) setCategories(await catRes.json());
       
       const conUrl = selectedCategory ? `${API_BASE}/contacts?categoryId=${selectedCategory}&page=${currentPage}&limit=${pageSize}` : `${API_BASE}/contacts?page=${currentPage}&limit=${pageSize}`;
       const conRes = await fetch(conUrl).catch(() => null);
-      if (conRes) {
+      if (conRes && conRes.ok) {
         const data = await conRes.json();
         setContacts(data.Contacts || data.contacts || []);
         setTotalContacts(data.TotalCount || data.totalCount || 0);
       }
       
       const colRes = await fetch(`${API_BASE}/contacts/columns/all`).catch(() => null);
-      if (colRes) {
+      if (colRes && colRes.ok) {
         setDynamicHeaders(await colRes.json());
       }
     } catch (e) {
@@ -158,15 +179,15 @@ export default function App() {
           <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
             <div className="card" style={{ flex: 1 }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Total Messages</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{stats.outbox}</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{typeof stats.outbox === 'object' ? 0 : stats.outbox}</div>
             </div>
             <div className="card" style={{ flex: 1 }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Active Rules</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{stats.rules}</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{typeof stats.rules === 'object' ? 0 : stats.rules}</div>
             </div>
             <div className="card" style={{ flex: 1 }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Inbox Replies</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{stats.inbox}</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{typeof stats.inbox === 'object' ? 0 : stats.inbox}</div>
             </div>
           </div>
 
@@ -218,7 +239,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {outbox.map(msg => (
+                      {(Array.isArray(outbox) ? outbox : []).map(msg => (
                         <tr key={msg.Id || msg.id}>
                           <td style={{ fontFamily: 'monospace' }}>{msg.ToPhoneNumber || msg.toPhoneNumber}</td>
                           <td>
@@ -251,7 +272,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {inbox.map(msg => (
+                      {(Array.isArray(inbox) ? inbox : []).map(msg => (
                         <tr key={msg.Id || msg.id}>
                           <td style={{ fontFamily: 'monospace' }}>{msg.FromPhoneNumber || msg.fromPhoneNumber}</td>
                           <td>{msg.Content || msg.content}</td>
@@ -299,10 +320,20 @@ export default function App() {
                     const val = row[h];
                     if (!val || val.trim() === '') return;
                     
-                    if (hLower === 'phone' || hLower === 'phonenumber') phone = val;
-                    else if (hLower === 'firstname' || hLower === 'first_name' || hLower === 'first name') firstName = val;
-                    else if (hLower === 'lastname' || hLower === 'last_name' || hLower === 'last name') lastName = val;
+                    const digitsCount = (hLower.match(/\d/g) || []).length;
+                    const hasLetters = /[a-z]/i.test(hLower);
+                    const looksLikePhoneHeader = hLower.includes('phone') || hLower.includes('mobile') || hLower.includes('whatsapp') || hLower.includes('contact') || hLower.includes('cell') || hLower.includes('number');
+                    const isMissingHeaderPhone = (!hasLetters && digitsCount >= 7 && digitsCount <= 15 && (hLower.includes('+') || hLower.startsWith('0')));
+                    
+                    if (looksLikePhoneHeader || isMissingHeaderPhone) phone = val;
+                    else if (hLower.includes('first') && hLower.includes('name')) firstName = val;
+                    else if (hLower.includes('last') && hLower.includes('name')) lastName = val;
                     else customFields[h] = val;
+                    
+                    if (!phone) {
+                        const valDigits = (val.match(/\d/g) || []).length;
+                        if (!/[a-z]/i.test(val) && valDigits >= 7 && valDigits <= 15 && (val.includes('+') || val.startsWith('0'))) phone = val;
+                    }
                 });
                 
                 return {
@@ -396,23 +427,32 @@ export default function App() {
       };
 
       const handleEditContactClick = (c) => {
+        const defaultFields = {};
+        (Array.isArray(dynamicHeaders) ? dynamicHeaders : []).forEach(h => defaultFields[h] = '');
+        let existing = {};
+        try { existing = JSON.parse(c.CustomFieldsJson || c.customFieldsJson || '{}'); } catch(e){}
+        const mergedFields = { ...defaultFields, ...existing };
+
         setEditingContactId(c.Id || c.id);
         setEditContactData({
             PhoneNumber: c.PhoneNumber || c.phoneNumber || '',
             FirstName: c.FirstName || c.firstName || '',
             LastName: c.LastName || c.lastName || '',
-            CustomFieldsJson: c.CustomFieldsJson || c.customFieldsJson || '{}'
+            CustomFieldsJson: JSON.stringify(mergedFields)
         });
         setShowEditContactModal(true);
       };
 
       const handleAddContactClick = () => {
+        const defaultFields = {};
+        (Array.isArray(dynamicHeaders) ? dynamicHeaders : []).forEach(h => defaultFields[h] = '');
+
         setEditingContactId(null);
         setEditContactData({
             PhoneNumber: '',
             FirstName: '',
             LastName: '',
-            CustomFieldsJson: '{}'
+            CustomFieldsJson: JSON.stringify(defaultFields)
         });
         setShowEditContactModal(true);
       };
@@ -461,11 +501,11 @@ export default function App() {
           <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', alignItems: 'center' }}>
             <select 
               value={selectedCategory} 
-              onChange={e => { setSelectedCategory(e.target.value); setTimeout(fetchData, 100); }} 
+              onChange={e => { setSelectedCategory(e.target.value); setCurrentPage(1); }} 
               style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
             >
               <option value="">All Categories</option>
-              {categories.map(c => <option key={c.Id || c.id} value={c.Id || c.id}>{c.Name || c.name}</option>)}
+              {(Array.isArray(categories) ? categories : []).map(c => <option key={c.Id || c.id} value={c.Id || c.id}>{c.Name || c.name}</option>)}
             </select>
             <button className="btn btn-secondary" onClick={handleAddCategory}>
               <Plus size={16} /> New Category
@@ -486,7 +526,7 @@ export default function App() {
             </label>
           </div>
 
-          {showColumnModal && (
+          {showColumnModal && createPortal((
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
               <div className="card" style={{ width: '400px' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>Manage Custom Columns</h3>
@@ -497,8 +537,8 @@ export default function App() {
                   <div className="empty-state">No custom columns found.</div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
-                    {dynamicHeaders.map(h => (
-                      <div key={h} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
+                    {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => (
+                      <div key={h} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', borderBottom: '1px solid #eee', borderRadius: '4px' }}>
                         <span style={{ fontWeight: 500 }}>{h}</span>
                         <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#ef4444' }} onClick={() => handleDeleteColumn(h)}>
                           <Trash2 size={14} />
@@ -512,7 +552,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-          )}
+          ), document.body)}
 
           <div className="card">
             <h3 className="card-title">Contacts Directory</h3>
@@ -526,12 +566,12 @@ export default function App() {
                       <th>Phone</th>
                       <th>First Name</th>
                       <th>Last Name</th>
-                      {dynamicHeaders.map(h => <th key={h}>{h}</th>)}
+                      {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => <th key={h}>{h}</th>)}
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {contacts.map(c => {
+                    {(Array.isArray(contacts) ? contacts : []).map(c => {
                       let fields = {};
                       try { fields = JSON.parse(c.CustomFieldsJson || c.customFieldsJson || '{}'); } catch(e){}
                       return (
@@ -539,7 +579,7 @@ export default function App() {
                           <td style={{ fontFamily: 'monospace' }}>{c.PhoneNumber || c.phoneNumber}</td>
                           <td>{c.FirstName || c.firstName}</td>
                           <td>{c.LastName || c.lastName}</td>
-                          {dynamicHeaders.map(h => <td key={h}>{fields[h] || '-'}</td>)}
+                          {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => <td key={h}>{fields[h] || '-'}</td>)}
                           <td>
                             <div style={{ display: 'flex', gap: '8px' }}>
                               <button className="btn btn-secondary" style={{ padding: '4px', border: 'none' }} onClick={() => handleEditContactClick(c)}>
@@ -594,7 +634,7 @@ export default function App() {
             )}
           </div>
           
-          {showEditContactModal && (
+          {showEditContactModal && createPortal((
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
               <div className="card" style={{ width: '500px' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>{editingContactId ? 'Edit Contact' : 'Add Contact'}</h3>
@@ -616,12 +656,72 @@ export default function App() {
                 </div>
 
                 <div className="form-group" style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Custom Fields (JSON)</label>
-                  <textarea 
-                    value={editContactData.CustomFieldsJson} 
-                    onChange={e => setEditContactData({...editContactData, CustomFieldsJson: e.target.value})} 
-                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', minHeight: '100px', fontFamily: 'monospace' }} 
-                  />
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Custom Fields</label>
+                  {(() => {
+                    let fields = {};
+                    try { fields = JSON.parse(editContactData.CustomFieldsJson || '{}'); } catch(e) {}
+                    const keys = Object.keys(fields);
+                    
+                    return (
+                      <div>
+                        {keys.map((k, i) => (
+                          <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                            <input 
+                              type="text" 
+                              value={k} 
+                              onChange={e => {
+                                const newKey = e.target.value;
+                                const newFields = {};
+                                // preserve order
+                                keys.forEach(oldKey => {
+                                  if (oldKey === k) newFields[newKey] = fields[oldKey];
+                                  else newFields[oldKey] = fields[oldKey];
+                                });
+                                setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
+                              }}
+                              style={{ width: '40%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                            />
+                            <input 
+                              type="text" 
+                              value={fields[k]} 
+                              onChange={e => {
+                                const newFields = { ...fields, [k]: e.target.value };
+                                setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
+                              }}
+                              style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                            />
+                            <button 
+                              className="btn btn-secondary"
+                              style={{ color: '#ef4444', padding: '8px' }}
+                              onClick={() => {
+                                const newFields = { ...fields };
+                                delete newFields[k];
+                                setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
+                              }}
+                            >
+                              <XCircle size={16} />
+                            </button>
+                          </div>
+                        ))}
+                        <button 
+                          className="btn btn-secondary" 
+                          style={{ marginTop: '8px', padding: '4px 8px', fontSize: '0.9em' }}
+                          onClick={() => {
+                            let newKey = 'new_field';
+                            let counter = 1;
+                            while(fields[newKey]) {
+                                newKey = 'new_field_' + counter;
+                                counter++;
+                            }
+                            const newFields = { ...fields, [newKey]: '' };
+                            setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
+                          }}
+                        >
+                          <Plus size={14} style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Add Field
+                        </button>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
@@ -630,9 +730,9 @@ export default function App() {
                 </div>
               </div>
             </div>
-          )}
+          ), document.body)}
 
-          {importModalOpen && (
+          {importModalOpen && createPortal((
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
               <div className="card" style={{ width: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>Import Contacts Preview</h3>
@@ -647,7 +747,7 @@ export default function App() {
                         style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1 }}
                       >
                         <option value="">No Category (All Contacts)</option>
-                        {categories.map(c => <option key={c.Id || c.id} value={c.Id || c.id}>{c.Name || c.name}</option>)}
+                        {(Array.isArray(categories) ? categories : []).map(c => <option key={c.Id || c.id} value={c.Id || c.id}>{c.Name || c.name}</option>)}
                       </select>
                       <button className="btn btn-secondary" onClick={handleAddCategory}>
                         <Plus size={16} /> Create New
@@ -698,7 +798,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-          )}
+          ), document.body)}
         </div>
       );
     }
@@ -719,7 +819,7 @@ export default function App() {
           });
           if (res.ok) {
             setShowTemplateModal(false);
-            setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp' });
+            setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1 });
             setIsEditingTemplate(false);
             setEditingTemplateId(null);
             fetchData();
@@ -736,11 +836,35 @@ export default function App() {
           Name: t.Name || t.name,
           ExternalTemplateName: t.ExternalTemplateName || t.externalTemplateName || '',
           LanguageCode: t.LanguageCode || t.languageCode || 'en',
-          ChannelType: t.ChannelType || t.channelType || 'WhatsApp'
+          ChannelType: t.ChannelType || t.channelType || 'WhatsApp',
+          BodyParamCount: t.BodyParamCount ?? t.bodyParamCount ?? -1
         });
         setEditingTemplateId(t.Id || t.id);
         setIsEditingTemplate(true);
         setShowTemplateModal(true);
+      };
+
+      const loadRules = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/rules`);
+          if (res.ok) {
+            const rules = await res.json();
+            // For each rule, fetch stats
+            const rulesWithStats = await Promise.all(rules.map(async r => {
+              try {
+                const statsRes = await fetch(`${API_BASE}/rules/${r.Id || r.id}/stats`);
+                if (statsRes.ok) {
+                  const stats = await statsRes.json();
+                  return { ...r, stats };
+                }
+              } catch (e) {}
+              return r;
+            }));
+            setRulesList(rulesWithStats);
+          }
+        } catch (e) {
+          console.error(e);
+        }
       };
 
       const handleDeleteTemplate = async (id) => {
@@ -750,7 +874,12 @@ export default function App() {
           if (res.ok) {
             fetchData();
           } else {
-            alert('Failed to delete template');
+            let errorMsg = 'Failed to delete template';
+            try {
+              const data = await res.json();
+              if (data && data.message) errorMsg = data.message;
+            } catch (e) { /* ignore parse error */ }
+            alert(errorMsg);
           }
         } catch (err) {
           alert('Error deleting template');
@@ -762,7 +891,7 @@ export default function App() {
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
             <h3 className="card-title">Message Templates</h3>
             <button className="btn btn-primary" onClick={() => {
-              setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp' });
+              setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1 });
               setIsEditingTemplate(false);
               setEditingTemplateId(null);
               setShowTemplateModal(true);
@@ -771,18 +900,25 @@ export default function App() {
             </button>
           </div>
           
-          {showTemplateModal && (
+          {showTemplateModal && createPortal((
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
               <div className="card" style={{ width: '400px' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>{isEditingTemplate ? 'Edit Template' : 'New Template'}</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <input type="text" className="input" placeholder="Display Name (e.g. CheckIn Welcome)" value={newTemplate.Name} onChange={e => setNewTemplate({...newTemplate, Name: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
                   <input type="text" className="input" placeholder="Meta Template Name (e.g. hotel_checkin)" value={newTemplate.ExternalTemplateName} onChange={e => setNewTemplate({...newTemplate, ExternalTemplateName: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-                  <input type="text" className="input" placeholder="Language (e.g. en)" value={newTemplate.LanguageCode} onChange={e => setNewTemplate({...newTemplate, LanguageCode: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                  <input type="text" className="input" placeholder="Language (e.g. en_US)" value={newTemplate.LanguageCode} onChange={e => setNewTemplate({...newTemplate, LanguageCode: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
                   <select className="input" value={newTemplate.ChannelType} onChange={e => setNewTemplate({...newTemplate, ChannelType: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
                     <option value="WhatsApp">WhatsApp</option>
                     <option value="SMS">SMS</option>
                   </select>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Body Parameters</label>
+                    <select className="input" value={newTemplate.BodyParamCount} onChange={e => setNewTemplate({...newTemplate, BodyParamCount: parseInt(e.target.value)})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                      <option value={-1}>Unknown / Has Parameters (default)</option>
+                      <option value={0}>Zero Parameters (e.g. hello_world)</option>
+                    </select>
+                  </div>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
                     <button className="btn btn-secondary" onClick={() => setShowTemplateModal(false)}>Cancel</button>
                     <button className="btn btn-primary" onClick={handleSaveTemplate}>Save</button>
@@ -790,13 +926,13 @@ export default function App() {
                 </div>
               </div>
             </div>
-          )}
+          ), document.body)}
 
           <div className="data-table-container">
             <table className="data-table">
               <thead><tr><th>Name</th><th>External Name</th><th>Channel</th><th>Actions</th></tr></thead>
               <tbody>
-                {templatesList.map(t => (
+                {(Array.isArray(templatesList) ? templatesList : []).map(t => (
                   <tr key={t.Id || t.id}>
                     <td>{t.Name || t.name}</td>
                     <td>{t.ExternalTemplateName || t.externalTemplateName || '-'}</td>
@@ -821,29 +957,172 @@ export default function App() {
     }
 
     if (activeTab === 'rules') {
+      const handleEditRule = (rule) => {
+        setEditingRule(rule);
+        setIsBuildingRule(true);
+      };
+
+      const handleShowAnalytics = async (rule) => {
+        setAnalyticsRule(rule);
+        setRuleFailures([]);
+        try {
+          const res = await fetch(`${API_BASE}/rules/${rule.Id || rule.id}/failures`);
+          if (res.ok) {
+            setRuleFailures(await res.json());
+          }
+        } catch (e) {
+          console.error("Failed to fetch failures", e);
+        }
+      };
+
+      const handleDeleteRule = async (id) => {
+        if (!window.confirm("Are you sure you want to delete this rule?")) return;
+        try {
+          const res = await fetch(`${API_BASE}/rules/${id}`, { method: 'DELETE' });
+          if (res.ok) {
+            setRulesList(prev => prev.filter(r => (r.Id || r.id) !== id));
+          } else {
+            alert("Failed to delete rule");
+          }
+        } catch(e) {
+          alert("Error deleting rule");
+        }
+      };
+
+      const handleToggleRule = async (id, currentState) => {
+        try {
+          const res = await fetch(`${API_BASE}/rules/${id}/toggle`, { method: 'PUT' });
+          if (res.ok) {
+            setRulesList(prev => prev.map(r => (r.Id || r.id) === id ? { ...r, IsEnabled: !currentState, isEnabled: !currentState } : r));
+          } else {
+            alert("Failed to toggle rule");
+          }
+        } catch(e) {
+          alert("Error toggling rule");
+        }
+      };
+
+      if (isBuildingRule) {
+        return <AutomationBuilder onCancel={() => { setIsBuildingRule(false); setEditingRule(null); }} initialRule={editingRule} />;
+      }
       return (
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
             <h3 className="card-title">Automation Rules</h3>
-            <button className="btn btn-primary" onClick={() => alert('Rule Builder coming soon!')}>
+            <button className="btn btn-primary" onClick={() => { setEditingRule(null); setIsBuildingRule(true); }}>
               <Plus size={16} /> Create Rule
             </button>
           </div>
           <div className="data-table-container">
             <table className="data-table">
-              <thead><tr><th>Name</th><th>Trigger</th><th>Action</th><th>Status</th></tr></thead>
+              <thead><tr><th>Name</th><th>Trigger</th><th>Action Template ID</th><th>Stats</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
-                {rulesList.map(r => (
-                  <tr key={r.Id || r.id}>
-                    <td>{r.Name || r.name}</td>
-                    <td><span className="badge badge-pending">{r.TriggerType || r.triggerType}</span></td>
-                    <td>{r.ActionType || r.actionType}</td>
-                    <td><span className="badge badge-sent">Active</span></td>
+                {(Array.isArray(rulesList) ? rulesList : []).map(r => (
+                  <tr key={r.Id || r.id} style={{ opacity: (r.IsEnabled ?? r.isEnabled) ? 1 : 0.6 }}>
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{r.Name || r.name}</div>
+                      <div style={{ fontSize: '0.8rem', color: '#64748b' }}>{r.Description || r.description}</div>
+                    </td>
+                    <td><span className="badge badge-pending">{r.TriggerEventType || r.triggerEventType}</span></td>
+                    <td><span className="badge badge-delivered">Template: {r.TemplateId || r.templateId}</span></td>
+                    <td style={{ fontSize: '0.8rem' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ fontWeight: 600, color: '#475569', marginBottom: '2px' }}>Analytics</div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <span title="Triggered" style={{ color: '#3b82f6' }}>T: {r.stats?.Triggered ?? r.stats?.triggered ?? 0}</span>
+                          <span title="Sent" style={{ color: '#10b981' }}>S: {r.stats?.TotalSent ?? r.stats?.totalSent ?? 0}</span>
+                          <span title="Failed" style={{ color: '#ef4444' }}>F: {r.stats?.Failed ?? r.stats?.failed ?? 0}</span>
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                          {r.stats?.LastRun || r.stats?.lastRun ? `Last: ${new Date(r.stats?.LastRun || r.stats?.lastRun).toLocaleString()}` : 'Never run'}
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <span className={`badge ${(r.IsEnabled ?? r.isEnabled) ? 'badge-delivered' : 'badge-failed'}`}>
+                        {(r.IsEnabled ?? r.isEnabled) ? 'Active' : 'Paused'}
+                      </span>
+                    </td>
+                     <td>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={() => handleEditRule(r)} title="Edit">
+                          <Edit2 size={14} />
+                        </button>
+                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: (r.IsEnabled ?? r.isEnabled) ? '#f59e0b' : '#10b981' }} onClick={() => handleToggleRule(r.Id || r.id, (r.IsEnabled ?? r.isEnabled))} title={(r.IsEnabled ?? r.isEnabled) ? "Pause" : "Resume"}>
+                          {(r.IsEnabled ?? r.isEnabled) ? <XCircle size={14} /> : <CheckCircle2 size={14} />}
+                        </button>
+                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#3b82f6' }} onClick={() => handleShowAnalytics(r)} title="Analytics">
+                          <BarChart2 size={14} />
+                        </button>
+                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#ef4444' }} onClick={() => handleDeleteRule(r.Id || r.id)} title="Delete">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {analyticsRule && createPortal((
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+              <div className="card" style={{ width: '600px', maxWidth: '95%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
+                  <h3 className="card-title" style={{ margin: 0 }}>Analytics: {analyticsRule.Name || analyticsRule.name}</h3>
+                  <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={() => setAnalyticsRule(null)}>✕</button>
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                  <div style={{ padding: '16px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 600 }}>TRIGGERED</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#15803d' }}>
+                      {analyticsRule.stats?.Triggered ?? analyticsRule.stats?.triggered ?? 0}
+                    </div>
+                  </div>
+                  <div style={{ padding: '16px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.8rem', color: '#1e40af', fontWeight: 600 }}>SENT SUCCESSFULLY</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#1d4ed8' }}>
+                      {analyticsRule.stats?.TotalSent ?? analyticsRule.stats?.totalSent ?? 0}
+                    </div>
+                  </div>
+                  <div style={{ padding: '16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.8rem', color: '#991b1b', fontWeight: 600 }}>FAILED</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#b91c1c' }}>
+                      {analyticsRule.stats?.Failed ?? analyticsRule.stats?.failed ?? 0}
+                    </div>
+                  </div>
+                </div>
+
+                <h4 style={{ marginBottom: '8px', color: '#334155', fontWeight: 600 }}>Failure Log (Recent Failed Numbers & Reasons)</h4>
+                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '350px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc', padding: '12px' }}>
+                  {ruleFailures.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#64748b', padding: '24px 0' }}>
+                      No failed messages recorded for this rule.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {ruleFailures.map((f, i) => (
+                        <div key={i} style={{ padding: '10px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                            <span style={{ fontWeight: 600, color: '#334155' }}>Phone: {f.ToPhoneNumber || f.toPhoneNumber}</span>
+                            <span style={{ color: '#64748b' }}>{new Date(f.CreatedAt || f.createdAt).toLocaleString()}</span>
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: '#ef4444', backgroundColor: '#fef2f2', padding: '6px 8px', borderRadius: '4px', border: '1px solid #fee2e2' }}>
+                            <strong>Reason:</strong> {f.FailureReason || f.failureReason || 'Failed to connect to Meta WhatsApp API.'}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
+                  <button className="btn btn-primary" onClick={() => setAnalyticsRule(null)}>Close</button>
+                </div>
+              </div>
+            </div>
+          ), document.body)}
         </div>
       );
     }
@@ -856,7 +1135,7 @@ export default function App() {
             <table className="data-table">
               <thead><tr><th>Occurred At</th><th>Event Type</th><th>Payload</th></tr></thead>
               <tbody>
-                {logs.map(l => (
+                {(Array.isArray(logs) ? logs : []).map(l => (
                   <tr key={l.Id || l.id}>
                     <td style={{ whiteSpace: 'nowrap' }}>{new Date(l.OccurredAt || l.occurredAt).toLocaleString()}</td>
                     <td><span className="badge badge-delivered">{l.EventType || l.eventType}</span></td>
@@ -892,6 +1171,34 @@ export default function App() {
         }
       };
 
+      const handleStopBroadcast = async (b) => {
+        if (!window.confirm('Are you sure you want to stop this broadcast? All pending messages will be cancelled.')) return;
+        try {
+          const res = await fetch(`${API_BASE}/broadcast?templateId=${b.TemplateId || b.templateId}&startedAt=${encodeURIComponent(b.StartedAt || b.startedAt)}`, {
+            method: 'DELETE'
+          });
+          const data = await res.json();
+          alert(data.message);
+          fetchData();
+        } catch (err) {
+          alert("Failed to stop broadcast");
+        }
+      };
+
+      const handleDeleteBroadcast = async (b) => {
+        if (!window.confirm('Are you sure you want to completely delete this broadcast from history?')) return;
+        try {
+          const res = await fetch(`${API_BASE}/broadcast/history?templateId=${b.TemplateId || b.templateId}&startedAt=${encodeURIComponent(b.StartedAt || b.startedAt)}`, {
+            method: 'DELETE'
+          });
+          const data = await res.json();
+          alert(data.message);
+          fetchData();
+        } catch (err) {
+          alert("Failed to delete broadcast");
+        }
+      };
+
       return (
         <div>
           <div className="card" style={{ marginBottom: '24px' }}>
@@ -906,7 +1213,7 @@ export default function App() {
                   style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0' }}
                 >
                   <option value="">All Contacts</option>
-                  {categories.map(c => <option key={c.Id || c.id} value={c.Id || c.id}>{c.Name || c.name}</option>)}
+                  {(Array.isArray(categories) ? categories : []).map(c => <option key={c.Id || c.id} value={c.Id || c.id}>{c.Name || c.name}</option>)}
                 </select>
               </div>
               <div style={{ flex: 1 }}>
@@ -918,7 +1225,7 @@ export default function App() {
                   style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0' }}
                 >
                   <option value="">Select a template...</option>
-                  {templatesList.map(t => <option key={t.Id || t.id} value={t.Id || t.id}>{t.Name || t.name}</option>)}
+                  {(Array.isArray(templatesList) ? templatesList : []).map(t => <option key={t.Id || t.id} value={t.Id || t.id}>{t.Name || t.name}</option>)}
                 </select>
               </div>
               <div>
@@ -934,18 +1241,43 @@ export default function App() {
             <h3 className="card-title">Recent Broadcasts</h3>
             <div className="data-table-container">
               <table className="data-table">
-                <thead><tr><th>Started At</th><th>Template</th><th>Total Queued</th><th>Delivered</th><th>Pending</th></tr></thead>
+                <thead><tr><th>Started At</th><th>Template</th><th>Total Queued</th><th>Delivered</th><th>Pending</th><th>Failed</th><th>Actions</th></tr></thead>
                 <tbody>
-                  {broadcasts.map((b, i) => (
+                  {(Array.isArray(broadcasts) ? broadcasts : []).map((b, i) => (
                     <tr key={i}>
                       <td>{new Date(b.StartedAt || b.startedAt).toLocaleString()}</td>
                       <td>{b.TemplateName || b.templateName}</td>
-                      <td>{b.TotalSent || b.totalSent}</td>
-                      <td><span className="badge badge-delivered">{b.Delivered || b.delivered}</span></td>
-                      <td><span className="badge badge-pending">{b.Pending || b.pending}</span></td>
+                      <td>{b.TotalQueued ?? b.totalQueued ?? b.TotalSent ?? b.totalSent ?? 0}</td>
+                      <td><span className="badge badge-delivered">{b.Delivered ?? b.delivered ?? 0}</span></td>
+                      <td><span className="badge badge-pending">{b.Pending ?? b.pending ?? 0}</span></td>
+                      <td><span className="badge" style={{ backgroundColor: '#fee2e2', color: '#991b1b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600 }}>{b.Failed ?? b.failed ?? 0}</span></td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          {(b.Pending || b.pending) > 0 && (
+                            <button 
+                              className="btn btn-secondary" 
+                              style={{ padding: '4px 8px', fontSize: '0.8rem', color: '#eab308', borderColor: '#eab308' }} 
+                              onClick={() => handleStopBroadcast(b)}
+                              title="Stop pending messages"
+                            >
+                              <XCircle size={14} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+                              Stop
+                            </button>
+                          )}
+                          <button 
+                            className="btn btn-secondary" 
+                            style={{ padding: '4px 8px', fontSize: '0.8rem', color: '#ef4444', borderColor: '#ef4444' }} 
+                            onClick={() => handleDeleteBroadcast(b)}
+                            title="Delete from history"
+                          >
+                            <Trash2 size={14} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+                            Delete
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
-                  {broadcasts.length === 0 && <tr><td colSpan="5" style={{ textAlign: 'center', padding: '24px' }}>No broadcasts sent yet.</td></tr>}
+                  {(broadcasts || []).length === 0 && <tr><td colSpan="6" style={{ textAlign: 'center', padding: '24px' }}>No broadcasts sent yet.</td></tr>}
                 </tbody>
               </table>
             </div>

@@ -60,7 +60,7 @@ public sealed class OutboxProcessor : BackgroundService
                 if (template is null)
                 {
                     _logger.LogError("Template {TemplateId} not found for OutboxMessage {Id}", message.TemplateId, message.Id);
-                    await _outboxRepository.UpdateStatusAsync(message.Id, "Failed", message.RetryCount, null, null, ct);
+                    await _outboxRepository.UpdateStatusAsync(message.Id, "Failed", message.RetryCount, null, null, "Associated template not found in database.", ct);
                     continue;
                 }
 
@@ -76,16 +76,16 @@ public sealed class OutboxProcessor : BackgroundService
                 if (channel is null)
                 {
                     _logger.LogError("No channel registered for {ChannelType}", channelType);
-                    await _outboxRepository.UpdateStatusAsync(message.Id, "Failed", message.RetryCount, null, null, ct);
+                    await _outboxRepository.UpdateStatusAsync(message.Id, "Failed", message.RetryCount, null, null, "No channel registered for templates channel type.", ct);
                     continue;
                 }
 
-                var (success, externalId) = await channel.SendAsync(message, ct);
+                var (success, externalId, failureReason) = await channel.SendAsync(message, ct);
 
                 if (success)
                 {
                     await _outboxRepository.UpdateStatusAsync(
-                        message.Id, "Sent", message.RetryCount, DateTimeOffset.UtcNow, externalId, ct);
+                        message.Id, "Sent", message.RetryCount, DateTimeOffset.UtcNow, externalId, null, ct);
                     _logger.LogInformation("OutboxMessage {Id} → Sent via {Channel}", message.Id, channelType);
                 }
                 else
@@ -94,8 +94,8 @@ public sealed class OutboxProcessor : BackgroundService
                     
                     if (newRetryCount >= _maxRetries)
                     {
-                        await _outboxRepository.UpdateStatusAsync(message.Id, "Failed", newRetryCount, null, null, ct);
-                        _logger.LogWarning("OutboxMessage {Id} failed permanently.", message.Id);
+                        await _outboxRepository.UpdateStatusAsync(message.Id, "Failed", newRetryCount, null, null, failureReason, ct);
+                        _logger.LogWarning("OutboxMessage {Id} failed permanently: {Reason}", message.Id, failureReason);
 
                         // FALLBACK LOGIC
                         if (!string.IsNullOrEmpty(template.FallbackChannelType))
@@ -114,8 +114,8 @@ public sealed class OutboxProcessor : BackgroundService
                     }
                     else
                     {
-                        await _outboxRepository.UpdateStatusAsync(message.Id, "Pending", newRetryCount, null, null, ct);
-                        _logger.LogWarning("OutboxMessage {Id} send failed. RetryCount={Retry}, Status=Pending", message.Id, newRetryCount);
+                        await _outboxRepository.UpdateStatusAsync(message.Id, "Pending", newRetryCount, null, null, failureReason, ct);
+                        _logger.LogWarning("OutboxMessage {Id} send failed. RetryCount={Retry}, Status=Pending, Reason={Reason}", message.Id, newRetryCount, failureReason);
                     }
                 }
             }

@@ -40,7 +40,8 @@ namespace HotelAutomation.Worker
                             TemplateId = job.TemplateId,
                             ParametersJson = job.ParametersJson,
                             Status = "Pending",
-                            CreatedAt = DateTimeOffset.UtcNow
+                            CreatedAt = DateTimeOffset.UtcNow,
+                            RuleId = job.RuleId
                         };
 
                         await _outboxRepository.AddAsync(outboxMessage);

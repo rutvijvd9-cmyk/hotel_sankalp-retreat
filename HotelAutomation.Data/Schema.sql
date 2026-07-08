@@ -7,16 +7,20 @@ CREATE TABLE IF NOT EXISTS MessageTemplates (
     ExternalTemplateName TEXT    NOT NULL,
     LanguageCode         TEXT    NOT NULL,
     ChannelType          TEXT    NOT NULL,
+    BodyParamCount       INTEGER NOT NULL DEFAULT -1,
     FallbackChannelType  TEXT,
     CreatedAt            TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS AutomationRules (
     Id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    Name             TEXT    NULL,
+    Description      TEXT    NULL,
     TriggerEventType TEXT    NOT NULL,
     TemplateId       INTEGER NOT NULL REFERENCES MessageTemplates(Id),
     IsEnabled        INTEGER NOT NULL DEFAULT 1,
     ConditionsJson   TEXT    NULL,
+    AudienceFilter   TEXT    NULL,
     DelayMinutes     INTEGER NOT NULL DEFAULT 0,
     TemplateWeightsJson TEXT NULL
 );
@@ -82,50 +86,12 @@ CREATE TABLE IF NOT EXISTS Contacts (
     CreatedAt        TEXT    NOT NULL
 );
 
--- ───────────────────────────────────────────────
--- Seed: Core Hotel Templates
--- ───────────────────────────────────────────────
-
--- 1. Guest Check-In Welcome
-INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
-SELECT 'CheckIn Welcome', 'hotel_checkin_welcome', 'en', 'WhatsApp', datetime('now')
-WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'CheckIn Welcome');
-
--- 2. Checkout Bill Summary
-INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, FallbackChannelType, CreatedAt)
-SELECT 'Checkout Bill Summary', 'hotel_checkout_bill', 'en', 'WhatsApp', 'SMS', datetime('now')
-WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Checkout Bill Summary');
-
--- 3. Post-Stay Feedback Request (sent 24h after checkout)
-INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
-SELECT 'Post-Stay Feedback Request', 'hotel_feedback_request', 'en', 'WhatsApp', datetime('now')
-WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Post-Stay Feedback Request');
-
--- 4. Marketing Offer (used for Broadcast campaigns)
-INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, CreatedAt)
-SELECT 'Seasonal Marketing Offer', 'hotel_seasonal_offer', 'en', 'WhatsApp', datetime('now')
-WHERE NOT EXISTS (SELECT 1 FROM MessageTemplates WHERE Name = 'Seasonal Marketing Offer');
-
--- (Legacy templates removed as per user request)
-
--- ───────────────────────────────────────────────
--- Seed: Automation Rules  
--- ───────────────────────────────────────────────
-
--- Rule: CheckIn → Welcome message (immediate)
-INSERT INTO AutomationRules (TriggerEventType, TemplateId, IsEnabled, DelayMinutes)
-SELECT 'CheckIn', (SELECT Id FROM MessageTemplates WHERE Name = 'CheckIn Welcome'), 1, 0
-WHERE NOT EXISTS (SELECT 1 FROM AutomationRules WHERE TriggerEventType = 'CheckIn' AND DelayMinutes = 0);
-
--- Rule: CheckOut → Bill Summary (immediate)
-INSERT INTO AutomationRules (TriggerEventType, TemplateId, IsEnabled, DelayMinutes)
-SELECT 'CheckOut', (SELECT Id FROM MessageTemplates WHERE Name = 'Checkout Bill Summary'), 1, 0
-WHERE NOT EXISTS (SELECT 1 FROM AutomationRules WHERE TriggerEventType = 'CheckOut' AND DelayMinutes = 0);
-
--- Rule: CheckOut → Feedback Request (24 hours after checkout = 1440 minutes)
-INSERT INTO AutomationRules (TriggerEventType, TemplateId, IsEnabled, DelayMinutes)
-SELECT 'CheckOut', (SELECT Id FROM MessageTemplates WHERE Name = 'Post-Stay Feedback Request'), 1, 1440
-WHERE NOT EXISTS (SELECT 1 FROM AutomationRules WHERE TriggerEventType = 'CheckOut' AND DelayMinutes = 1440);
-
-
+CREATE TABLE IF NOT EXISTS Campaigns (
+    Id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    Name          TEXT    NOT NULL,
+    TemplateId    INTEGER NOT NULL REFERENCES MessageTemplates(Id),
+    TotalContacts INTEGER NOT NULL DEFAULT 0,
+    Status        TEXT    NOT NULL DEFAULT 'Processing',
+    CreatedAt     TEXT    NOT NULL
+);
 

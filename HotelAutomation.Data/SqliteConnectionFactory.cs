@@ -76,5 +76,62 @@ public sealed class SqliteConnectionFactory
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
         await command.ExecuteNonQueryAsync(ct);
+
+        // Safe migration: add BodyParamCount column if it doesn't exist yet (SQLite ignores duplicate columns via try/catch)
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE MessageTemplates ADD COLUMN BodyParamCount INTEGER NOT NULL DEFAULT -1;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { /* Column already exists — safe to ignore */ }
+
+        // Safe migrations for AutomationRules
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE AutomationRules ADD COLUMN Name TEXT NULL;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE AutomationRules ADD COLUMN Description TEXT NULL;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE AutomationRules ADD COLUMN AudienceFilter TEXT NULL;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // RuleId migrations
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE ScheduledJobs ADD COLUMN RuleId INTEGER NULL REFERENCES AutomationRules(Id);";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE OutboxMessages ADD COLUMN RuleId INTEGER NULL REFERENCES AutomationRules(Id);";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE OutboxMessages ADD COLUMN FailureReason TEXT NULL;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
     }
 }

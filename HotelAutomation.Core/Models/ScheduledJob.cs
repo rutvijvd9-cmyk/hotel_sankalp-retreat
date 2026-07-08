@@ -15,5 +15,6 @@ namespace HotelAutomation.Core.Models
         
         public string Status { get; set; } = "Pending"; // Pending, Processed, Cancelled
         public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+        public int? RuleId { get; set; }
     }
 }

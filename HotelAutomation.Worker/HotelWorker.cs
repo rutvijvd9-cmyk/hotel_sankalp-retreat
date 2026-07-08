@@ -92,7 +92,8 @@ public sealed class HotelWorker : BackgroundService
                     Greeting = SpintaxParser.Parse("{Hi|Hello|Namaste} ")
                 }),
                 TriggerTime = DateTimeOffset.UtcNow.AddMinutes(matchedRule.DelayMinutes),
-                Status = "Pending"
+                Status = "Pending",
+                RuleId = matchedRule.Id
             };
 
 

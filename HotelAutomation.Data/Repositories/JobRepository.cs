@@ -19,8 +19,8 @@ namespace HotelAutomation.Data.Repositories
         {
             using var connection = await _dbFactory.OpenAsync();
             const string sql = @"
-                INSERT INTO ScheduledJobs (Id, GuestName, PhoneNumber, TemplateId, ParametersJson, TriggerTime, Status, CreatedAt)
-                VALUES (@Id, @GuestName, @PhoneNumber, @TemplateId, @ParametersJson, @TriggerTime, @Status, @CreatedAt);";
+                INSERT INTO ScheduledJobs (Id, GuestName, PhoneNumber, TemplateId, ParametersJson, TriggerTime, Status, CreatedAt, RuleId)
+                VALUES (@Id, @GuestName, @PhoneNumber, @TemplateId, @ParametersJson, @TriggerTime, @Status, @CreatedAt, @RuleId);";
             
             await connection.ExecuteAsync(sql, new {
                 Id = job.Id,
@@ -30,7 +30,8 @@ namespace HotelAutomation.Data.Repositories
                 job.ParametersJson,
                 TriggerTime = job.TriggerTime.ToString("o"),
                 job.Status,
-                job.CreatedAt
+                job.CreatedAt,
+                job.RuleId
             });
         }
 

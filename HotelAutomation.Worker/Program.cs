@@ -78,6 +78,7 @@ else
 builder.Services.AddHostedService<HotelWorker>();
 builder.Services.AddHostedService<OutboxProcessor>();
 builder.Services.AddHostedService<JobProcessor>();
+builder.Services.AddHostedService<DateTriggerProcessor>();
 
 var app = builder.Build();
 app.UseCors();
@@ -125,13 +126,90 @@ app.MapPut("/api/templates/{id}", async (int id, HotelAutomation.Core.Models.Mes
 
 app.MapDelete("/api/templates/{id}", async (int id, ITemplateRepository repo) => 
 {
-    var success = await repo.DeleteAsync(id);
-    return success ? Results.Ok() : Results.NotFound();
+    try 
+    {
+        var success = await repo.DeleteAsync(id);
+        return success ? Results.Ok(new { message = "Template deleted successfully" }) : Results.NotFound();
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
 });
 
-app.MapPost("/api/rules", (HotelAutomation.Core.Models.AutomationRule rule) => 
+app.MapPost("/api/rules", async (HotelAutomation.Core.Models.AutomationRule rule, SqliteConnectionFactory factory) => 
 {
-    return Results.Ok(rule);
+    using var conn = await factory.OpenAsync();
+    var sql = @"INSERT INTO AutomationRules (Name, Description, TriggerEventType, TemplateId, IsEnabled, ConditionsJson, AudienceFilter, DelayMinutes) 
+                VALUES (@Name, @Description, @TriggerEventType, @TemplateId, @IsEnabled, @ConditionsJson, @AudienceFilter, @DelayMinutes);
+                SELECT last_insert_rowid();";
+    var id = await conn.ExecuteScalarAsync<int>(sql, rule);
+    return Results.Ok(new { id, rule.Name, rule.Description, rule.TriggerEventType, rule.TemplateId, rule.IsEnabled, rule.ConditionsJson, rule.AudienceFilter, rule.DelayMinutes });
+});
+
+app.MapPut("/api/rules/{id}", async (int id, HotelAutomation.Core.Models.AutomationRule rule, SqliteConnectionFactory factory) => 
+{
+    using var conn = await factory.OpenAsync();
+    var sql = @"UPDATE AutomationRules 
+                SET Name = @Name,
+                    Description = @Description,
+                    TriggerEventType = @TriggerEventType, 
+                    TemplateId = @TemplateId, 
+                    IsEnabled = @IsEnabled, 
+                    ConditionsJson = @ConditionsJson, 
+                    AudienceFilter = @AudienceFilter,
+                    DelayMinutes = @DelayMinutes 
+                WHERE Id = @Id";
+    var rows = await conn.ExecuteAsync(sql, new { rule.Name, rule.Description, rule.TriggerEventType, rule.TemplateId, rule.IsEnabled, rule.ConditionsJson, rule.AudienceFilter, rule.DelayMinutes, Id = id });
+    return rows > 0 ? Results.Ok(new { id }) : Results.NotFound();
+});
+
+app.MapPut("/api/rules/{id}/toggle", async (int id, SqliteConnectionFactory factory) => 
+{
+    using var conn = await factory.OpenAsync();
+    var rule = await conn.QueryFirstOrDefaultAsync<HotelAutomation.Core.Models.AutomationRule>("SELECT * FROM AutomationRules WHERE Id = @Id", new { Id = id });
+    if (rule == null) return Results.NotFound();
+    
+    var newStatus = !rule.IsEnabled;
+    var rows = await conn.ExecuteAsync("UPDATE AutomationRules SET IsEnabled = @IsEnabled WHERE Id = @Id", new { IsEnabled = newStatus, Id = id });
+    return rows > 0 ? Results.Ok() : Results.NotFound();
+});
+
+app.MapGet("/api/rules/{id}/stats", async (int id, SqliteConnectionFactory factory) => 
+{
+    using var conn = await factory.OpenAsync();
+    var triggered = await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM OutboxMessages WHERE RuleId = @Id", new { Id = id });
+    var totalSent = await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM OutboxMessages WHERE RuleId = @Id AND Status = 'Sent'", new { Id = id });
+    var failed = await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM OutboxMessages WHERE RuleId = @Id AND Status = 'Failed'", new { Id = id });
+    var lastRunStr = await conn.ExecuteScalarAsync<string>("SELECT CreatedAt FROM OutboxMessages WHERE RuleId = @Id ORDER BY CreatedAt DESC LIMIT 1", new { Id = id });
+    
+    DateTime? lastRun = null;
+    if (DateTime.TryParse(lastRunStr, out var parsed)) lastRun = parsed;
+
+    return Results.Ok(new {
+        Triggered = triggered,
+        TotalSent = totalSent,
+        Failed = failed,
+        LastRun = lastRun
+    });
+});
+
+app.MapGet("/api/rules/{id}/failures", async (int id, SqliteConnectionFactory factory) => 
+{
+    using var conn = await factory.OpenAsync();
+    var failures = await conn.QueryAsync(@"
+        SELECT ToPhoneNumber, FailureReason, CreatedAt 
+        FROM OutboxMessages 
+        WHERE RuleId = @Id AND Status = 'Failed' 
+        ORDER BY CreatedAt DESC", new { Id = id });
+    return Results.Ok(failures);
+});
+
+app.MapDelete("/api/rules/{id}", async (int id, SqliteConnectionFactory factory) => 
+{
+    using var conn = await factory.OpenAsync();
+    var rows = await conn.ExecuteAsync("DELETE FROM AutomationRules WHERE Id = @Id", new { Id = id });
+    return rows > 0 ? Results.Ok() : Results.NotFound();
 });
 
 // ── Broadcast Campaign Endpoint ────────────────────────────────────────────
@@ -144,6 +222,18 @@ app.MapPost("/api/broadcast", async (BroadcastRequest req, BroadcastRepository b
 
 app.MapGet("/api/broadcast", async (BroadcastRepository broadcastRepo) =>
     await broadcastRepo.GetRecentBroadcastsAsync(50));
+
+app.MapDelete("/api/broadcast", async (int templateId, string startedAt, BroadcastRepository broadcastRepo) => 
+{
+    var stoppedCount = await broadcastRepo.StopBroadcastAsync(templateId, startedAt);
+    return Results.Ok(new { stopped = stoppedCount, message = $"Stopped {stoppedCount} pending messages." });
+});
+
+app.MapDelete("/api/broadcast/history", async (int templateId, string startedAt, BroadcastRepository broadcastRepo) => 
+{
+    var deletedCount = await broadcastRepo.DeleteBroadcastAsync(templateId, startedAt);
+    return Results.Ok(new { deleted = deletedCount, message = $"Deleted {deletedCount} messages from broadcast history." });
+});
 
 app.MapPost("/api/test-event", (string? phone, ManualPmsConnector pms) => 
 {
@@ -236,7 +326,7 @@ app.MapPost("/api/pms/checkin", async (HotelAutomation.Core.Models.PmsEventPaylo
 {
     pms.RaiseTestEvent(new HotelAutomation.Core.Models.PmsEvent
     {
-        EventType = "CheckIn",
+        EventType = "PMS_CHECKIN",
         GuestName = payload.GuestName,
         PhoneNumber = payload.PhoneNumber,
         RoomNumber = payload.RoomNumber,
@@ -262,7 +352,7 @@ app.MapPost("/api/pms/checkout", async (HotelAutomation.Core.Models.PmsEventPayl
 {
     pms.RaiseTestEvent(new HotelAutomation.Core.Models.PmsEvent
     {
-        EventType = "CheckOut",
+        EventType = "PMS_CHECKOUT",
         GuestName = payload.GuestName,
         PhoneNumber = payload.PhoneNumber,
         RoomNumber = payload.RoomNumber,
@@ -325,6 +415,12 @@ app.MapPost("/api/categories", async (HotelAutomation.Core.Models.ContactCategor
     return Results.Ok(new { id });
 });
 
+app.MapDelete("/api/categories/{id}", async (int id, CategoryRepository repo) => 
+{
+    var success = await repo.DeleteAsync(id);
+    return success ? Results.Ok() : Results.NotFound();
+});
+
 app.MapGet("/api/contacts", async (ContactRepository repo, int? categoryId, int page = 1, int limit = 50) => 
 {
     var (list, total) = await repo.GetAllAsync(categoryId, page, limit);
@@ -334,6 +430,12 @@ app.MapGet("/api/contacts", async (ContactRepository repo, int? categoryId, int 
 app.MapGet("/api/contacts/columns/all", async (ContactRepository repo) => 
 {
     var columns = await repo.GetDynamicColumnsAsync();
+    return Results.Ok(columns);
+});
+
+app.MapGet("/api/contacts/columns/dates", async (ContactRepository repo) => 
+{
+    var columns = await repo.GetDateColumnsAsync();
     return Results.Ok(columns);
 });
 
