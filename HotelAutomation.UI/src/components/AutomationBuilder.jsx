@@ -518,7 +518,7 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
                 backgroundColor: initialRule.IsEnabled ? '#dcfce7' : '#fee2e2', 
                 color: initialRule.IsEnabled ? '#166534' : '#991b1b' 
               }}>
-                {initialRule.IsEnabled ? 'Active' : 'Paused'}
+                {(initialRule.IsEnabled ?? initialRule.isEnabled) ? 'Active' : 'Paused'}
               </span>
             )}
             {!initialRule && (

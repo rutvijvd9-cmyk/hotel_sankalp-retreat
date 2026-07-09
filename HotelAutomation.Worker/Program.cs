@@ -440,6 +440,32 @@ app.MapPost("/api/pms/checkout", async (HotelAutomation.Core.Models.PmsEventPayl
     return await next(ctx);
 });
 
+app.MapPost("/api/pms/booking-created", async (HotelAutomation.Core.Models.PmsEventPayload payload, ManualPmsConnector pms) => 
+{
+    pms.RaiseTestEvent(new HotelAutomation.Core.Models.PmsEvent
+    {
+        EventType = "BOOKING_CREATED",
+        GuestName = payload.GuestName,
+        PhoneNumber = payload.PhoneNumber,
+        RoomNumber = payload.RoomNumber,
+        Amount = payload.TotalBill,
+        CheckInDate = payload.CheckInDate,
+        CheckOutDate = payload.CheckOutDate,
+        WifiPassword = payload.WifiPassword,
+        BookingReference = payload.BookingReference,
+        GuestFeedbackLink = payload.GuestFeedbackLink,
+        HotelName = payload.HotelName,
+        ExtraNote = payload.ExtraNote,
+        Timestamp = DateTimeOffset.UtcNow
+    });
+    return Results.Ok(new { status = "success", message = "Booking Created event queued." });
+}).AddEndpointFilter(async (ctx, next) =>
+{
+    if (!ctx.HttpContext.Request.Headers.TryGetValue("X-API-Key", out var extractedApiKey)) return Results.Unauthorized();
+    if (extractedApiKey != "SUPER_SECRET_SCALIFTS_KEY_2026") return Results.Unauthorized();
+    return await next(ctx);
+});
+
 app.Lifetime.ApplicationStarted.Register(() => 
 {
     try
