@@ -57,9 +57,14 @@ public sealed class WhatsAppMessageSender : IMessageChannel
             }
         }
 
-        // Use BodyParamCount to decide whether to include body components.
-        // BodyParamCount = 0  → template has no {{N}} placeholders, omit components (avoids Meta #132000)
-        // BodyParamCount = -1 → unknown, send with contact params as before
+        // BodyParamCount = N  → template has N placeholders, send exactly N parameters (avoids Meta #132000)
+        // BodyParamCount = 0  → template has no {{N}} placeholders, omit components 
+        // BodyParamCount = -1 → unknown, send all 11 contact params
+        if (template.BodyParamCount > 0 && parameterValues.Count >= template.BodyParamCount)
+        {
+            parameterValues = parameterValues.Take(template.BodyParamCount).ToList();
+        }
+
         object templatePayload;
         if (template.BodyParamCount == 0)
         {
@@ -93,7 +98,7 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                         {
                             type = "body",
                             parameters = parameterValues
-                                .Select(v => new { type = "text", text = v })
+                                .Select(v => new { type = "text", text = string.IsNullOrWhiteSpace(v) ? " " : v })
                                 .ToArray()
                         }
                     }

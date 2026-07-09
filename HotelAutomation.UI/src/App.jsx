@@ -927,6 +927,9 @@ export default function App() {
                     <select className="input" value={newTemplate.BodyParamCount} onChange={e => setNewTemplate({...newTemplate, BodyParamCount: parseInt(e.target.value)})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
                       <option value={-1}>Unknown / Has Parameters (default)</option>
                       <option value={0}>Zero Parameters (e.g. hello_world)</option>
+                      <option value={1}>1 Parameter (Name)</option>
+                      <option value={2}>2 Parameters (Name, Room)</option>
+                      <option value={3}>3 Parameters (Name, Room, Amount)</option>
                     </select>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
