@@ -52,6 +52,9 @@ app.get('/api/webhooks/poll', (req, res) => {
 // Simple health check for Render dashboard
 app.get('/', (req, res) => res.send('Hotel Automation Webhook Relay is running!'));
 
+// Ping endpoint to keep the server awake and confirm it's live
+app.get('/ping', (req, res) => res.status(200).send('live'));
+
 app.listen(port, () => {
     console.log(`Webhook relay server listening at http://localhost:${port}`);
 });
