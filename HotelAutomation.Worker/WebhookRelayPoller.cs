@@ -13,6 +13,7 @@ public class WebhookRelayPoller : BackgroundService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<WebhookRelayPoller> _logger;
     private readonly IConfiguration _config;
+    private DateTime _lastPingTime = DateTime.MinValue;
     
     // Default to the Render app URL if provided via config
     private string RelayUrl => _config["WebhookRelay:Url"] ?? "https://hotel-sankalp-retreat.onrender.com";
@@ -69,6 +70,18 @@ public class WebhookRelayPoller : BackgroundService
                             }
                         }
                     }
+                } // Added missing brace here
+
+                // 3. Ping the server every 10 minutes to keep it awake and verify it's live
+                if (DateTime.UtcNow - _lastPingTime > TimeSpan.FromMinutes(10))
+                {
+                    var pingResponse = await client.GetAsync($"{RelayUrl.TrimEnd('/')}/ping", stoppingToken);
+                    if (pingResponse.IsSuccessStatusCode)
+                    {
+                        var pingContent = await pingResponse.Content.ReadAsStringAsync(stoppingToken);
+                        _logger.LogInformation("✅ Render Webhook Server is {Status}! Ping successful.", pingContent.ToUpper());
+                    }
+                    _lastPingTime = DateTime.UtcNow;
                 }
             }
             catch (HttpRequestException ex)

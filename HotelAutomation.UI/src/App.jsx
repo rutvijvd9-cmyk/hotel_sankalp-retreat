@@ -2605,7 +2605,9 @@ export default function App() {
               ) : (
                 (conversations || []).map(conv => {
                   const phone = conv.PhoneNumber || conv.phoneNumber;
-                  const name = conv.FirstName || conv.firstName ? `${conv.FirstName || conv.firstName} ${conv.LastName || conv.lastName}` : phone;
+                  const name = (conv.FirstName || conv.firstName) 
+                    ? `${conv.FirstName || conv.firstName} ${conv.LastName || conv.lastName || ''}`.trim() 
+                    : phone;
                   const isSelected = selectedConversation && (selectedConversation.PhoneNumber || selectedConversation.phoneNumber) === phone;
                   const hasUnread = (conv.UnreadCount || conv.unreadCount || 0) > 0;
                   return (
@@ -2646,9 +2648,13 @@ export default function App() {
                   <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: '#ece5dd', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#075e54', fontWeight: 'bold' }}>
                     {(selectedConversation.FirstName || selectedConversation.firstName || 'G').charAt(0).toUpperCase()}
                   </div>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '0.9em' }}>{selectedConversation.FirstName || selectedConversation.firstName ? `${selectedConversation.FirstName || selectedConversation.firstName} ${selectedConversation.LastName || selectedConversation.lastName}` : (selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}</div>
-                    <div style={{ fontSize: '0.7em', opacity: 0.85 }}>WhatsApp conversation</div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.9em' }}>
+                      {(selectedConversation.FirstName || selectedConversation.firstName)
+                        ? `${selectedConversation.FirstName || selectedConversation.firstName} ${selectedConversation.LastName || selectedConversation.lastName || ''}`.trim()
+                        : (selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}
+                    </div>
+                    <div style={{ fontSize: '0.7em', opacity: 0.85 }}>{selectedConversation.PhoneNumber || selectedConversation.phoneNumber} • WhatsApp conversation</div>
                   </div>
                 </div>
 

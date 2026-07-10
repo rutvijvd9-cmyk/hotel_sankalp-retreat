@@ -9,11 +9,19 @@ class Program
         using var conn = new SqliteConnection($"Data Source={dbPath}");
         conn.Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Id, TemplateId, ToPhoneNumber, Status, FailureReason, CreatedAt FROM OutboxMessages ORDER BY CreatedAt DESC LIMIT 5";
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            Console.WriteLine($"Id: {reader.GetInt32(0)}, TempId: {reader.GetInt32(1)}, Phone: {reader.GetString(2)}, Status: {reader.GetString(3)}, Error: {(reader.IsDBNull(4) ? "None" : reader.GetString(4))}, CreatedAt: {reader.GetValue(5)}");
+        cmd.CommandText = @"
+        SELECT * FROM (
+            SELECT Id, FromPhoneNumber as PhoneNumber, 'Guest' as Sender, Content, ReceivedAt as SentAt
+            FROM InboxMessages
+            UNION ALL
+            SELECT Id, PhoneNumber, Sender, Content, SentAt
+            FROM ConversationReplies
+        ) ORDER BY REPLACE(SentAt, 'T', ' ') ASC;";
+        try {
+            using var reader = cmd.ExecuteReader();
+            Console.WriteLine("Query executed successfully.");
+        } catch (Exception ex) {
+            Console.WriteLine("Query failed: " + ex.Message);
         }
     }
 }

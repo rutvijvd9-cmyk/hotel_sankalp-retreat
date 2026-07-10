@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS ScheduledJobs (
 CREATE TABLE IF NOT EXISTS InboxMessages (
     Id              TEXT    PRIMARY KEY,
     FromPhoneNumber TEXT    NOT NULL,
+    SenderName      TEXT    NULL,
     Content         TEXT    NOT NULL,
     IsRead          INTEGER NOT NULL DEFAULT 0,
     ReceivedAt      TEXT    NOT NULL

@@ -599,7 +599,7 @@ app.MapGet("/api/conversations", async (SqliteConnectionFactory dbFactory) =>
     var threads = await conn.QueryAsync(@"
         SELECT DISTINCT 
             i.FromPhoneNumber as PhoneNumber, 
-            c.FirstName, 
+            COALESCE(c.FirstName, (SELECT SenderName FROM InboxMessages WHERE FromPhoneNumber = i.FromPhoneNumber AND SenderName IS NOT NULL AND SenderName != '' ORDER BY ReceivedAt DESC LIMIT 1)) as FirstName, 
             c.LastName,
             (SELECT Content FROM InboxMessages WHERE FromPhoneNumber = i.FromPhoneNumber ORDER BY ReceivedAt DESC LIMIT 1) as LastMessageText,
             (SELECT ReceivedAt FROM InboxMessages WHERE FromPhoneNumber = i.FromPhoneNumber ORDER BY ReceivedAt DESC LIMIT 1) as LastMessageAt,
@@ -620,27 +620,28 @@ app.MapGet("/api/conversations/{phoneNumber}/messages", async (string phoneNumbe
 
     // Fetch chronological thread combining guest messages and agent replies
     var messages = await conn.QueryAsync(@"
-        SELECT 
-            Id,
-            FromPhoneNumber as PhoneNumber,
-            'Guest' as Sender,
-            Content,
-            ReceivedAt as SentAt
-        FROM InboxMessages
-        WHERE FromPhoneNumber = @Phone
-        
-        UNION ALL
-        
-        SELECT 
-            Id,
-            PhoneNumber,
-            Sender,
-            Content,
-            SentAt
-        FROM ConversationReplies
-        WHERE PhoneNumber = @Phone
-        
-        ORDER BY SentAt ASC;
+        SELECT * FROM (
+            SELECT 
+                Id,
+                FromPhoneNumber as PhoneNumber,
+                'Guest' as Sender,
+                Content,
+                ReceivedAt as SentAt
+            FROM InboxMessages
+            WHERE FromPhoneNumber = @Phone
+            
+            UNION ALL
+            
+            SELECT 
+                Id,
+                PhoneNumber,
+                Sender,
+                Content,
+                SentAt
+            FROM ConversationReplies
+            WHERE PhoneNumber = @Phone
+        )
+        ORDER BY REPLACE(SentAt, 'T', ' ') ASC;
     ", new { Phone = phoneNumber });
 
     return Results.Ok(messages);
@@ -906,9 +907,25 @@ app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository in
                         var from = msg.GetProperty("from").GetString();
                         var text = msg.GetProperty("text").GetProperty("body").GetString();
                         
+                        var senderName = string.Empty;
+                        if (value.TryGetProperty("contacts", out var contacts))
+                        {
+                            foreach (var contact in contacts.EnumerateArray())
+                            {
+                                if (contact.TryGetProperty("wa_id", out var waId) && waId.GetString() == from)
+                                {
+                                    if (contact.TryGetProperty("profile", out var profile) && profile.TryGetProperty("name", out var nameProp))
+                                    {
+                                        senderName = nameProp.GetString() ?? string.Empty;
+                                    }
+                                }
+                            }
+                        }
+                        
                         var inboxMsg = new HotelAutomation.Core.Models.InboxMessage
                         {
                             FromPhoneNumber = from ?? "unknown",
+                            SenderName = senderName,
                             Content = text ?? "",
                             IsRead = false,
                             ReceivedAt = DateTimeOffset.UtcNow
