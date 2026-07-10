@@ -883,10 +883,11 @@ app.MapGet("/api/webhooks/whatsapp", (HttpContext ctx, Microsoft.Extensions.Opti
     return Results.BadRequest("Verification failed");
 });
 
-app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository inboxRepo, JobRepository jobRepo, SqliteConnectionFactory dbFactory, UnsubscribedContactRepository unsubRepo) => 
+app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository inboxRepo, JobRepository jobRepo, SqliteConnectionFactory dbFactory, UnsubscribedContactRepository unsubRepo, Microsoft.Extensions.Logging.ILogger<Program> logger) => 
 {
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
+    logger.LogInformation("Webhook received. Body length: {Length}", body.Length);
     
     try
     {
@@ -902,10 +903,18 @@ app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository in
                 // Handle inbound messages (Replies)
                 if (value.TryGetProperty("messages", out var messages))
                 {
+                    logger.LogInformation("Found {Count} messages in webhook payload", messages.GetArrayLength());
                     foreach (var msg in messages.EnumerateArray())
                     {
                         var from = msg.GetProperty("from").GetString();
-                        var text = msg.GetProperty("text").GetProperty("body").GetString();
+
+                        // Skip non-text messages (images, video, audio, etc.)
+                        if (!msg.TryGetProperty("text", out var textProp))
+                        {
+                            logger.LogWarning("Skipping non-text message from {From}", from);
+                            continue;
+                        }
+                        var text = textProp.GetProperty("body").GetString();
                         
                         var senderName = string.Empty;
                         if (value.TryGetProperty("contacts", out var contacts))
@@ -981,7 +990,7 @@ app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository in
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"Webhook parsing failed: {ex.Message}");
+        logger.LogError(ex, "Webhook parsing failed");
     }
 
     return Results.Ok();

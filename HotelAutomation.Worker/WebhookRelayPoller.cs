@@ -39,7 +39,7 @@ public class WebhookRelayPoller : BackgroundService
             try
             {
                 using var client = _httpClientFactory.CreateClient();
-                client.Timeout = TimeSpan.FromSeconds(10);
+                client.Timeout = TimeSpan.FromSeconds(30);
                 
                 // 1. Fetch queued webhooks from Render
                 var response = await client.GetAsync($"{RelayUrl.TrimEnd('/')}/api/webhooks/poll", stoppingToken);
@@ -86,8 +86,8 @@ public class WebhookRelayPoller : BackgroundService
             }
             catch (HttpRequestException ex)
             {
-                // Silently swallow connection errors so we don't spam logs if Render is sleeping
-                _logger.LogDebug(ex, "Could not reach the webhook relay.");
+                // Log connection errors so we can diagnose issues
+                _logger.LogWarning(ex, "Could not reach the webhook relay at {Url}.", RelayUrl);
             }
             catch (Exception ex)
             {
