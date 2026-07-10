@@ -14,5 +14,7 @@ public sealed record MessageTemplate
     public string? BodyText { get; init; }
     public string? HeaderText { get; init; }
     public string ParameterDefinitionsJson { get; init; } = "[]";
+    public string? FooterText { get; init; }
+    public string ButtonsJson { get; init; } = "[]";
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 }

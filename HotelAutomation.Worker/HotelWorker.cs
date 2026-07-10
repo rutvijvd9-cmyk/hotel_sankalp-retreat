@@ -119,12 +119,12 @@ public sealed class HotelWorker : BackgroundService
             
             paramDict["Room"] = pmsEvent.RoomNumber ?? "";
             paramDict["Amount"] = pmsEvent.Amount?.ToString("N2") ?? "0.00";
-            paramDict["HotelName"] = pmsEvent.HotelName ?? "Sankalp Retreat";
-            paramDict["CheckInDate"] = pmsEvent.CheckInDate ?? DateTimeOffset.UtcNow.ToString("d MMM yyyy");
-            paramDict["CheckOutDate"] = pmsEvent.CheckOutDate ?? DateTimeOffset.UtcNow.AddDays(1).ToString("d MMM yyyy");
-            paramDict["WifiPassword"] = pmsEvent.WifiPassword ?? "SankalpGuest@2026";
-            paramDict["BookingReference"] = pmsEvent.BookingReference ?? $"BK-{DateTimeOffset.UtcNow:yyyyMMdd}-{pmsEvent.RoomNumber}";
-            paramDict["FeedbackLink"] = pmsEvent.GuestFeedbackLink ?? "https://g.page/sankalp-retreat/review";
+            paramDict["HotelName"] = !string.IsNullOrWhiteSpace(pmsEvent.HotelName) ? pmsEvent.HotelName : "Sankalp Retreat";
+            paramDict["CheckInDate"] = !string.IsNullOrWhiteSpace(pmsEvent.CheckInDate) ? pmsEvent.CheckInDate : DateTimeOffset.UtcNow.ToString("d MMM yyyy");
+            paramDict["CheckOutDate"] = !string.IsNullOrWhiteSpace(pmsEvent.CheckOutDate) ? pmsEvent.CheckOutDate : DateTimeOffset.UtcNow.AddDays(1).ToString("d MMM yyyy");
+            paramDict["WifiPassword"] = !string.IsNullOrWhiteSpace(pmsEvent.WifiPassword) ? pmsEvent.WifiPassword : "SankalpGuest@2026";
+            paramDict["BookingReference"] = !string.IsNullOrWhiteSpace(pmsEvent.BookingReference) ? pmsEvent.BookingReference : $"BK-{DateTimeOffset.UtcNow:yyyyMMdd}-{pmsEvent.RoomNumber}";
+            paramDict["FeedbackLink"] = !string.IsNullOrWhiteSpace(pmsEvent.GuestFeedbackLink) ? pmsEvent.GuestFeedbackLink : "https://g.page/sankalp-retreat/review";
             paramDict["ExtraNote"] = pmsEvent.ExtraNote ?? string.Empty;
             paramDict["Greeting"] = SpintaxParser.Parse("{Hi|Hello|Namaste} ");
 
@@ -138,18 +138,24 @@ public sealed class HotelWorker : BackgroundService
                     {
                         foreach (var kv in rawDict)
                         {
-                            paramDict[kv.Key] = kv.Value.ToString() ?? "";
+                            var valStr = kv.Value.ValueKind == System.Text.Json.JsonValueKind.Null ? "" : (kv.Value.ToString() ?? "");
+                            if (!string.IsNullOrWhiteSpace(valStr))
+                            {
+                                paramDict[kv.Key] = valStr;
+                            }
                         }
                     }
                 }
                 catch { }
             }
 
+            var cleanPhone = new string((pmsEvent.PhoneNumber ?? "").Where(char.IsDigit).ToArray());
+
             // Enqueue into ScheduledJobs to support Drip Campaigns (Phase 1)
             var job = new ScheduledJob
             {
                 GuestName = pmsEvent.GuestName ?? "",
-                PhoneNumber = pmsEvent.PhoneNumber ?? "",
+                PhoneNumber = cleanPhone,
                 TemplateId = matchedTemplate.Id,
                 ParametersJson = System.Text.Json.JsonSerializer.Serialize(paramDict),
                 TriggerTime = DateTimeOffset.UtcNow.AddMinutes(matchedRule.DelayMinutes),
@@ -162,7 +168,46 @@ public sealed class HotelWorker : BackgroundService
             
             await _eventLog.LogAsync(pmsEvent, null); // We don't have OutboxMessageId yet
 
-            _logger.LogInformation("ScheduledJob {Id} queued for {Phone} to execute in {Delay} minutes", job.Id, pmsEvent.PhoneNumber, matchedRule.DelayMinutes);
+            // Save or Update Contact
+            if (!string.IsNullOrWhiteSpace(cleanPhone) && !string.IsNullOrWhiteSpace(pmsEvent.GuestName))
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var contactRepo = scope.ServiceProvider.GetRequiredService<ContactRepository>();
+                var existingContact = await contactRepo.GetByPhoneNumberAsync(cleanPhone);
+                if (existingContact == null)
+                {
+                    await contactRepo.InsertAsync(new Contact
+                    {
+                        PhoneNumber = cleanPhone,
+                        FirstName = firstName,
+                        LastName = lastName,
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        UpdatedAt = DateTimeOffset.UtcNow
+                    });
+                    _logger.LogInformation("Added new contact: {Name} ({Phone})", pmsEvent.GuestName, cleanPhone);
+                }
+                else
+                {
+                    var updatedContact = new Contact
+                    {
+                        Id = existingContact.Id,
+                        PhoneNumber = existingContact.PhoneNumber,
+                        FirstName = firstName,
+                        LastName = lastName,
+                        CategoryId = existingContact.CategoryId,
+                        CustomFieldsJson = existingContact.CustomFieldsJson,
+                        CreatedAt = existingContact.CreatedAt,
+                        UpdatedAt = DateTimeOffset.UtcNow,
+                        UpdateCount = existingContact.UpdateCount,
+                        CheckInCount = existingContact.CheckInCount,
+                        AverageStayDays = existingContact.AverageStayDays,
+                        IsVip = existingContact.IsVip
+                    };
+                    await contactRepo.UpdateAsync(existingContact.Id, updatedContact);
+                }
+            }
+
+            _logger.LogInformation("ScheduledJob {Id} queued for {Phone} to execute in {Delay} minutes", job.Id, cleanPhone, matchedRule.DelayMinutes);
         }
         catch (Exception ex)
         {

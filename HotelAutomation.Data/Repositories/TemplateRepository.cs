@@ -42,8 +42,8 @@ public sealed class TemplateRepository : ITemplateRepository
     {
         await using var conn = await _factory.OpenAsync(ct);
         var sql = @"
-            INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, BodyParamCount, Category, HeaderType, BodyText, HeaderText, ParameterDefinitionsJson, CreatedAt)
-            VALUES (@Name, @ExternalTemplateName, @LanguageCode, @ChannelType, @BodyParamCount, @Category, @HeaderType, @BodyText, @HeaderText, @ParameterDefinitionsJson, @CreatedAt);
+            INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, BodyParamCount, Category, HeaderType, BodyText, HeaderText, ParameterDefinitionsJson, FooterText, ButtonsJson, CreatedAt)
+            VALUES (@Name, @ExternalTemplateName, @LanguageCode, @ChannelType, @BodyParamCount, @Category, @HeaderType, @BodyText, @HeaderText, @ParameterDefinitionsJson, @FooterText, @ButtonsJson, @CreatedAt);
             SELECT last_insert_rowid();";
         
         return await conn.ExecuteScalarAsync<int>(sql, new
@@ -58,6 +58,8 @@ public sealed class TemplateRepository : ITemplateRepository
             template.BodyText,
             template.HeaderText,
             template.ParameterDefinitionsJson,
+            template.FooterText,
+            template.ButtonsJson,
             CreatedAt = DateTimeOffset.UtcNow.ToString("O")
         });
     }
@@ -67,7 +69,7 @@ public sealed class TemplateRepository : ITemplateRepository
         await using var conn = await _factory.OpenAsync(ct);
         var sql = @"
             UPDATE MessageTemplates 
-            SET Name = @Name, ExternalTemplateName = @ExternalTemplateName, LanguageCode = @LanguageCode, ChannelType = @ChannelType, BodyParamCount = @BodyParamCount, Category = @Category, HeaderType = @HeaderType, BodyText = @BodyText, HeaderText = @HeaderText, ParameterDefinitionsJson = @ParameterDefinitionsJson
+            SET Name = @Name, ExternalTemplateName = @ExternalTemplateName, LanguageCode = @LanguageCode, ChannelType = @ChannelType, BodyParamCount = @BodyParamCount, Category = @Category, HeaderType = @HeaderType, BodyText = @BodyText, HeaderText = @HeaderText, ParameterDefinitionsJson = @ParameterDefinitionsJson, FooterText = @FooterText, ButtonsJson = @ButtonsJson
             WHERE Id = @id";
         
         var rows = await conn.ExecuteAsync(sql, new
@@ -82,7 +84,9 @@ public sealed class TemplateRepository : ITemplateRepository
             template.HeaderType,
             template.BodyText,
             template.HeaderText,
-            template.ParameterDefinitionsJson
+            template.ParameterDefinitionsJson,
+            template.FooterText,
+            template.ButtonsJson
         });
         return rows > 0;
     }

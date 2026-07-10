@@ -177,7 +177,10 @@ public sealed class ContactRepository
             contact.CategoryId,
             contact.CustomFieldsJson,
             CreatedAt = contact.CreatedAt.ToString("O"),
-            UpdatedAt = DateTimeOffset.UtcNow.ToString("O")
+            UpdatedAt = DateTimeOffset.UtcNow.ToString("O"),
+            contact.CheckInCount,
+            contact.AverageStayDays,
+            IsVip = contact.IsVip ? 1 : 0
         });
     }
 

@@ -73,20 +73,29 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                         .Select(d =>
                         {
                             // Priority 1: DynamicKey — live event/API payload (e.g. CheckInDate)
-                            if (!string.IsNullOrEmpty(d.DynamicKey) && eventDict.TryGetValue(d.DynamicKey, out var dynVal) && !string.IsNullOrWhiteSpace(dynVal))
-                                return dynVal;
+                            if (!string.IsNullOrEmpty(d.DynamicKey))
+                            {
+                                var val = GetValueWithFallback(eventDict, d.DynamicKey);
+                                if (!string.IsNullOrWhiteSpace(val)) return val;
+                            }
 
                             // Priority 2: SourceColumn — Contact DB field (e.g. FirstName)
-                            if (!string.IsNullOrEmpty(d.SourceColumn) && eventDict.TryGetValue(d.SourceColumn, out var colVal) && !string.IsNullOrWhiteSpace(colVal))
-                                return colVal;
+                            if (!string.IsNullOrEmpty(d.SourceColumn))
+                            {
+                                var val = GetValueWithFallback(eventDict, d.SourceColumn);
+                                if (!string.IsNullOrWhiteSpace(val)) return val;
+                            }
 
                             // Priority 3: SampleValue — fallback for Meta-approved demo value
                             if (!string.IsNullOrEmpty(d.SampleValue))
                                 return d.SampleValue;
 
                             // Priority 4: Any value from the event dict by label match
-                            if (!string.IsNullOrEmpty(d.Label) && eventDict.TryGetValue(d.Label, out var labelVal) && !string.IsNullOrWhiteSpace(labelVal))
-                                return labelVal;
+                            if (!string.IsNullOrEmpty(d.Label))
+                            {
+                                var val = GetValueWithFallback(eventDict, d.Label);
+                                if (!string.IsNullOrWhiteSpace(val)) return val;
+                            }
 
                             return " "; // Meta requires non-empty strings
                         })
@@ -128,10 +137,12 @@ public sealed class WhatsAppMessageSender : IMessageChannel
             try
             {
                 // Generate PDF using dummy ScheduledJob constructed from Outbox message
+                var guestName = eventDict.TryGetValue("Name", out var name) && !string.IsNullOrWhiteSpace(name) ? name : 
+                                (eventDict.TryGetValue("FirstName", out var fn) ? fn : "Guest");
                 var job = new ScheduledJob 
                 { 
                     ParametersJson = message.ParametersJson,
-                    GuestName = "Guest" // Can extract from parameters if needed
+                    GuestName = guestName
                 };
                 
                 var pdfBytes = await _pdfGenerator.GenerateInvoicePdfAsync(job, ct);
@@ -168,8 +179,31 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                 return (false, null, $"PDF Generation failed: {ex.Message}");
             }
         }
-        // Static text headers do not require parameters and are sent automatically by Meta.
-        // Dynamic text headers are not supported yet, so we omit the header component for Text type.
+        // Static text headers with no parameters are sent automatically by Meta.
+        // For dynamic text headers (containing {{1}}, etc.), we extract the max index and supply parameters.
+        else if (template.HeaderType == "Text" && !string.IsNullOrWhiteSpace(template.HeaderText))
+        {
+            int headerParamCount = 0;
+            var matches = System.Text.RegularExpressions.Regex.Matches(template.HeaderText, @"\{\{(\d+)\}\}");
+            foreach (System.Text.RegularExpressions.Match m in matches)
+            {
+                if (int.TryParse(m.Groups[1].Value, out int val) && val > headerParamCount) headerParamCount = val;
+            }
+
+            if (headerParamCount > 0)
+            {
+                var headerParams = parameterValues.Take(headerParamCount).ToList();
+                while (headerParams.Count < headerParamCount) headerParams.Add(" ");
+
+                components.Add(new
+                {
+                    type = "header",
+                    parameters = headerParams
+                        .Select(v => new { type = "text", text = string.IsNullOrWhiteSpace(v) ? " " : v })
+                        .ToArray()
+                });
+            }
+        }
         else if (template.HeaderType == "Image" && !string.IsNullOrWhiteSpace(template.HeaderText))
         {
             components.Add(new
@@ -315,5 +349,61 @@ public sealed class WhatsAppMessageSender : IMessageChannel
         }
 
         return (success, externalId, failureReason);
+    }
+
+    private static string GetValueWithFallback(Dictionary<string, string> dict, string key)
+    {
+        if (string.IsNullOrEmpty(key)) return "";
+        
+        // Try exact case-insensitive match first
+        if (dict.TryGetValue(key, out var val) && !string.IsNullOrWhiteSpace(val))
+            return val;
+            
+        // Generate list of fallback candidates based on the requested key
+        var candidates = new List<string>();
+        var normalizedKey = key.Replace("_", "").Replace("-", "").ToLowerInvariant();
+        
+        if (normalizedKey == "roomnumber" || normalizedKey == "room" || normalizedKey == "room_number")
+        {
+            candidates.AddRange(new[] { "RoomNumber", "Room", "room_number", "room" });
+        }
+        else if (normalizedKey == "billamount" || normalizedKey == "totalbill" || normalizedKey == "amount" || normalizedKey == "total_bill" || normalizedKey == "bill_amount")
+        {
+            candidates.AddRange(new[] { "TotalBill", "Amount", "bill_amount", "total_bill", "amount" });
+        }
+        else if (normalizedKey == "checkin" || normalizedKey == "checkindate" || normalizedKey == "check_in")
+        {
+            candidates.AddRange(new[] { "CheckInDate", "CheckIn", "check_in", "check_in_date" });
+        }
+        else if (normalizedKey == "checkout" || normalizedKey == "checkoutdate" || normalizedKey == "check_out")
+        {
+            candidates.AddRange(new[] { "CheckOutDate", "CheckOut", "check_out", "check_out_date" });
+        }
+        else if (normalizedKey == "bookingref" || normalizedKey == "bookingreference" || normalizedKey == "booking_ref")
+        {
+            candidates.AddRange(new[] { "BookingReference", "BookingRef", "booking_ref", "booking_reference" });
+        }
+        else if (normalizedKey == "feedbacklink" || normalizedKey == "reviewlink" || normalizedKey == "review_link")
+        {
+            candidates.AddRange(new[] { "FeedbackLink", "ReviewLink", "review_link", "feedback_link" });
+        }
+        
+        // Also add a general case-insensitive check for the key (e.g. "HotelName" -> "hotelname")
+        foreach (var kv in dict)
+        {
+            if (kv.Key.Replace("_", "").Replace("-", "").ToLowerInvariant() == normalizedKey)
+            {
+                if (!string.IsNullOrWhiteSpace(kv.Value))
+                    return kv.Value;
+            }
+        }
+        
+        foreach (var candidate in candidates)
+        {
+            if (dict.TryGetValue(candidate, out var candidateVal) && !string.IsNullOrWhiteSpace(candidateVal))
+                return candidateVal;
+        }
+        
+        return "";
     }
 }

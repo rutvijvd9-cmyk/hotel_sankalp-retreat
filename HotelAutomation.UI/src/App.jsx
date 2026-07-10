@@ -76,7 +76,7 @@ export default function App() {
 
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
-  const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1, Category: 'Utility', HeaderType: 'None', BodyText: '', HeaderText: '', ParameterDefinitionsJson: '[]' });
+  const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1, Category: 'Utility', HeaderType: 'None', BodyText: '', HeaderText: '', FooterText: '', ButtonsJson: '[]', ParameterDefinitionsJson: '[]' });
   const [isBuildingRule, setIsBuildingRule] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
   const [optOutsList, setOptOutsList] = useState([]);
@@ -85,6 +85,9 @@ export default function App() {
   const [conversations, setConversations] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
+  const [showNewConversationModal, setShowNewConversationModal] = useState(false);
+  const [newConversationPhone, setNewConversationPhone] = useState('');
+  const [newConversationName, setNewConversationName] = useState('');
   const [replyText, setReplyText] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
   const [analyticsData, setAnalyticsData] = useState({ TotalTriggered: 0, Sent: 0, Delivered: 0, Read: 0, Failed: 0, Pending: 0, IncomingReplies: 0, Clicked: 0 });
@@ -113,7 +116,7 @@ export default function App() {
       fetchData();
     }, pollInterval);
     return () => clearInterval(interval);
-  }, [activeTab, currentPage, pageSize, selectedCategory, bPage, analyticsPeriod]);
+  }, [activeTab, currentPage, pageSize, selectedCategory, selectedSmartList, bPage, analyticsPeriod, selectedConversation]);
 
   const fetchData = async () => {
     try {
@@ -1475,6 +1478,118 @@ export default function App() {
                         );
                       })()}
                     </div>
+                    {/* Footer Configuration */}
+                    <div>
+                      <label style={{ fontWeight: 500, fontSize: '0.85em', display: 'block', marginBottom: '4px' }}>Footer Text (Optional)</label>
+                      <input 
+                        type="text"
+                        className="input"
+                        placeholder="e.g. Reply STOP to unsubscribe"
+                        value={newTemplate.FooterText || ''}
+                        onChange={e => setNewTemplate({...newTemplate, FooterText: e.target.value})}
+                        style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                      />
+                    </div>
+
+                    {/* Buttons Configuration */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <label style={{ fontWeight: 500, fontSize: '0.85em' }}>Buttons (Optional)</label>
+                        <button 
+                          className="btn btn-secondary" 
+                          style={{ padding: '4px 8px', fontSize: '0.75em' }}
+                          onClick={() => {
+                            let btns = [];
+                            try { btns = JSON.parse(newTemplate.ButtonsJson || '[]'); } catch(e){}
+                            if (btns.length < 10) {
+                              btns.push({ type: 'QUICK_REPLY', text: '' });
+                              setNewTemplate({ ...newTemplate, ButtonsJson: JSON.stringify(btns) });
+                            }
+                          }}
+                        >
+                          + Add Button
+                        </button>
+                      </div>
+                      {(() => {
+                        let btns = [];
+                        try { btns = JSON.parse(newTemplate.ButtonsJson || '[]'); } catch(e){}
+                        if (!Array.isArray(btns) || btns.length === 0) return null;
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {btns.map((btn, idx) => (
+                              <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <select 
+                                  className="input"
+                                  value={btn.type}
+                                  onChange={e => {
+                                    const next = [...btns];
+                                    next[idx].type = e.target.value;
+                                    if (e.target.value !== 'URL') delete next[idx].url;
+                                    if (e.target.value !== 'PHONE_NUMBER') delete next[idx].phone_number;
+                                    setNewTemplate({ ...newTemplate, ButtonsJson: JSON.stringify(next) });
+                                  }}
+                                  style={{ padding: '6px', width: '150px', fontSize: '0.8em' }}
+                                >
+                                  <option value="QUICK_REPLY">Quick Reply</option>
+                                  <option value="URL">Visit Website</option>
+                                  <option value="PHONE_NUMBER">Call Number</option>
+                                </select>
+                                <input 
+                                  type="text" 
+                                  className="input"
+                                  placeholder="Button Text (max 25 chars)"
+                                  value={btn.text || ''}
+                                  maxLength={25}
+                                  onChange={e => {
+                                    const next = [...btns];
+                                    next[idx].text = e.target.value;
+                                    setNewTemplate({ ...newTemplate, ButtonsJson: JSON.stringify(next) });
+                                  }}
+                                  style={{ padding: '6px', flex: 1, fontSize: '0.8em' }}
+                                />
+                                {btn.type === 'URL' && (
+                                  <input 
+                                    type="text" 
+                                    className="input"
+                                    placeholder="URL (https://...)"
+                                    value={btn.url || ''}
+                                    onChange={e => {
+                                      const next = [...btns];
+                                      next[idx].url = e.target.value;
+                                      setNewTemplate({ ...newTemplate, ButtonsJson: JSON.stringify(next) });
+                                    }}
+                                    style={{ padding: '6px', flex: 1, fontSize: '0.8em' }}
+                                  />
+                                )}
+                                {btn.type === 'PHONE_NUMBER' && (
+                                  <input 
+                                    type="text" 
+                                    className="input"
+                                    placeholder="+123456789"
+                                    value={btn.phone_number || ''}
+                                    onChange={e => {
+                                      const next = [...btns];
+                                      next[idx].phone_number = e.target.value;
+                                      setNewTemplate({ ...newTemplate, ButtonsJson: JSON.stringify(next) });
+                                    }}
+                                    style={{ padding: '6px', flex: 1, fontSize: '0.8em' }}
+                                  />
+                                )}
+                                <button 
+                                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.2em' }}
+                                  onClick={() => {
+                                    const next = btns.filter((_, i) => i !== idx);
+                                    setNewTemplate({ ...newTemplate, ButtonsJson: JSON.stringify(next) });
+                                  }}
+                                >
+                                  &times;
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
 
                   {/* Right Column: WhatsApp Live Preview */}
@@ -1534,11 +1649,35 @@ export default function App() {
                             return text;
                           })()}
                         </div>
+                        {newTemplate.FooterText && (
+                          <div style={{ fontSize: '0.7em', color: '#8696a0', marginTop: '6px' }}>
+                            {newTemplate.FooterText}
+                          </div>
+                        )}
                         <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '0.65em', color: '#8696a0', marginTop: '4px' }}>
                           {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
                     </div>
+
+                    {/* Buttons Preview */}
+                    {(() => {
+                      let btns = [];
+                      try { btns = JSON.parse(newTemplate.ButtonsJson || '[]'); } catch(e){}
+                      if (!Array.isArray(btns) || btns.length === 0) return null;
+                      return (
+                        <div style={{ padding: '0 12px 12px 12px', display: 'flex', flexDirection: 'column', gap: '4px', maxWidth: '85%' }}>
+                          {btns.map((btn, idx) => (
+                            <div key={idx} style={{ backgroundColor: '#fff', padding: '10px 12px', borderRadius: '8px', boxShadow: '0 1px 0.5px rgba(0,0,0,0.13)', textAlign: 'center', fontSize: '0.85em', color: '#00a884', cursor: 'pointer' }}>
+                              {btn.type === 'URL' && <span style={{ marginRight: '6px' }}>↗️</span>}
+                              {btn.type === 'PHONE_NUMBER' && <span style={{ marginRight: '6px' }}>📞</span>}
+                              {btn.type === 'QUICK_REPLY' && <span style={{ marginRight: '6px' }}>↩️</span>}
+                              {btn.text || 'Button Text'}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -2596,10 +2735,20 @@ export default function App() {
       };
 
       return (
+        <>
         <div className="card" style={{ display: 'flex', height: 'calc(100vh - 180px)', padding: 0, overflow: 'hidden' }}>
           {/* Active Conversations Left Sidebar */}
           <div style={{ width: '320px', borderRight: '1px solid var(--border-color, #eee)', display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-secondary, #f8fafc)' }}>
-            <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color, #eee)', fontWeight: 600, fontSize: '0.95em' }}>Conversations Inbox</div>
+            <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color, #eee)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontWeight: 600, fontSize: '0.95em' }}>Conversations Inbox</div>
+              <button 
+                className="btn btn-primary" 
+                style={{ padding: '4px 8px', fontSize: '0.8em', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                onClick={() => setShowNewConversationModal(true)}
+              >
+                <Plus size={14} /> New
+              </button>
+            </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               {(conversations || []).length === 0 ? (
                 <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary, #64748b)', fontSize: '0.85em' }}>No conversations yet. Send a test template to start!</div>
@@ -2725,6 +2874,88 @@ export default function App() {
             )}
           </div>
         </div>
+
+        {/* New Conversation Modal */}
+        {showNewConversationModal && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+            <div className="card" style={{ width: '100%', maxWidth: '420px', padding: '32px' }}>
+              <h3 className="card-title" style={{ marginBottom: '20px', fontSize: '1.25rem' }}>Start New Conversation</h3>
+              
+              <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-color)', padding: '16px', borderRadius: '8px', marginBottom: '24px', border: '1px solid var(--border-color)', lineHeight: '1.5' }}>
+                <strong style={{ color: 'var(--text-primary)' }}>Note:</strong> WhatsApp allows free-form messages only if the recipient has messaged you in the last 24 hours. Otherwise, your message will be rejected by Meta. For new contacts, please use an approved template via Broadcasts.
+              </div>
+              
+              <div className="form-group" style={{ marginBottom: '20px' }}>
+                <label>Phone Number (with country code)</label>
+                <input 
+                  type="text" 
+                  className="form-control" 
+                  placeholder="e.g. 1234567890" 
+                  value={newConversationPhone} 
+                  onChange={e => setNewConversationPhone(e.target.value)} 
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '32px' }}>
+                <label>First Name (Optional)</label>
+                <input 
+                  type="text" 
+                  className="form-control" 
+                  placeholder="e.g. John" 
+                  value={newConversationName} 
+                  onChange={e => setNewConversationName(e.target.value)} 
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && newConversationPhone.trim()) {
+                      const mockConv = { PhoneNumber: newConversationPhone.trim(), FirstName: newConversationName.trim() || 'Guest' };
+                      const existingConv = (conversations || []).find(c => (c.PhoneNumber || c.phoneNumber) === mockConv.PhoneNumber);
+                      if (!existingConv) setConversations([mockConv, ...(conversations || [])]);
+                      setSelectedConversation(existingConv || mockConv);
+                      setChatMessages([]);
+                      setShowNewConversationModal(false);
+                      setNewConversationPhone('');
+                      setNewConversationName('');
+                    }
+                  }}
+                />
+              </div>
+              
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={() => {
+                    setShowNewConversationModal(false);
+                    setNewConversationPhone('');
+                    setNewConversationName('');
+                  }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  className="btn btn-primary" 
+                  disabled={!newConversationPhone.trim()}
+                  onClick={() => {
+                    const mockConv = {
+                      PhoneNumber: newConversationPhone.trim(),
+                      FirstName: newConversationName.trim() || 'Guest'
+                    };
+                    const existingConv = (conversations || []).find(c => (c.PhoneNumber || c.phoneNumber) === mockConv.PhoneNumber);
+                    if (!existingConv) {
+                      setConversations([mockConv, ...(conversations || [])]);
+                    }
+                    setSelectedConversation(existingConv || mockConv);
+                    setChatMessages([]);
+                    setShowNewConversationModal(false);
+                    setNewConversationPhone('');
+                    setNewConversationName('');
+                  }}
+                >
+                  Start Chat
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        </>
       );
     }
 
