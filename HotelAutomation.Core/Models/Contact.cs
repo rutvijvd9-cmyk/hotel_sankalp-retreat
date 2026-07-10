@@ -11,4 +11,9 @@ public sealed record Contact
     public int? CategoryId { get; init; }
     public string CustomFieldsJson { get; init; } = "{}";
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.UtcNow;
+    public int UpdateCount { get; init; } = 0;
+    public int CheckInCount { get; init; } = 0;
+    public double AverageStayDays { get; init; } = 0;
+    public bool IsVip { get; init; } = false;
 }

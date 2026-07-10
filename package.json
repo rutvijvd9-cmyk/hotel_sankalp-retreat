@@ -1,0 +1,12 @@
+{
+  "name": "hotel-sankalp-retreat",
+  "version": "1.0.0",
+  "description": "WhatsApp Webhook Relay for Hotel Sankalp Retreat",
+  "main": "webhook-relay/server.js",
+  "scripts": {
+    "start": "node webhook-relay/server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

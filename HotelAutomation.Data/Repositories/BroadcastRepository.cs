@@ -114,10 +114,47 @@ public sealed class BroadcastRepository
                 o.CreatedAt AS StartedAt
             FROM OutboxMessages o
             JOIN MessageTemplates t ON o.TemplateId = t.Id
+            WHERE o.RuleId IS NULL
             GROUP BY o.TemplateId, o.CreatedAt
             ORDER BY StartedAt DESC
             LIMIT @Limit
             """, new { Limit = limit });
+    }
+
+    public async Task<(IEnumerable<dynamic> Data, int TotalCount)> GetRecentBroadcastsPagedAsync(int page = 1, int limit = 50, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        int offset = (page - 1) * limit;
+
+        var countSql = @"
+            SELECT COUNT(*) FROM (
+                SELECT o.TemplateId, o.CreatedAt
+                FROM OutboxMessages o
+                WHERE o.RuleId IS NULL
+                GROUP BY o.TemplateId, o.CreatedAt
+            ) Sub";
+
+        var totalCount = await conn.ExecuteScalarAsync<int>(countSql);
+
+        var dataSql = @"
+            SELECT 
+                o.TemplateId,
+                t.Name AS TemplateName,
+                COUNT(*) AS TotalQueued,
+                SUM(CASE WHEN o.Status = 'Sent' THEN 1 ELSE 0 END) AS Delivered,
+                SUM(CASE WHEN o.Status = 'Pending' THEN 1 ELSE 0 END) AS Pending,
+                SUM(CASE WHEN o.Status = 'Failed' THEN 1 ELSE 0 END) AS Failed,
+                o.CreatedAt AS StartedAt
+            FROM OutboxMessages o
+            JOIN MessageTemplates t ON o.TemplateId = t.Id
+            WHERE o.RuleId IS NULL
+            GROUP BY o.TemplateId, o.CreatedAt
+            ORDER BY StartedAt DESC
+            LIMIT @Limit OFFSET @Offset";
+
+        var data = await conn.QueryAsync(dataSql, new { Limit = limit, Offset = offset });
+
+        return (data, totalCount);
     }
 
     /// <summary>

@@ -17,4 +17,5 @@ public sealed record PmsEvent
     public string? GuestFeedbackLink { get; init; }      // Google Review / TripAdvisor link
     public string? HotelName { get; init; }              // e.g. "Sankalp Retreat"
     public string? ExtraNote { get; init; }              // Any extra line to add to the message
+    public string? RawPayload { get; init; }             // The raw webhook payload
 }

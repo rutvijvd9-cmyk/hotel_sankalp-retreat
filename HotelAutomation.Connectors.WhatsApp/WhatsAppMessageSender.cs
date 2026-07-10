@@ -13,6 +13,7 @@ public sealed class WhatsAppMessageSender : IMessageChannel
 {
     private readonly WhatsAppApiClient _apiClient;
     private readonly ITemplateRepository _templateRepository;
+    private readonly IPdfGenerator _pdfGenerator;
     private readonly ILogger<WhatsAppMessageSender> _logger;
 
     public string ChannelType => "WhatsApp";
@@ -20,10 +21,12 @@ public sealed class WhatsAppMessageSender : IMessageChannel
     public WhatsAppMessageSender(
         WhatsAppApiClient apiClient,
         ITemplateRepository templateRepository,
+        IPdfGenerator pdfGenerator,
         ILogger<WhatsAppMessageSender> logger)
     {
         _apiClient = apiClient;
         _templateRepository = templateRepository;
+        _pdfGenerator = pdfGenerator;
         _logger = logger;
     }
 
@@ -38,70 +41,197 @@ public sealed class WhatsAppMessageSender : IMessageChannel
         }
 
         List<string> parameterValues = new();
+
+        // Deserialize the raw payload dict from the job (contains Name, Room, CheckInDate, etc.)
+        Dictionary<string, string> eventDict = new(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var dict = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(message.ParametersJson);
-            if (dict is null) throw new JsonException("Deserialized to null");
-            parameterValues = dict.Values.Select(v => v.ToString()).ToList();
+            var rawDict = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(message.ParametersJson);
+            if (rawDict != null)
+            {
+                foreach (var kv in rawDict)
+                    eventDict[kv.Key] = kv.Value.ToString();
+            }
         }
-        catch (JsonException)
+        catch { }
+
+        // Try to resolve parameters in order using ParameterDefinitionsJson
+        bool resolvedByDefs = false;
+        if (!string.IsNullOrEmpty(template.ParameterDefinitionsJson))
         {
             try
             {
-                parameterValues = JsonSerializer.Deserialize<List<string>>(message.ParametersJson)
-                                  ?? new List<string>();
+                var defs = JsonSerializer.Deserialize<List<ParameterDefinition>>(
+                    template.ParameterDefinitionsJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (defs != null && defs.Count > 0)
+                {
+                    resolvedByDefs = true;
+                    parameterValues = defs
+                        .OrderBy(d => d.Position)
+                        .Select(d =>
+                        {
+                            // Priority 1: DynamicKey — live event/API payload (e.g. CheckInDate)
+                            if (!string.IsNullOrEmpty(d.DynamicKey) && eventDict.TryGetValue(d.DynamicKey, out var dynVal) && !string.IsNullOrWhiteSpace(dynVal))
+                                return dynVal;
+
+                            // Priority 2: SourceColumn — Contact DB field (e.g. FirstName)
+                            if (!string.IsNullOrEmpty(d.SourceColumn) && eventDict.TryGetValue(d.SourceColumn, out var colVal) && !string.IsNullOrWhiteSpace(colVal))
+                                return colVal;
+
+                            // Priority 3: SampleValue — fallback for Meta-approved demo value
+                            if (!string.IsNullOrEmpty(d.SampleValue))
+                                return d.SampleValue;
+
+                            // Priority 4: Any value from the event dict by label match
+                            if (!string.IsNullOrEmpty(d.Label) && eventDict.TryGetValue(d.Label, out var labelVal) && !string.IsNullOrWhiteSpace(labelVal))
+                                return labelVal;
+
+                            return " "; // Meta requires non-empty strings
+                        })
+                        .ToList();
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                _logger.LogWarning("Failed to parse ParametersJson for OutboxMessage {Id}", message.Id);
+                _logger.LogWarning(ex, "Failed to parse ParameterDefinitionsJson for Template {TemplateId}", message.TemplateId);
             }
         }
 
-        // BodyParamCount = N  → template has N placeholders, send exactly N parameters (avoids Meta #132000)
-        // BodyParamCount = 0  → template has no {{N}} placeholders, omit components 
-        // BodyParamCount = -1 → unknown, send all 11 contact params
+        // Fallback: if no defs, use values from the event dict in insertion order
+        if (!resolvedByDefs)
+        {
+            try
+            {
+                // Try as ordered list first
+                var list = JsonSerializer.Deserialize<List<string>>(message.ParametersJson);
+                if (list != null) parameterValues = list;
+            }
+            catch
+            {
+                parameterValues = eventDict.Values.ToList();
+            }
+        }
+
+        // Trim to BodyParamCount to avoid Meta error #132000
         if (template.BodyParamCount > 0 && parameterValues.Count >= template.BodyParamCount)
         {
             parameterValues = parameterValues.Take(template.BodyParamCount).ToList();
         }
 
-        object templatePayload;
-        if (template.BodyParamCount == 0)
+        var components = new List<object>();
+
+        // Handle Document Header if required
+        if (template.HeaderType == "Document")
         {
-            // Zero-param template (e.g. hello_world) — send clean payload with no components
-            templatePayload = new
+            try
             {
-                messaging_product = "whatsapp",
-                to = message.ToPhoneNumber,
-                type = "template",
-                template = new
+                // Generate PDF using dummy ScheduledJob constructed from Outbox message
+                var job = new ScheduledJob 
+                { 
+                    ParametersJson = message.ParametersJson,
+                    GuestName = "Guest" // Can extract from parameters if needed
+                };
+                
+                var pdfBytes = await _pdfGenerator.GenerateInvoicePdfAsync(job, ct);
+                
+                // Upload to Meta
+                var (uploadSuccess, mediaId, uploadError) = await _apiClient.UploadMediaAsync(pdfBytes, $"Invoice_{DateTime.Now:yyyyMMdd}.pdf", "application/pdf", ct);
+                
+                if (!uploadSuccess || string.IsNullOrEmpty(mediaId))
                 {
-                    name = template.ExternalTemplateName,
-                    language = new { code = template.LanguageCode }
+                    _logger.LogError("Failed to upload PDF invoice for OutboxMessage {Id}: {Error}", message.Id, uploadError);
+                    return (false, null, $"Failed to upload PDF to Meta: {uploadError}");
                 }
-            };
-        }
-        else if (parameterValues.Count > 0)
-        {
-            templatePayload = new
-            {
-                messaging_product = "whatsapp",
-                to = message.ToPhoneNumber,
-                type = "template",
-                template = new
+
+                components.Add(new
                 {
-                    name = template.ExternalTemplateName,
-                    language = new { code = template.LanguageCode },
-                    components = new[]
+                    type = "header",
+                    parameters = new[]
                     {
                         new
                         {
-                            type = "body",
-                            parameters = parameterValues
-                                .Select(v => new { type = "text", text = string.IsNullOrWhiteSpace(v) ? " " : v })
-                                .ToArray()
+                            type = "document",
+                            document = new
+                            {
+                                id = mediaId,
+                                filename = $"Invoice_{DateTime.Now:yyyyMMdd}.pdf"
+                            }
                         }
                     }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate or upload PDF invoice for OutboxMessage {Id}", message.Id);
+                return (false, null, $"PDF Generation failed: {ex.Message}");
+            }
+        }
+        // Static text headers do not require parameters and are sent automatically by Meta.
+        // Dynamic text headers are not supported yet, so we omit the header component for Text type.
+        else if (template.HeaderType == "Image" && !string.IsNullOrWhiteSpace(template.HeaderText))
+        {
+            components.Add(new
+            {
+                type = "header",
+                parameters = new[]
+                {
+                    new
+                    {
+                        type = "image",
+                        image = new
+                        {
+                            link = template.HeaderText
+                        }
+                    }
+                }
+            });
+        }
+        else if (template.HeaderType == "Video" && !string.IsNullOrWhiteSpace(template.HeaderText))
+        {
+            components.Add(new
+            {
+                type = "header",
+                parameters = new[]
+                {
+                    new
+                    {
+                        type = "video",
+                        video = new
+                        {
+                            link = template.HeaderText
+                        }
+                    }
+                }
+            });
+        }
+
+        // Handle Body
+        if (template.BodyParamCount != 0 && parameterValues.Count > 0)
+        {
+            components.Add(new
+            {
+                type = "body",
+                parameters = parameterValues
+                    .Select(v => new { type = "text", text = string.IsNullOrWhiteSpace(v) ? " " : v })
+                    .ToArray()
+            });
+        }
+
+        object templatePayload;
+        if (components.Count > 0)
+        {
+            templatePayload = new
+            {
+                messaging_product = "whatsapp",
+                to = message.ToPhoneNumber,
+                type = "template",
+                template = new
+                {
+                    name = template.ExternalTemplateName?.Trim(),
+                    language = new { code = template.LanguageCode?.Trim() },
+                    components = components.ToArray()
                 }
             };
         }
@@ -114,8 +244,8 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                 type = "template",
                 template = new
                 {
-                    name = template.ExternalTemplateName,
-                    language = new { code = template.LanguageCode }
+                    name = template.ExternalTemplateName?.Trim(),
+                    language = new { code = template.LanguageCode?.Trim() }
                 }
             };
         }

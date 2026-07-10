@@ -10,5 +10,9 @@ public sealed record MessageTemplate
     public int BodyParamCount { get; init; } = -1; // -1=unknown, 0=no params, N=exact param count
     public string? FallbackChannelType { get; init; }
     public string Category { get; init; } = "Utility";
+    public string HeaderType { get; init; } = "None"; // None, Document, Image, Video, Text
+    public string? BodyText { get; init; }
+    public string? HeaderText { get; init; }
+    public string ParameterDefinitionsJson { get; init; } = "[]";
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 }

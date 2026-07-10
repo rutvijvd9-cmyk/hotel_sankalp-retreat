@@ -22,4 +22,8 @@ public sealed record PmsEventPayload
     public string? GuestFeedbackLink { get; init; }     // Google Review or TripAdvisor link
     public string? HotelName { get; init; }             // Defaults to config if not supplied
     public string? ExtraNote { get; init; }             // Any additional info line
+
+    // Capture any other dynamic fields the user sends in their API requests
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, System.Text.Json.JsonElement>? ExtensionData { get; set; }
 }

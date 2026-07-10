@@ -52,17 +52,38 @@ const STEP_TYPES = {
   },
 };
 
+// ─── Trigger Options (grouped for UI) ────────────────────────────────────────
+// Each entry: { value, label, group }
+// 'group' is used in the UI to render <optgroup> separators.
 const TRIGGER_OPTIONS = [
-  { value: 'PMS_CHECKOUT', label: 'PMS Check-out' },
-  { value: 'PMS_CHECKIN', label: 'PMS Check-in' },
-  { value: 'BOOKING_CREATED', label: 'Booking Created' },
+  // PMS / Booking Lifecycle
+  { value: 'PMS_CHECKIN',             label: 'PMS Check-in',             group: 'PMS / Booking Lifecycle' },
+  { value: 'PMS_CHECKOUT',            label: 'PMS Check-out',            group: 'PMS / Booking Lifecycle' },
+  { value: 'BOOKING_CREATED',         label: 'Booking Created',          group: 'PMS / Booking Lifecycle' },
+  { value: 'BOOKING_MODIFIED',        label: 'Booking Modified',         group: 'PMS / Booking Lifecycle' },
+  { value: 'BOOKING_CANCELLED',       label: 'Booking Cancelled',        group: 'PMS / Booking Lifecycle' },
+  // Guest Activity
+  { value: 'ROOM_SERVICE_REQUEST',    label: 'Room Service Request',     group: 'Guest Activity' },
+  { value: 'PAYMENT_RECEIVED',        label: 'Payment Received',         group: 'Guest Activity' },
+  { value: 'COMPLAINT_RAISED',        label: 'Complaint / Issue Raised', group: 'Guest Activity' },
+  // Special
+  { value: 'MANUAL_TRIGGER',          label: 'Manual / One-Time Send',   group: 'Special' },
+  { value: 'EVENT_API',               label: 'Event / API Variable',     group: 'Special' },
 ];
 
 function StepTypePicker({ onSelect, onClose }) {
+  const popupRef = React.useRef(null);
+  
+  React.useEffect(() => {
+    if (popupRef.current) {
+      popupRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, []);
+
   return (
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={onClose} ></div>
-      <div style={{
+      <div ref={popupRef} style={{
         position: 'absolute', top: 36, left: '50%', transform: 'translateX(-50%)',
         background: 'var(--card-bg, #fff)', border: '1px solid var(--border, #e2e8f0)',
         borderRadius: 14, boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
@@ -154,7 +175,11 @@ function StepCard({ step, onUpdate, onDelete, canDelete = true, allTriggerOption
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '0.78rem', fontWeight: 700, color: cfg.color }}>{cfg.label}</div>
           <div style={{ fontSize: '0.68rem', color: 'var(--text-sub, #64748b)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {step.stepType === 'TRIGGER' && (allTriggerOptions.find(o => o.value === step.triggerValue)?.label || 'Manual')}
+            {step.stepType === 'TRIGGER' && (
+              step.triggerValue === 'EVENT_API'
+                ? `API Slug: ${step.eventApiSlug || 'not set'}`
+                : (allTriggerOptions.find(o => o.value === step.triggerValue)?.label || 'Manual')
+            )}
             {step.stepType === 'WAIT' && `Wait ${step.waitValue || 1} ${step.waitUnit || 'HOURS'}`}
             {step.stepType === 'WHATSAPP' && (step.templateId ? `Template: ${step.templateId}` : 'No template selected')}
             {step.stepType === 'CONDITION' && 'Check contact conditions'}
@@ -182,10 +207,25 @@ function StepCard({ step, onUpdate, onDelete, canDelete = true, allTriggerOption
           {step.stepType === 'TRIGGER' && (
             <div style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               <label style={{ fontSize: '0.75rem', fontWeight: 500 }}>Trigger Event</label>
-              <select style={{ padding: '6px 8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.82rem' }}
+              <select
+                style={{ padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border, #e2e8f0)', fontSize: '0.82rem', background: 'var(--card-bg, #fff)', color: 'var(--text-heading, #1e293b)' }}
                 value={step.triggerValue || 'PMS_CHECKIN'}
-                onChange={e => onUpdate(step.id, { triggerValue: e.target.value })}>
-                {allTriggerOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                onChange={e => onUpdate(step.id, { triggerValue: e.target.value })}
+              >
+                {/* PMS static options rendered as grouped optgroups */}
+                {(() => {
+                  const groups = {};
+                  allTriggerOptions.forEach(o => {
+                    const g = o.group || 'Other';
+                    if (!groups[g]) groups[g] = [];
+                    groups[g].push(o);
+                  });
+                  return Object.entries(groups).map(([groupName, opts]) => (
+                    <optgroup key={groupName} label={groupName}>
+                      {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </optgroup>
+                  ));
+                })()}
               </select>
 
               {step.triggerValue && step.triggerValue.startsWith('DATE_') && (
@@ -203,6 +243,48 @@ function StepCard({ step, onUpdate, onDelete, canDelete = true, allTriggerOption
                     <input type="checkbox" checked={step.ignoreYear !== false} onChange={e => onUpdate(step.id, { ignoreYear: e.target.checked })} />
                     Ignore Year (Repeats annually)
                   </label>
+                </div>
+              )}
+
+              {/* ── Event / API Variable section ───────────────────────── */}
+              {step.triggerValue === 'EVENT_API' && (
+                <div style={{ marginTop: '8px', padding: '14px', background: 'rgba(99,102,241,0.06)', borderRadius: '8px', border: '1px solid rgba(99,102,241,0.25)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                    <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🔗 Event / API Variable Config</span>
+                  </div>
+
+                  {/* API Slug */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label style={{ fontSize: '0.72rem', fontWeight: 600, color: '#475569' }}>Event Slug (used in API URL)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. room-upgrade-request"
+                      value={step.eventApiSlug || ''}
+                      onChange={e => onUpdate(step.id, { eventApiSlug: e.target.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') })}
+                      style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #c7d2fe', fontSize: '0.82rem', background: '#fff', color: '#1e293b' }}
+                    />
+                    {step.eventApiSlug && (
+                      <div style={{ fontSize: '0.68rem', color: '#6366f1', background: '#eef2ff', padding: '4px 8px', borderRadius: '4px', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                        POST /api/event-trigger/{step.eventApiSlug}
+                      </div>
+                    )}
+                    <p style={{ fontSize: '0.68rem', color: '#64748b', margin: '2px 0 0' }}>Any external system can call this endpoint with a JSON body. Variables from the JSON will be available in your template.</p>
+                  </div>
+
+                  {/* Variable Mapping UI removed as per user request */}
+                </div>
+              )}
+
+              {/* ── Informational hint for other non-date/non-API triggers ── */}
+              {step.triggerValue && !step.triggerValue.startsWith('DATE_') && step.triggerValue !== 'EVENT_API' && step.triggerValue !== 'MANUAL_TRIGGER' && (
+                <div style={{ marginTop: '4px', padding: '8px 10px', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #bbf7d0', fontSize: '0.68rem', color: '#166534' }}>
+                  💡 This trigger fires when the matching event is received via the PMS API or webhook. Standard guest fields (Name, Room, BookingReference, etc.) are automatically available as template variables.
+                </div>
+              )}
+
+              {step.triggerValue === 'MANUAL_TRIGGER' && (
+                <div style={{ marginTop: '4px', padding: '8px 10px', background: '#fffbeb', borderRadius: '6px', border: '1px solid #fde68a', fontSize: '0.68rem', color: '#92400e' }}>
+                  ⚡ Manual trigger: this rule will only fire when explicitly called via the broadcast tool or a direct API call. Useful for one-time campaigns.
                 </div>
               )}
 
@@ -316,9 +398,12 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
       const triggerEventType = initialRule.TriggerEventType || initialRule.triggerEventType;
       const conditionsJson = initialRule.ConditionsJson || initialRule.conditionsJson;
       const isDate = triggerEventType === 'DateTrigger';
-      let triggerVal = isDate ? 'PMS_CHECKIN' : triggerEventType;
+      const isEventApi = triggerEventType === 'EVENT_API';
+      let triggerVal = (isDate || isEventApi) ? 'PMS_CHECKIN' : triggerEventType;
       let offsetDays = 0;
       let ignoreYear = true;
+      let eventApiSlug = '';
+      let eventApiVarMappings = [];
 
       if (isDate && conditionsJson) {
         try {
@@ -328,6 +413,15 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
           }
           if (cond.OffsetDays !== undefined) offsetDays = cond.OffsetDays;
           if (cond.IgnoreYear !== undefined) ignoreYear = cond.IgnoreYear;
+        } catch(e) {}
+      }
+
+      if (isEventApi && conditionsJson) {
+        try {
+          const cond = JSON.parse(conditionsJson);
+          triggerVal = 'EVENT_API';
+          if (cond.EventApiSlug) eventApiSlug = cond.EventApiSlug;
+          if (Array.isArray(cond.VarMappings)) eventApiVarMappings = cond.VarMappings;
         } catch(e) {}
       }
 
@@ -352,6 +446,8 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
           stepOrder: 0,
           offsetDays,
           ignoreYear,
+          eventApiSlug,
+          eventApiVarMappings,
           audienceFilter,
           audienceCustomColumn,
           audienceCustomValue
@@ -394,7 +490,7 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
     fetch('/api/templates')
       .then(r => r.json())
       .then(d => {
-        const tpl = d || [];
+        const tpl = d?.Templates || d?.templates || (Array.isArray(d) ? d : []);
         setTemplates(tpl);
         setSteps(prev => prev.map(s => s.stepType === 'WHATSAPP' ? { ...s, templatesList: tpl } : s));
       })
@@ -403,7 +499,7 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
 
   const allTriggerOptions = [
     ...TRIGGER_OPTIONS,
-    ...dynamicHeaders.map(h => ({ value: `DATE_${h}`, label: `Date: ${h}` }))
+    ...dynamicHeaders.map(h => ({ value: `DATE_${h}`, label: `Date: ${h}`, group: 'Date Triggers' }))
   ];
 
   const addStep = (stepType, index) => {
@@ -451,6 +547,16 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
         Column: column,
         OffsetDays: parseInt(triggerStep.offsetDays || 0),
         IgnoreYear: triggerStep.ignoreYear !== false
+      });
+    } else if (triggerType === 'EVENT_API') {
+      // Persist the API slug and variable mappings into ConditionsJson
+      if (!triggerStep.eventApiSlug) {
+        alert('Please enter an Event Slug for the Event / API Variable trigger.');
+        return;
+      }
+      conditionsJson = JSON.stringify({
+        EventApiSlug: triggerStep.eventApiSlug,
+        VarMappings: triggerStep.eventApiVarMappings || []
       });
     }
 
@@ -556,7 +662,7 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '32px 0' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '32px 0 120px 0' }}>
         {steps.map((step, index) => {
           const isStop = step.stepType === 'STOP';
           return (

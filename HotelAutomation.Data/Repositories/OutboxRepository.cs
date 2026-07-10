@@ -14,13 +14,14 @@ public sealed class OutboxRepository : IOutboxRepository
     {
         await using var conn = await _factory.OpenAsync(ct);
         return await conn.ExecuteScalarAsync<int>("""
-            INSERT INTO OutboxMessages (ToPhoneNumber, TemplateId, ParametersJson, Status, RetryCount, CreatedAt, RuleId)
-            VALUES (@ToPhoneNumber, @TemplateId, @ParametersJson, @Status, @RetryCount, @CreatedAt, @RuleId);
+            INSERT INTO OutboxMessages (ToPhoneNumber, TemplateId, VariantId, ParametersJson, Status, RetryCount, CreatedAt, RuleId)
+            VALUES (@ToPhoneNumber, @TemplateId, @VariantId, @ParametersJson, @Status, @RetryCount, @CreatedAt, @RuleId);
             SELECT last_insert_rowid();
             """, new
         {
             message.ToPhoneNumber,
             message.TemplateId,
+            message.VariantId,
             message.ParametersJson,
             message.Status,
             message.RetryCount,

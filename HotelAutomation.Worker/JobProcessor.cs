@@ -14,12 +14,14 @@ namespace HotelAutomation.Worker
     {
         private readonly JobRepository _jobRepository;
         private readonly IOutboxRepository _outboxRepository;
+        private readonly Services.VariantSelector _variantSelector;
         private readonly ILogger<JobProcessor> _logger;
 
-        public JobProcessor(JobRepository jobRepository, IOutboxRepository outboxRepository, ILogger<JobProcessor> logger)
+        public JobProcessor(JobRepository jobRepository, IOutboxRepository outboxRepository, Services.VariantSelector variantSelector, ILogger<JobProcessor> logger)
         {
             _jobRepository = jobRepository;
             _outboxRepository = outboxRepository;
+            _variantSelector = variantSelector;
             _logger = logger;
         }
 
@@ -34,10 +36,12 @@ namespace HotelAutomation.Worker
                     var ripeJobs = await _jobRepository.GetRipeJobsAsync();
                     foreach (var job in ripeJobs)
                     {
+                        var variantId = await _variantSelector.SelectVariantIdAsync(job.TemplateId);
                         var outboxMessage = new OutboxMessage
                         {
                             ToPhoneNumber = job.PhoneNumber,
                             TemplateId = job.TemplateId,
+                            VariantId = variantId,
                             ParametersJson = job.ParametersJson,
                             Status = "Pending",
                             CreatedAt = DateTimeOffset.UtcNow,
@@ -55,7 +59,15 @@ namespace HotelAutomation.Worker
                     _logger.LogError(ex, "Error processing scheduled jobs.");
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Graceful shutdown — token was cancelled, exit the loop cleanly
+                    break;
+                }
             }
         }
     }

@@ -1,12 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Papa from 'papaparse';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download } from 'lucide-react';
 import AutomationBuilder from './components/AutomationBuilder';
+import PreferenceCenter from './components/PreferenceCenter';
+import TemplateVariantManager from './components/TemplateVariantManager';
+import ManualCheckIn from './components/ManualCheckIn';
+import ManualCheckOut from './components/ManualCheckOut';
 
 const API_BASE = '/api';
 
 export default function App() {
+  const params = new URLSearchParams(window.location.search);
+  const prefContactId = params.get('preferences_for');
+
+  if (prefContactId) {
+    return <PreferenceCenter contactId={parseInt(prefContactId)} />;
+  }
+
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem('hotelAuto_activeTab') || 'dashboard');
   
   useEffect(() => {
@@ -17,23 +28,39 @@ export default function App() {
   const [inbox, setInbox] = useState([]);
   const [categories, setCategories] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [smartLists, setSmartLists] = useState([]);
+  const [selectedSmartList, setSelectedSmartList] = useState('');
   const [totalContacts, setTotalContacts] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [dynamicHeaders, setDynamicHeaders] = useState([]);
+  const [showSmartListModal, setShowSmartListModal] = useState(false);
+  const [newSmartList, setNewSmartList] = useState({ ListName: '', Filters: [{ field: 'City', operator: 'equals', value: '' }] });
   const [showEditContactModal, setShowEditContactModal] = useState(false);
   const [editingContactId, setEditingContactId] = useState(null);
-  const [editContactData, setEditContactData] = useState({ PhoneNumber: '', FirstName: '', LastName: '', CustomFieldsJson: '{}' });
+  const [editContactData, setEditContactData] = useState({ PhoneNumber: '', FirstName: '', LastName: '', CustomFieldsJson: '{}', CheckInCount: 0, AverageStayDays: 0, IsVip: false });
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [hiddenColumns, setHiddenColumns] = useState([]);
   const [logs, setLogs] = useState([]);
   const [templatesList, setTemplatesList] = useState([]);
+  const [totalTemplates, setTotalTemplates] = useState(0);
   const [rulesList, setRulesList] = useState([]);
   const [broadcasts, setBroadcasts] = useState([]);
+  const [bPage, setBPage] = useState(1);
+  const [bTotal, setBTotal] = useState(0);
+  const bLimit = 10;
   const [selectedBroadcastCategory, setSelectedBroadcastCategory] = useState('');
   const [selectedBroadcastTemplate, setSelectedBroadcastTemplate] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [isFiring, setIsFiring] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [testPhoneNumber, setTestPhoneNumber] = useState('+15556585587');
+  const [testModalOpen, setTestModalOpen] = useState(false);
+  const [templateToTest, setTemplateToTest] = useState(null);
+  const [isTesting, setIsTesting] = useState(false);
+  const [campaigns, setCampaigns] = useState([]);
+  const [showCampaignModal, setShowCampaignModal] = useState(false);
+  const [editingCampaign, setEditingCampaign] = useState(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showColumnModal, setShowColumnModal] = useState(false);
   
@@ -49,10 +76,35 @@ export default function App() {
 
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
-  const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1 });
+  const [newTemplate, setNewTemplate] = useState({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1, Category: 'Utility', HeaderType: 'None', BodyText: '', HeaderText: '', ParameterDefinitionsJson: '[]' });
   const [isBuildingRule, setIsBuildingRule] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
   const [optOutsList, setOptOutsList] = useState([]);
+
+  // Part B State Variables
+  const [conversations, setConversations] = useState([]);
+  const [selectedConversation, setSelectedConversation] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [replyText, setReplyText] = useState('');
+  const [isSendingReply, setIsSendingReply] = useState(false);
+  const [analyticsData, setAnalyticsData] = useState({ TotalTriggered: 0, Sent: 0, Delivered: 0, Read: 0, Failed: 0, Pending: 0, IncomingReplies: 0, Clicked: 0 });
+  const [deliveryTrends, setDeliveryTrends] = useState([]);
+  const [analyticsPeriod, setAnalyticsPeriod] = useState('all');
+  const [analyticsRulesPage, setAnalyticsRulesPage] = useState(1);
+  const [analyticsBroadcastsPage, setAnalyticsBroadcastsPage] = useState(1);
+  const [errorReplyMessage, setErrorReplyMessage] = useState('');
+
+  // Scroll handler ref for chat thread
+  const messagesEndRef = React.useRef(null);
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    if (chatMessages.length > 0) {
+      scrollToBottom();
+    }
+  }, [chatMessages]);
 
   useEffect(() => {
     fetchData();
@@ -60,7 +112,7 @@ export default function App() {
       fetchData();
     }, 5000);
     return () => clearInterval(interval);
-  }, [activeTab, currentPage, pageSize, selectedCategory]);
+  }, [activeTab, currentPage, pageSize, selectedCategory, bPage, analyticsPeriod]);
 
   const fetchData = async () => {
     try {
@@ -77,8 +129,14 @@ export default function App() {
       }
       
       if (activeTab === 'templates' || activeTab === 'broadcasts' || activeTab === 'analytics') {
-        const templatesRes = await fetch(`${API_BASE}/templates`).catch(() => null);
-        if (templatesRes && templatesRes.ok) setTemplatesList(await templatesRes.json());
+        const tLimit = activeTab === 'templates' ? pageSize : 1000;
+        const tPage = activeTab === 'templates' ? currentPage : 1;
+        const templatesRes = await fetch(`${API_BASE}/templates?page=${tPage}&limit=${tLimit}`).catch(() => null);
+        if (templatesRes && templatesRes.ok) {
+          const tData = await templatesRes.json();
+          setTemplatesList(tData.Templates || tData.templates || []);
+          if (activeTab === 'templates') setTotalTemplates(tData.TotalCount || tData.totalCount || 0);
+        }
       }
       
       const rulesRes = await fetch(`${API_BASE}/rules`).catch(() => null);
@@ -103,10 +161,19 @@ export default function App() {
         const logsRes = await fetch(`${API_BASE}/logs`).catch(() => null);
         if (logsRes && logsRes.ok) setLogs(await logsRes.json());
       }
+      
+      if (activeTab === 'campaigns') {
+        const campRes = await fetch(`${API_BASE}/campaigns`).catch(() => null);
+        if (campRes && campRes.ok) setCampaigns(await campRes.json());
+      }
 
       if (activeTab === 'broadcasts' || activeTab === 'analytics') {
-        const bRes = await fetch(`${API_BASE}/broadcast`).catch(() => null);
-        if (bRes && bRes.ok) setBroadcasts(await bRes.json());
+        const bRes = await fetch(`${API_BASE}/broadcast?page=${bPage}&limit=${bLimit}`).catch(() => null);
+        if (bRes && bRes.ok) {
+          const d = await bRes.json();
+          setBroadcasts(d.data || []);
+          setBTotal(d.total || 0);
+        }
       }
       
       const inboxRes = await fetch(`${API_BASE}/inbox`).catch(() => null);
@@ -119,7 +186,15 @@ export default function App() {
       const catRes = await fetch(`${API_BASE}/categories`).catch(() => null);
       if (catRes && catRes.ok) setCategories(await catRes.json());
       
-      const conUrl = selectedCategory ? `${API_BASE}/contacts?categoryId=${selectedCategory}&page=${currentPage}&limit=${pageSize}` : `${API_BASE}/contacts?page=${currentPage}&limit=${pageSize}`;
+      const slRes = await fetch(`${API_BASE}/smart-lists`).catch(() => null);
+      if (slRes && slRes.ok) setSmartLists(await slRes.json());
+      
+      let conUrl = `${API_BASE}/contacts?page=${currentPage}&limit=${pageSize}`;
+      if (selectedSmartList) {
+        conUrl = `${API_BASE}/smart-lists/${selectedSmartList}/contacts?page=${currentPage}&limit=${pageSize}`;
+      } else if (selectedCategory) {
+        conUrl = `${API_BASE}/contacts?categoryId=${selectedCategory}&page=${currentPage}&limit=${pageSize}`;
+      }
       const conRes = await fetch(conUrl).catch(() => null);
       if (conRes && conRes.ok) {
         const data = await conRes.json();
@@ -131,8 +206,70 @@ export default function App() {
       if (colRes && colRes.ok) {
         setDynamicHeaders(await colRes.json());
       }
+
+      // Fetch active conversations list
+      if (activeTab === 'inbox') {
+        const convRes = await fetch(`${API_BASE}/conversations`).catch(() => null);
+        if (convRes && convRes.ok) {
+          const convData = await convRes.json();
+          setConversations(convData);
+          
+          // Keep active conversation messages in sync
+          if (selectedConversation) {
+            const msgRes = await fetch(`${API_BASE}/conversations/${encodeURIComponent(selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}/messages`).catch(() => null);
+            if (msgRes && msgRes.ok) {
+              setChatMessages(await msgRes.json());
+            }
+          }
+        }
+      }
+
+      // Fetch advanced analytics aggregates
+      if (activeTab === 'analytics') {
+        let queryParams = '';
+        if (analyticsPeriod !== 'all') {
+          const end = new Date();
+          const start = new Date();
+          if (analyticsPeriod === 'today') {
+            start.setHours(0,0,0,0);
+          } else if (analyticsPeriod === '7') {
+            start.setDate(start.getDate() - 7);
+          } else if (analyticsPeriod === '30') {
+            start.setDate(start.getDate() - 30);
+          }
+          queryParams = `?startDate=${start.toISOString().split('T')[0]}&endDate=${end.toISOString().split('T')[0]}`;
+        }
+        
+        const overviewRes = await fetch(`${API_BASE}/analytics/overview${queryParams}`).catch(() => null);
+        if (overviewRes && overviewRes.ok) {
+          setAnalyticsData(await overviewRes.json());
+        }
+        const trendsRes = await fetch(`${API_BASE}/analytics/delivery-trends${queryParams}`).catch(() => null);
+        if (trendsRes && trendsRes.ok) {
+          setDeliveryTrends(await trendsRes.json());
+        }
+      }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleSaveSmartList = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/smart-lists`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ListName: newSmartList.ListName, FilterConditionsJson: JSON.stringify(newSmartList.Filters) })
+      });
+      if (res.ok) {
+        setShowSmartListModal(false);
+        setNewSmartList({ ListName: '', Filters: [{ field: 'City', operator: 'equals', value: '' }] });
+        fetchData();
+      } else {
+        alert("Failed to save smart list.");
+      }
+    } catch(e) {
+      alert("Error saving smart list.");
     }
   };
 
@@ -444,6 +581,9 @@ export default function App() {
             PhoneNumber: c.PhoneNumber || c.phoneNumber || '',
             FirstName: c.FirstName || c.firstName || '',
             LastName: c.LastName || c.lastName || '',
+            CheckInCount: c.CheckInCount || c.checkInCount || 0,
+            AverageStayDays: c.AverageStayDays || c.averageStayDays || 0,
+            IsVip: c.IsVip || c.isVip || false,
             CustomFieldsJson: JSON.stringify(mergedFields)
         });
         setShowEditContactModal(true);
@@ -458,6 +598,9 @@ export default function App() {
             PhoneNumber: '',
             FirstName: '',
             LastName: '',
+            CheckInCount: 0,
+            AverageStayDays: 0,
+            IsVip: false,
             CustomFieldsJson: JSON.stringify(defaultFields)
         });
         setShowEditContactModal(true);
@@ -507,7 +650,7 @@ export default function App() {
           <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', alignItems: 'center' }}>
             <select 
               value={selectedCategory} 
-              onChange={e => { setSelectedCategory(e.target.value); setCurrentPage(1); }} 
+              onChange={e => { setSelectedCategory(e.target.value); setSelectedSmartList(''); setCurrentPage(1); }} 
               style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
             >
               <option value="">All Categories</option>
@@ -515,6 +658,18 @@ export default function App() {
             </select>
             <button className="btn btn-secondary" onClick={handleAddCategory}>
               <Plus size={16} /> New Category
+            </button>
+            <div style={{ width: '1px', height: '24px', backgroundColor: '#ccc', margin: '0 8px' }}></div>
+            <select 
+              value={selectedSmartList} 
+              onChange={e => { setSelectedSmartList(e.target.value); setSelectedCategory(''); setCurrentPage(1); }} 
+              style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+            >
+              <option value="">All Smart Lists</option>
+              {(Array.isArray(smartLists) ? smartLists : []).map(s => <option key={s.Id || s.id} value={s.Id || s.id}>{s.ListName || s.listName}</option>)}
+            </select>
+            <button className="btn btn-secondary" onClick={() => setShowSmartListModal(true)}>
+              <Plus size={16} /> New Smart List
             </button>
             <div style={{ flex: 1 }}></div>
             <button className="btn btn-secondary" onClick={() => setShowColumnModal(true)}>
@@ -560,6 +715,60 @@ export default function App() {
             </div>
           ), document.body)}
 
+          {showSmartListModal && createPortal((
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+              <div className="card" style={{ width: '500px' }}>
+                <h3 className="card-title" style={{ marginBottom: '16px' }}>Create Smart List</h3>
+                <div style={{ marginBottom: '12px' }}>
+                  <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>List Name</label>
+                  <input type="text" className="input" placeholder="e.g. VIP Guests" value={newSmartList.ListName} onChange={e => setNewSmartList({ ...newSmartList, ListName: e.target.value })} />
+                </div>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '0.85em' }}>Filters</label>
+                  {newSmartList.Filters.map((f, i) => (
+                    <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                      <select className="input" value={f.field} onChange={e => {
+                        const newF = [...newSmartList.Filters];
+                        newF[i].field = e.target.value;
+                        setNewSmartList({ ...newSmartList, Filters: newF });
+                      }} style={{ flex: 1 }}>
+                        <option value="City">City</option>
+                        <option value="State">State</option>
+                        <option value="Country">Country</option>
+                        <option value="CategoryId">Category ID</option>
+                      </select>
+                      <select className="input" value={f.operator} onChange={e => {
+                        const newF = [...newSmartList.Filters];
+                        newF[i].operator = e.target.value;
+                        setNewSmartList({ ...newSmartList, Filters: newF });
+                      }} style={{ width: '100px' }}>
+                        <option value="equals">Equals</option>
+                        <option value="contains">Contains</option>
+                      </select>
+                      <input type="text" className="input" placeholder="Value" value={f.value} onChange={e => {
+                        const newF = [...newSmartList.Filters];
+                        newF[i].value = e.target.value;
+                        setNewSmartList({ ...newSmartList, Filters: newF });
+                      }} style={{ flex: 1 }} />
+                      <button className="btn btn-secondary" style={{ color: '#ef4444' }} onClick={() => {
+                        const newF = [...newSmartList.Filters];
+                        newF.splice(i, 1);
+                        setNewSmartList({ ...newSmartList, Filters: newF });
+                      }}><Trash2 size={14} /></button>
+                    </div>
+                  ))}
+                  <button className="btn btn-secondary" style={{ marginTop: '8px', width: '100%' }} onClick={() => setNewSmartList({ ...newSmartList, Filters: [...newSmartList.Filters, { field: 'City', operator: 'equals', value: '' }] })}>
+                    <Plus size={16} style={{ marginRight: '4px' }} /> Add Condition
+                  </button>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button className="btn btn-secondary" onClick={() => setShowSmartListModal(false)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleSaveSmartList}>Save Smart List</button>
+                </div>
+              </div>
+            </div>
+          ), document.body)}
+
           <div className="card">
             <h3 className="card-title">Contacts Directory</h3>
             {contacts.length === 0 ? (
@@ -573,6 +782,9 @@ export default function App() {
                       <th>First Name</th>
                       <th>Last Name</th>
                       {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => <th key={h}>{h}</th>)}
+                      <th>Added Date</th>
+                      <th>Updated Date</th>
+                      <th>Updates</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -586,6 +798,9 @@ export default function App() {
                           <td>{c.FirstName || c.firstName}</td>
                           <td>{c.LastName || c.lastName}</td>
                           {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => <td key={h}>{fields[h] || '-'}</td>)}
+                          <td>{new Date(c.CreatedAt || c.createdAt).toLocaleDateString()}</td>
+                          <td>{c.UpdatedAt || c.updatedAt ? new Date(c.UpdatedAt || c.updatedAt).toLocaleDateString() : '-'}</td>
+                          <td>{c.UpdateCount || c.updateCount || 0}</td>
                           <td>
                             <div style={{ display: 'flex', gap: '8px' }}>
                               <button className="btn btn-secondary" style={{ padding: '4px', border: 'none' }} onClick={() => handleEditContactClick(c)}>
@@ -658,6 +873,30 @@ export default function App() {
                   <div className="form-group" style={{ flex: 1 }}>
                     <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Last Name</label>
                     <input type="text" value={editContactData.LastName} onChange={e => setEditContactData({...editContactData, LastName: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', alignItems: 'center' }}>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Check-in Count</label>
+                    <input type="number" min="0" value={editContactData.CheckInCount} onChange={e => setEditContactData({...editContactData, CheckInCount: parseInt(e.target.value) || 0})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Avg Stay (Days)</label>
+                    <input type="number" min="0" step="0.1" value={editContactData.AverageStayDays} onChange={e => setEditContactData({...editContactData, AverageStayDays: parseFloat(e.target.value) || 0})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>VIP</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                      <span style={{ fontSize: '14px', color: editContactData.IsVip ? '#64748b' : '#334155' }}>No</span>
+                      <label style={{ position: 'relative', display: 'inline-block', width: '40px', height: '24px' }}>
+                        <input type="checkbox" checked={editContactData.IsVip} onChange={e => setEditContactData({...editContactData, IsVip: e.target.checked})} style={{ opacity: 0, width: 0, height: 0 }} />
+                        <span style={{ position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: editContactData.IsVip ? '#10b981' : '#ccc', transition: '.4s', borderRadius: '34px' }}>
+                          <span style={{ position: 'absolute', content: '""', height: '16px', width: '16px', left: editContactData.IsVip ? '20px' : '4px', bottom: '4px', backgroundColor: 'white', transition: '.4s', borderRadius: '50%' }}></span>
+                        </span>
+                      </label>
+                      <span style={{ fontSize: '14px', color: editContactData.IsVip ? '#10b981' : '#64748b', fontWeight: editContactData.IsVip ? 'bold' : 'normal' }}>Yes</span>
+                    </div>
                   </div>
                 </div>
 
@@ -838,16 +1077,62 @@ export default function App() {
       };
 
       const handleEditTemplate = (t) => {
+        let defsJson = t.ParameterDefinitionsJson || t.parameterDefinitionsJson || '[]';
+        let defs = [];
+        try { defs = JSON.parse(defsJson); } catch(e){}
+        
+        const count = t.BodyParamCount ?? t.bodyParamCount ?? -1;
+        if ((!defs || defs.length === 0) && count > 0) {
+          defs = Array.from({ length: count }, (_, i) => ({
+            Position: i + 1,
+            Label: `Variable ${i + 1}`,
+            SampleValue: '',
+            SourceColumn: ''
+          }));
+          defsJson = JSON.stringify(defs);
+        }
+
         setNewTemplate({
-          Name: t.Name || t.name,
+          Name: t.Name || t.name || '',
           ExternalTemplateName: t.ExternalTemplateName || t.externalTemplateName || '',
           LanguageCode: t.LanguageCode || t.languageCode || 'en',
           ChannelType: t.ChannelType || t.channelType || 'WhatsApp',
-          BodyParamCount: t.BodyParamCount ?? t.bodyParamCount ?? -1
+          BodyParamCount: count,
+          Category: t.Category || t.category || 'Utility',
+          HeaderType: t.HeaderType || t.headerType || 'None',
+          BodyText: t.BodyText || t.bodyText || '',
+          HeaderText: t.HeaderText || t.headerText || '',
+          ParameterDefinitionsJson: defsJson
         });
         setEditingTemplateId(t.Id || t.id);
         setIsEditingTemplate(true);
         setShowTemplateModal(true);
+      };
+
+      const handleSendTest = async () => {
+        if (!testPhoneNumber) {
+          alert('Phone number is required');
+          return;
+        }
+        setIsTesting(true);
+        try {
+          const res = await fetch(`${API_BASE}/templates/${templateToTest.Id || templateToTest.id}/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phoneNumber: testPhoneNumber })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            alert(data.message || 'Test sent successfully');
+            setTestModalOpen(false);
+          } else {
+            alert(data.message || 'Failed to send test');
+          }
+        } catch (err) {
+          alert('Error sending test');
+        } finally {
+          setIsTesting(false);
+        }
       };
 
       const loadRules = async () => {
@@ -897,7 +1182,7 @@ export default function App() {
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
             <h3 className="card-title">Message Templates</h3>
             <button className="btn btn-primary" onClick={() => {
-              setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1 });
+              setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1, Category: 'Utility', HeaderType: 'None', BodyText: '', ParameterDefinitionsJson: '[]' });
               setIsEditingTemplate(false);
               setEditingTemplateId(null);
               setShowTemplateModal(true);
@@ -908,33 +1193,374 @@ export default function App() {
           
           {showTemplateModal && createPortal((
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-              <div className="card" style={{ width: '400px' }}>
-                <h3 className="card-title" style={{ marginBottom: '16px' }}>{isEditingTemplate ? 'Edit Template' : 'New Template'}</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <input type="text" className="input" placeholder="Display Name (e.g. CheckIn Welcome)" value={newTemplate.Name} onChange={e => setNewTemplate({...newTemplate, Name: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-                  <input type="text" className="input" placeholder="Meta Template Name (e.g. hotel_checkin)" value={newTemplate.ExternalTemplateName} onChange={e => setNewTemplate({...newTemplate, ExternalTemplateName: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-                  <input type="text" className="input" placeholder="Language (e.g. en_US)" value={newTemplate.LanguageCode} onChange={e => setNewTemplate({...newTemplate, LanguageCode: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-                  <select className="input" value={newTemplate.ChannelType} onChange={e => setNewTemplate({...newTemplate, ChannelType: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
-                    <option value="WhatsApp">WhatsApp</option>
-                    <option value="SMS">SMS</option>
-                  </select>
-                  <select className="input" value={newTemplate.Category || 'Utility'} onChange={e => setNewTemplate({...newTemplate, Category: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
-                    <option value="Utility">Utility (Transactional)</option>
-                    <option value="Marketing">Marketing (Promotional)</option>
-                  </select>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Body Parameters</label>
-                    <select className="input" value={newTemplate.BodyParamCount} onChange={e => setNewTemplate({...newTemplate, BodyParamCount: parseInt(e.target.value)})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
-                      <option value={-1}>Unknown / Has Parameters (default)</option>
-                      <option value={0}>Zero Parameters (e.g. hello_world)</option>
-                      <option value={1}>1 Parameter (Name)</option>
-                      <option value={2}>2 Parameters (Name, Room)</option>
-                      <option value={3}>3 Parameters (Name, Room, Amount)</option>
-                    </select>
+              <div className="card" style={{ width: '850px', maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', padding: '24px', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color, #eee)', paddingBottom: '12px', marginBottom: '16px' }}>
+                  <h3 className="card-title" style={{ margin: 0 }}>{isEditingTemplate ? 'Edit Message Template' : 'New Message Template'}</h3>
+                  <button className="btn btn-secondary" style={{ minWidth: 'auto', padding: '4px 8px', border: 'none' }} onClick={() => setShowTemplateModal(false)}>✕</button>
+                </div>
+                
+                <div style={{ display: 'flex', gap: '24px', flex: 1, overflow: 'auto' }}>
+                  {/* Left Column: Form & Parameter Table */}
+                  <div style={{ flex: 1.3, display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', paddingRight: '8px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Display Name (e.g. CheckIn Welcome)</label>
+                        <input type="text" className="input" placeholder="Display Name" value={newTemplate.Name} onChange={e => setNewTemplate({...newTemplate, Name: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Meta Template Name</label>
+                        <input type="text" className="input" placeholder="e.g. hotel_checkin" value={newTemplate.ExternalTemplateName} onChange={e => setNewTemplate({...newTemplate, ExternalTemplateName: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Language (e.g. en_US)</label>
+                        <input type="text" className="input" placeholder="en" value={newTemplate.LanguageCode} onChange={e => setNewTemplate({...newTemplate, LanguageCode: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Channel Type</label>
+                        <select className="input" value={newTemplate.ChannelType} onChange={e => setNewTemplate({...newTemplate, ChannelType: e.target.value})} style={{ width: '100%', padding: '8px 24px 8px 8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                          <option value="WhatsApp">WhatsApp</option>
+                          <option value="SMS">SMS</option>
+                        </select>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Category</label>
+                        <select className="input" value={newTemplate.Category || 'Utility'} onChange={e => setNewTemplate({...newTemplate, Category: e.target.value})} style={{ width: '100%', padding: '8px 24px 8px 8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                          <option value="Utility">Utility (Transactional)</option>
+                          <option value="Marketing">Marketing (Promotional)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Header Media Type</label>
+                        <select className="input" value={newTemplate.HeaderType || 'None'} onChange={e => setNewTemplate({...newTemplate, HeaderType: e.target.value})} style={{ width: '100%', padding: '8px 24px 8px 8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                          <option value="None">None</option>
+                          <option value="Text">Text</option>
+                          <option value="Document">Document (PDF Invoice generation)</option>
+                          <option value="Image">Image</option>
+                          <option value="Video">Video</option>
+                        </select>
+                      </div>
+                      
+                      {newTemplate.HeaderType && newTemplate.HeaderType !== 'None' && (
+                        <div>
+                          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>
+                            {newTemplate.HeaderType === 'Text' && 'Header Text'}
+                            {newTemplate.HeaderType === 'Image' && 'Header Image URL'}
+                            {newTemplate.HeaderType === 'Video' && 'Header Video URL'}
+                            {newTemplate.HeaderType === 'Document' && 'Document URL (Optional - defaults to PDF invoice generator)'}
+                          </label>
+                          <input 
+                            type="text" 
+                            className="input" 
+                            placeholder={
+                              newTemplate.HeaderType === 'Text' ? "Enter header text (e.g. Booking Confirmed)" : "https://domain.com/media-file"
+                            }
+                            value={newTemplate.HeaderText || ''} 
+                            onChange={e => setNewTemplate({...newTemplate, HeaderText: e.target.value})} 
+                            style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} 
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <label style={{ fontWeight: 500, fontSize: '0.85em' }}>Body Text</label>
+                        <span style={{ fontSize: '0.8em', color: 'var(--text-secondary, #64748b)' }}>Use <code>{"{{1}}"}</code>, <code>{"{{2}}"}</code> for placeholders</span>
+                      </div>
+                      <textarea 
+                        className="input" 
+                        rows={5} 
+                        placeholder="Hello {{1}}, welcome to Sankalp Retreat! Your room number is {{2}}." 
+                        value={newTemplate.BodyText || ''} 
+                        onChange={e => {
+                          const body = e.target.value;
+                          // Auto detect parameter positions
+                          const matches = [...body.matchAll(/\{\{(\d+)\}\}/g)];
+                          const positions = [...new Set(matches.map(m => parseInt(m[1])))].sort((a,b) => a-b);
+                          
+                          let currentDefs = [];
+                          try {
+                            currentDefs = JSON.parse(newTemplate.ParameterDefinitionsJson || '[]');
+                          } catch(ex){}
+                          if (!Array.isArray(currentDefs)) currentDefs = [];
+
+                          const updatedDefs = positions.map(pos => {
+                            const existing = currentDefs.find(d => (d.Position || d.position) === pos);
+                            return {
+                              Position: pos,
+                              Label: existing ? (existing.Label || existing.label || `Variable ${pos}`) : `Variable ${pos}`,
+                              SampleValue: existing ? (existing.SampleValue || existing.sampleValue || '') : '',
+                              SourceColumn: existing ? (existing.SourceColumn || existing.sourceColumn || '') : '',
+                              DynamicKey: existing ? (existing.DynamicKey || existing.dynamicKey || '') : ''
+                            };
+                          });
+
+                          setNewTemplate({
+                            ...newTemplate,
+                            BodyText: body,
+                            ParameterDefinitionsJson: JSON.stringify(updatedDefs),
+                            BodyParamCount: updatedDefs.length
+                          });
+                        }} 
+                        style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', fontFamily: 'monospace', resize: 'vertical' }} 
+                      />
+                    </div>
+
+                    {/* Parameter Configuration Table */}
+                    <div>
+                      <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9em', fontWeight: 600 }}>Configure Parameters ({newTemplate.BodyParamCount > 0 ? newTemplate.BodyParamCount : 0})</h4>
+                      {(() => {
+                        let defs = [];
+                        try {
+                          defs = JSON.parse(newTemplate.ParameterDefinitionsJson || '[]');
+                        } catch(ex){}
+                        if (!Array.isArray(defs) || defs.length === 0) {
+                          return <div style={{ fontSize: '0.85em', color: 'var(--text-secondary, #64748b)', padding: '12px', border: '1px dashed #ccc', borderRadius: '4px', textAlign: 'center' }}>No variables detected in body text. Type <code>{"{{1}}"}</code> above to add parameters.</div>;
+                        }
+
+                        return (
+                          <div style={{ border: '1px solid var(--border-color, #eee)', borderRadius: '6px', overflow: 'hidden' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85em' }}>
+                              <thead>
+                                <tr style={{ backgroundColor: 'var(--bg-secondary, #f8fafc)', borderBottom: '1px solid var(--border-color, #eee)', textAlign: 'left' }}>
+                                  <th style={{ padding: '8px' }}>Pos</th>
+                                  <th style={{ padding: '8px' }}>Variable Label</th>
+                                  <th style={{ padding: '8px' }}>Sample Value</th>
+                                  <th style={{ padding: '8px' }}>Map to Column</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {defs.map((def, idx) => (
+                                  <tr key={def.Position || def.position} style={{ borderBottom: '1px solid var(--border-color, #eee)' }}>
+                                    <td style={{ padding: '8px', fontWeight: 'bold' }}>{"{{"}{def.Position || def.position}{"}}"}</td>
+                                    <td style={{ padding: '8px' }}>
+                                      <input 
+                                        type="text" 
+                                        value={def.Label || def.label || ''} 
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          const next = defs.map((d, i) => i === idx ? { ...d, Label: val } : d);
+                                          setNewTemplate({ ...newTemplate, ParameterDefinitionsJson: JSON.stringify(next) });
+                                        }}
+                                        style={{ width: '100%', padding: '4px', border: '1px solid #ccc', borderRadius: '3px' }} 
+                                        placeholder="e.g. GuestName"
+                                      />
+                                    </td>
+                                    <td style={{ padding: '8px' }}>
+                                      <input 
+                                        type="text" 
+                                        value={def.SampleValue || def.sampleValue || ''} 
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          const next = defs.map((d, i) => i === idx ? { ...d, SampleValue: val } : d);
+                                          setNewTemplate({ ...newTemplate, ParameterDefinitionsJson: JSON.stringify(next) });
+                                        }}
+                                        style={{ width: '100%', padding: '4px', border: '1px solid #ccc', borderRadius: '3px' }} 
+                                        placeholder="John Doe"
+                                      />
+                                    </td>
+                                    <td style={{ padding: '8px', minWidth: '180px' }}>
+                                      {/* Mapping type selector */}
+                                      <select
+                                        value={(() => {
+                                          const dynKey = def.DynamicKey ?? def.dynamicKey;
+                                          if (dynKey && dynKey !== '') {
+                                            const predefinedKeys = ['Name', 'Room', 'CheckInDate', 'CheckOutDate', 'BookingReference', 'WifiPassword', 'Amount', 'FeedbackLink', 'HotelName'];
+                                            if (predefinedKeys.includes(dynKey)) {
+                                              return `__dynamic__:${dynKey}`;
+                                            }
+                                            return '__dynamic__';
+                                          }
+                                          return def.SourceColumn || def.sourceColumn || '';
+                                        })()}
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          let next;
+                                          if (val === '__dynamic__') {
+                                            next = defs.map((d, i) => {
+                                              if (i === idx) {
+                                                const currentDynKey = d.DynamicKey ?? d.dynamicKey;
+                                                const newD = { ...d, SourceColumn: '', DynamicKey: (currentDynKey && currentDynKey !== '') ? currentDynKey : ' ' };
+                                                delete newD.sourceColumn;
+                                                delete newD.dynamicKey;
+                                                return newD;
+                                              }
+                                              return d;
+                                            });
+                                          } else if (val.startsWith('__dynamic__:')) {
+                                            const key = val.split(':')[1];
+                                            next = defs.map((d, i) => {
+                                              if (i === idx) {
+                                                const newD = { ...d, SourceColumn: '', DynamicKey: key };
+                                                delete newD.sourceColumn;
+                                                delete newD.dynamicKey;
+                                                return newD;
+                                              }
+                                              return d;
+                                            });
+                                          } else {
+                                            next = defs.map((d, i) => {
+                                              if (i === idx) {
+                                                const newD = { ...d, SourceColumn: val, DynamicKey: '' };
+                                                delete newD.sourceColumn;
+                                                delete newD.dynamicKey;
+                                                return newD;
+                                              }
+                                              return d;
+                                            });
+                                          }
+                                          setNewTemplate({ ...newTemplate, ParameterDefinitionsJson: JSON.stringify(next) });
+                                        }}
+                                        style={{ width: '100%', padding: '4px', border: '1px solid var(--border-color, #ccc)', borderRadius: '3px', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)', marginBottom: (def.DynamicKey || def.dynamicKey) ? '4px' : '0' }}
+                                      >
+                                        <option value="">-- None --</option>
+                                        <option value="__dynamic__">📡 Event / API Variable</option>
+                                        <option disabled>── Contact Fields ──</option>
+                                        <option value="PhoneNumber">Phone Number</option>
+                                        <option value="FirstName">First Name</option>
+                                        <option value="LastName">Last Name</option>
+                                        {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => (
+                                          <option key={h} value={h}>{h}</option>
+                                        ))}
+                                        <option disabled>── Event Fields ──</option>
+                                        <option value="__dynamic__:Name">Guest Name</option>
+                                        <option value="__dynamic__:Room">Room Number</option>
+                                        <option value="__dynamic__:CheckInDate">Check-In Date</option>
+                                        <option value="__dynamic__:CheckOutDate">Check-Out Date</option>
+                                        <option value="__dynamic__:BookingReference">Booking Reference</option>
+                                        <option value="__dynamic__:WifiPassword">Wi-Fi Password</option>
+                                        <option value="__dynamic__:Amount">Bill Amount</option>
+                                        <option value="__dynamic__:FeedbackLink">Feedback Link</option>
+                                        <option value="__dynamic__:HotelName">Hotel Name</option>
+                                      </select>
+                                      {/* Dynamic key text input — shown when Event Variable is selected */}
+                                      {(() => {
+                                        const dynKey = def.DynamicKey ?? def.dynamicKey;
+                                        const isDynamic = dynKey !== undefined && dynKey !== null && dynKey !== '';
+                                        if (!isDynamic) return null;
+                                        return (
+                                          <input
+                                            type="text"
+                                            value={dynKey.trim()}
+                                            onChange={e => {
+                                              const val = e.target.value;
+                                              const next = defs.map((d, i) => {
+                                                if (i === idx) {
+                                                  const newD = { ...d, DynamicKey: val === '' ? ' ' : val };
+                                                  delete newD.dynamicKey;
+                                                  return newD;
+                                                }
+                                                return d;
+                                              });
+                                              setNewTemplate({ ...newTemplate, ParameterDefinitionsJson: JSON.stringify(next) });
+                                            }}
+                                            placeholder="e.g. CheckInDate"
+                                            style={{ width: '100%', padding: '4px', border: '1px solid var(--primary, #3b82f6)', borderRadius: '3px', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)', fontSize: '0.8em' }}
+                                          />
+                                        );
+                                      })()}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
+
+                  {/* Right Column: WhatsApp Live Preview */}
+                  <div style={{ flex: 0.9, backgroundColor: '#efeae2', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', position: 'relative', minHeight: '350px', backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#075e54', padding: '8px 12px', color: '#fff', borderRadius: '6px 6px 0 0', position: 'absolute', top: 0, left: 0, right: 0 }}>
+                      <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#ece5dd', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#075e54', fontWeight: 'bold', fontSize: '0.9em' }}>SR</div>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '0.85em' }}>Sankalp Retreat</div>
+                        <div style={{ fontSize: '0.65em', opacity: 0.8 }}>Online</div>
+                      </div>
+                    </div>
+
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-start', padding: '12px', marginTop: '48px', overflowY: 'auto' }}>
+                      <div style={{ backgroundColor: '#fff', padding: '8px 12px', borderRadius: '8px', boxShadow: '0 1px 0.5px rgba(0,0,0,0.13)', maxWidth: '85%', fontSize: '0.85em', position: 'relative', wordBreak: 'break-word' }}>
+                        {newTemplate.HeaderType && newTemplate.HeaderType !== 'None' && (
+                          <div style={{ borderBottom: '1px solid #f2f2f2', paddingBottom: '6px', marginBottom: '6px', fontSize: '0.9em' }}>
+                            {newTemplate.HeaderType === 'Text' && (
+                              <div style={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '4px' }}>
+                                {newTemplate.HeaderText || 'WhatsApp Header [Text]'}
+                              </div>
+                            )}
+                            {newTemplate.HeaderType === 'Image' && (
+                              <div style={{ width: '100%', height: '100px', backgroundColor: '#f1f5f9', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginBottom: '4px' }}>
+                                {newTemplate.HeaderText ? (
+                                  <img src={newTemplate.HeaderText} alt="Header Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                                ) : (
+                                  <span style={{ fontSize: '0.8em', color: '#94a3b8' }}>🖼️ Image Header Preview</span>
+                                )}
+                              </div>
+                            )}
+                            {newTemplate.HeaderType === 'Video' && (
+                              <div style={{ width: '100%', height: '100px', backgroundColor: '#f1f5f9', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '4px', fontSize: '0.8em', color: '#94a3b8' }}>
+                                🎥 Video Header: {newTemplate.HeaderText || 'No media URL provided'}
+                              </div>
+                            )}
+                            {newTemplate.HeaderType === 'Document' && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', backgroundColor: '#f1f5f9', borderRadius: '4px', marginBottom: '4px', fontSize: '0.8em', color: '#475569' }}>
+                                📄 <strong>Document:</strong> {newTemplate.HeaderText || 'Dynamic Generated Invoice.pdf'}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div style={{ whiteSpace: 'pre-wrap' }}>
+                          {(() => {
+                            let text = newTemplate.BodyText || 'Welcome template preview...';
+                            let defs = [];
+                            try {
+                              defs = JSON.parse(newTemplate.ParameterDefinitionsJson || '[]');
+                            } catch(ex){}
+                            if (Array.isArray(defs)) {
+                              defs.forEach(d => {
+                                const pos = d.Position || d.position;
+                                const val = d.SampleValue || d.sampleValue || `{{${pos}}}`;
+                                text = text.replaceAll(`{{${pos}}}`, `*${val}*`);
+                              });
+                            }
+                            return text;
+                          })()}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '0.65em', color: '#8696a0', marginTop: '4px' }}>
+                          {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid var(--border-color, #eee)', paddingTop: '16px', marginTop: '16px' }}>
+                  <button className="btn btn-secondary" onClick={() => setShowTemplateModal(false)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleSaveTemplate}>Save Template</button>
+                </div>
+              </div>
+            </div>
+          ), document.body)}
+
+          {testModalOpen && createPortal((
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+              <div className="card" style={{ width: '400px', animation: 'fadeIn 0.2s ease-out' }}>
+                <h3 className="card-title" style={{ marginBottom: '16px' }}>Test Template: {templateToTest?.Name || templateToTest?.name}</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <label style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Enter a phone number with country code (e.g. 919876543210)</label>
+                  <input type="text" className="input" placeholder="Phone Number" value={testPhoneNumber} onChange={e => setTestPhoneNumber(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)', width: '100%' }} />
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
-                    <button className="btn btn-secondary" onClick={() => setShowTemplateModal(false)}>Cancel</button>
-                    <button className="btn btn-primary" onClick={handleSaveTemplate}>Save</button>
+                    <button className="btn btn-secondary" onClick={() => setTestModalOpen(false)} disabled={isTesting}>Cancel</button>
+                    <button className="btn btn-primary" onClick={handleSendTest} disabled={isTesting || !testPhoneNumber}>
+                      {isTesting ? 'Sending...' : 'Send Test'}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -952,10 +1578,16 @@ export default function App() {
                     <td><span className="badge badge-sent">{t.ChannelType || t.channelType}</span></td>
                     <td>
                       <div style={{ display: 'flex', gap: '8px' }}>
-                        <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={() => handleEditTemplate(t)}>
+                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#10b981', borderColor: '#10b981' }} title="Test Template" onClick={() => {
+                          setTemplateToTest(t);
+                          setTestModalOpen(true);
+                        }}>
+                          <Send size={14} />
+                        </button>
+                        <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={() => handleEditTemplate(t)} title="Edit Template">
                           <Edit2 size={14} />
                         </button>
-                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#ef4444' }} onClick={() => handleDeleteTemplate(t.Id || t.id)}>
+                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#ef4444' }} onClick={() => handleDeleteTemplate(t.Id || t.id)} title="Delete Template">
                           <Trash2 size={14} />
                         </button>
                       </div>
@@ -965,6 +1597,221 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          {totalTemplates > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', padding: '16px', borderTop: '1px solid #e2e8f0', backgroundColor: '#fff', borderRadius: '0 0 8px 8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ color: '#64748b' }}>Rows per page:</span>
+                <select 
+                  value={pageSize} 
+                  onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+                  style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+                <span style={{ color: '#64748b', marginLeft: '16px' }}>Total: {totalTemplates}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={currentPage === 1} 
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  style={{ padding: '6px 12px' }}
+                >
+                  Previous
+                </button>
+                <span style={{ fontWeight: 500 }}>
+                  Page {currentPage} of {Math.ceil(totalTemplates / pageSize) || 1}
+                </span>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={currentPage >= Math.ceil(totalTemplates / pageSize)} 
+                  onClick={() => setCurrentPage(p => p + 1)}
+                  style={{ padding: '6px 12px' }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (activeTab === 'campaigns') {
+      return (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px' }}>
+            <h2 style={{ fontSize: '1.5em', fontWeight: 600 }}>Drip Campaigns</h2>
+            <button className="btn btn-primary" onClick={() => {
+              setEditingCampaign({ Name: '', Steps: [] });
+              setShowCampaignModal(true);
+            }}>
+              <Plus size={18} style={{ marginRight: '8px' }} /> Create Campaign
+            </button>
+          </div>
+
+          <div className="card">
+            {campaigns.length === 0 ? (
+              <div className="empty-state">No campaigns found. Create one to get started!</div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Campaign Name</th>
+                    <th>Steps</th>
+                    <th>Status</th>
+                    <th>Created At</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {campaigns.map(c => (
+                    <tr key={c.Id || c.id}>
+                      <td style={{ fontWeight: 500 }}>{c.Name || c.name}</td>
+                      <td>{(c.Steps || c.steps || []).length}</td>
+                      <td>
+                        <span style={{ 
+                          padding: '4px 8px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 500,
+                          backgroundColor: (c.IsEnabled || c.isEnabled) ? '#dcfce7' : '#f1f5f9',
+                          color: (c.IsEnabled || c.isEnabled) ? '#166534' : '#475569'
+                        }}>
+                          {(c.IsEnabled || c.isEnabled) ? 'Active' : 'Paused'}
+                        </span>
+                      </td>
+                      <td>{new Date(c.CreatedAt || c.createdAt).toLocaleString()}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={() => {
+                            setEditingCampaign(c);
+                            setShowCampaignModal(true);
+                          }}>
+                            <Edit2 size={14} />
+                          </button>
+                          <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#ef4444' }} onClick={async () => {
+                            if (window.confirm('Delete this campaign?')) {
+                              await fetch(`${API_BASE}/campaigns/${c.Id || c.id}`, { method: 'DELETE' });
+                              fetchData();
+                            }
+                          }}>
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {showCampaignModal && createPortal((
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, overflowY: 'auto', padding: '20px' }}>
+              <div className="card" style={{ width: '600px', maxHeight: '90vh', overflowY: 'auto' }}>
+                <h3 className="card-title" style={{ marginBottom: '16px' }}>{editingCampaign?.Id || editingCampaign?.id ? 'Edit Campaign' : 'New Campaign'}</h3>
+                
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>Campaign Name</label>
+                  <input type="text" className="input" value={editingCampaign?.Name || editingCampaign?.name || ''} onChange={e => setEditingCampaign({ ...editingCampaign, Name: e.target.value })} placeholder="e.g., Post-Checkout Feedback Drip" style={{ width: '100%' }} />
+                </div>
+
+                <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input type="checkbox" id="campEnabled" checked={editingCampaign?.IsEnabled ?? editingCampaign?.isEnabled ?? true} onChange={e => setEditingCampaign({ ...editingCampaign, IsEnabled: e.target.checked })} />
+                  <label htmlFor="campEnabled" style={{ fontWeight: 500 }}>Campaign is Active</label>
+                </div>
+
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <h4 style={{ margin: 0 }}>Campaign Steps</h4>
+                    <button className="btn btn-secondary" onClick={() => {
+                      const steps = [...(editingCampaign?.Steps || editingCampaign?.steps || [])];
+                      steps.push({ StepNumber: steps.length + 1, TemplateId: templatesList[0]?.Id || templatesList[0]?.id || 0, DelayMinutes: 0 });
+                      setEditingCampaign({ ...editingCampaign, Steps: steps });
+                    }}>
+                      <Plus size={14} style={{ marginRight: '4px' }} /> Add Step
+                    </button>
+                  </div>
+                  
+                  {(editingCampaign?.Steps || editingCampaign?.steps || []).map((step, idx) => (
+                    <div key={idx} style={{ padding: '12px', border: '1px solid #e2e8f0', borderRadius: '6px', marginBottom: '8px', backgroundColor: '#f8fafc' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <span style={{ fontWeight: 600 }}>Step {idx + 1}</span>
+                        <button style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }} onClick={() => {
+                          const steps = [...(editingCampaign?.Steps || editingCampaign?.steps || [])];
+                          steps.splice(idx, 1);
+                          // Re-number
+                          steps.forEach((s, i) => s.StepNumber = i + 1);
+                          setEditingCampaign({ ...editingCampaign, Steps: steps });
+                        }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ display: 'block', fontSize: '0.85em', color: '#64748b', marginBottom: '4px' }}>Template</label>
+                          <select className="input" value={step.TemplateId || step.templateId || ''} onChange={e => {
+                            const steps = [...(editingCampaign?.Steps || editingCampaign?.steps || [])];
+                            steps[idx].TemplateId = parseInt(e.target.value);
+                            setEditingCampaign({ ...editingCampaign, Steps: steps });
+                          }} style={{ width: '100%' }}>
+                            {(templatesList || []).map(t => <option key={t.Id || t.id} value={t.Id || t.id}>{t.Name || t.name}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ width: '150px' }}>
+                          <label style={{ display: 'block', fontSize: '0.85em', color: '#64748b', marginBottom: '4px' }}>Delay (Minutes)</label>
+                          <input type="number" className="input" value={step.DelayMinutes || step.delayMinutes || 0} onChange={e => {
+                            const steps = [...(editingCampaign?.Steps || editingCampaign?.steps || [])];
+                            steps[idx].DelayMinutes = parseInt(e.target.value);
+                            setEditingCampaign({ ...editingCampaign, Steps: steps });
+                          }} style={{ width: '100%' }} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {(editingCampaign?.Steps || editingCampaign?.steps || []).length === 0 && (
+                    <div style={{ fontSize: '0.9em', color: '#64748b', textAlign: 'center', padding: '16px', border: '1px dashed #cbd5e1', borderRadius: '4px' }}>
+                      No steps configured. Add a step to send messages.
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
+                  <button className="btn btn-secondary" onClick={() => {
+                    const campId = editingCampaign?.Id || editingCampaign?.id;
+                    if (!campId) return alert('Save campaign first!');
+                    const slId = prompt('Enter Smart List ID to enroll:');
+                    if (slId) {
+                      fetch(`${API_BASE}/campaigns/${campId}/enroll?smartListId=${slId}`, { method: 'POST' })
+                        .then(r => r.json()).then(res => alert(`Enrolled ${res.EnrolledCount || res.enrolledCount} contacts!`));
+                    }
+                  }} style={{ color: '#0284c7' }}>
+                    <Users size={16} style={{ marginRight: '6px' }} /> Enroll Smart List
+                  </button>
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button className="btn btn-secondary" onClick={() => setShowCampaignModal(false)}>Cancel</button>
+                    <button className="btn btn-primary" onClick={async () => {
+                      const method = editingCampaign.Id || editingCampaign.id ? 'PUT' : 'POST';
+                      const url = editingCampaign.Id || editingCampaign.id ? `${API_BASE}/campaigns/${editingCampaign.Id || editingCampaign.id}` : `${API_BASE}/campaigns`;
+                      const res = await fetch(url, {
+                        method,
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(editingCampaign)
+                      });
+                      if (res.ok) {
+                        setShowCampaignModal(false);
+                        fetchData();
+                      } else {
+                        alert('Error saving campaign');
+                      }
+                    }}>Save Campaign</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ), document.body)}
         </div>
       );
     }
@@ -1021,7 +1868,7 @@ export default function App() {
       return (
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <h3 className="card-title">Automation Rules</h3>
+            <h3 className="card-title">Automation</h3>
             <button className="btn btn-primary" onClick={() => { setEditingRule(null); setIsBuildingRule(true); }}>
               <Plus size={16} /> Create Rule
             </button>
@@ -1159,44 +2006,78 @@ export default function App() {
         } catch (e) { console.error(e); }
       };
 
-      // Aggregate overall stats
-      const totalAutomationsTriggered = (rulesList || []).reduce((acc, r) => acc + (r.stats?.Triggered ?? r.stats?.triggered ?? 0), 0);
-      const totalAutomationsSent = (rulesList || []).reduce((acc, r) => acc + (r.stats?.TotalSent ?? r.stats?.totalSent ?? 0), 0);
-      const totalAutomationsFailed = (rulesList || []).reduce((acc, r) => acc + (r.stats?.Failed ?? r.stats?.failed ?? 0), 0);
-
-      const totalBroadcastsQueued = (broadcasts || []).reduce((acc, b) => acc + (b.TotalQueued ?? b.totalQueued ?? b.TotalSent ?? b.totalSent ?? 0), 0);
-      const totalBroadcastsSent = (broadcasts || []).reduce((acc, b) => acc + (b.Delivered ?? b.delivered ?? 0), 0);
-      const totalBroadcastsFailed = (broadcasts || []).reduce((acc, b) => acc + (b.Failed ?? b.failed ?? 0), 0);
-
-      const overallTriggered = totalAutomationsTriggered + totalBroadcastsQueued;
-      const overallSent = totalAutomationsSent + totalBroadcastsSent;
-      const overallFailed = totalAutomationsFailed + totalBroadcastsFailed;
+      const overallTriggered = analyticsData?.TotalTriggered || 0;
+      const overallSent = (analyticsData?.Sent || 0) + (analyticsData?.Delivered || 0) + (analyticsData?.Read || 0);
+      const overallFailed = analyticsData?.Failed || 0;
       const successRate = overallTriggered > 0 ? ((overallSent / (overallSent + overallFailed || 1)) * 100).toFixed(1) : '100.0';
+
+      const overallRead = analyticsData?.Read || 0;
+      const overallClicked = analyticsData?.Clicked || 0;
+      const openRate = overallSent > 0 ? ((overallRead / overallSent) * 100).toFixed(1) : '0.0';
+      const clickRate = overallSent > 0 ? ((overallClicked / overallSent) * 100).toFixed(1) : '0.0';
+
+      const analyticsPageSize = 10;
+      const rulesSafe = rulesList || [];
+      const currentRulesPage = rulesSafe.slice((analyticsRulesPage - 1) * analyticsPageSize, analyticsRulesPage * analyticsPageSize);
+
+      const broadcastsSafe = broadcasts || [];
+      const currentBroadcastsPage = broadcastsSafe.slice((analyticsBroadcastsPage - 1) * analyticsPageSize, analyticsBroadcastsPage * analyticsPageSize);
 
       return (
         <div>
-          <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
-            <div className="card" style={{ flex: 1, borderLeft: '4px solid #3b82f6' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+            <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold' }}>Analytics Overview</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 600 }}>Date Range:</span>
+              <select 
+                className="input" 
+                style={{ padding: '6px 12px', width: '200px' }}
+                value={analyticsPeriod}
+                onChange={(e) => setAnalyticsPeriod(e.target.value)}
+              >
+                <option value="today">Today</option>
+                <option value="7">Last 7 Days</option>
+                <option value="30">Last 30 Days</option>
+                <option value="all">All Time</option>
+              </select>
+              <button className="btn btn-secondary" onClick={() => window.location.href = `${API_BASE}/analytics/export`} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Download size={16} /> Export CSV
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '16px', marginBottom: '32px' }}>
+            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #3b82f6' }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>OVERALL TRIGGERED</div>
               <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{overallTriggered}</div>
             </div>
-            <div className="card" style={{ flex: 1, borderLeft: '4px solid #10b981' }}>
+            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #10b981' }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>SUCCESSFULLY SENT</div>
               <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#10b981' }}>{overallSent}</div>
             </div>
-            <div className="card" style={{ flex: 1, borderLeft: '4px solid #ef4444' }}>
+            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #ef4444' }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>FAILED DELIVERIES</div>
               <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#ef4444' }}>{overallFailed}</div>
             </div>
-            <div className="card" style={{ flex: 1, borderLeft: '4px solid #eab308' }}>
+            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #eab308' }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>DELIVERY SUCCESS RATE</div>
               <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#eab308' }}>{successRate}%</div>
+            </div>
+            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #8b5cf6' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>OPEN RATE (READ %)</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#8b5cf6' }}>{openRate}%</div>
+              <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>{overallRead} read receipts</div>
+            </div>
+            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #f97316' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>CLICK-THROUGH RATE (CTR %)</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#f97316' }}>{clickRate}%</div>
+              <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>{overallClicked} unique clicks</div>
             </div>
           </div>
 
           <div className="card" style={{ marginBottom: '32px' }}>
             <h3 className="card-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Workflow size={20} color="var(--primary)" /> Automation Rules Performance
+              <Workflow size={20} color="var(--primary)" /> Automation Performance
             </h3>
             <div className="data-table-container">
               <table className="data-table">
@@ -1212,7 +2093,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(rulesList || []).map(r => {
+                  {currentRulesPage.map(r => {
                     const trig = r.stats?.Triggered ?? r.stats?.triggered ?? 0;
                     const s = r.stats?.TotalSent ?? r.stats?.totalSent ?? 0;
                     const f = r.stats?.Failed ?? r.stats?.failed ?? 0;
@@ -1237,13 +2118,36 @@ export default function App() {
                       </tr>
                     );
                   })}
-                  {(rulesList || []).length === 0 && (
+                  {currentRulesPage.length === 0 && (
                     <tr>
                       <td colSpan="7" style={{ textAlign: 'center', padding: '24px' }}>No automation rules found.</td>
                     </tr>
                   )}
                 </tbody>
               </table>
+            </div>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderTop: '1px solid var(--border)' }}>
+              <div style={{ color: '#64748b', fontSize: '0.9rem' }}>Total: {rulesSafe.length}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={analyticsRulesPage === 1} 
+                  onClick={() => setAnalyticsRulesPage(p => Math.max(1, p - 1))}
+                  style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+                >
+                  Previous
+                </button>
+                <span style={{ fontWeight: 500, fontSize: '0.9rem' }}>Page {analyticsRulesPage} of {Math.ceil(rulesSafe.length / analyticsPageSize) || 1}</span>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={analyticsRulesPage >= Math.ceil(rulesSafe.length / analyticsPageSize)} 
+                  onClick={() => setAnalyticsRulesPage(p => p + 1)}
+                  style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1266,7 +2170,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(broadcasts || []).map((b, i) => {
+                  {currentBroadcastsPage.map((b, i) => {
                     const total = b.TotalQueued ?? b.totalQueued ?? b.TotalSent ?? b.totalSent ?? 0;
                     const s = b.Delivered ?? b.delivered ?? 0;
                     const f = b.Failed ?? b.failed ?? 0;
@@ -1293,13 +2197,35 @@ export default function App() {
                       </tr>
                     );
                   })}
-                  {(broadcasts || []).length === 0 && (
+                  {currentBroadcastsPage.length === 0 && (
                     <tr>
-                      <td colSpan="7" style={{ textAlign: 'center', padding: '24px' }}>No broadcasts sent yet.</td>
+                      <td colSpan="8" style={{ textAlign: 'center', padding: '24px' }}>No broadcast campaigns found.</td>
                     </tr>
                   )}
                 </tbody>
               </table>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderTop: '1px solid var(--border)' }}>
+              <div style={{ color: '#64748b', fontSize: '0.9rem' }}>Total: {broadcastsSafe.length}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={analyticsBroadcastsPage === 1} 
+                  onClick={() => setAnalyticsBroadcastsPage(p => Math.max(1, p - 1))}
+                  style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+                >
+                  Previous
+                </button>
+                <span style={{ fontWeight: 500, fontSize: '0.9rem' }}>Page {analyticsBroadcastsPage} of {Math.ceil(broadcastsSafe.length / analyticsPageSize) || 1}</span>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={analyticsBroadcastsPage >= Math.ceil(broadcastsSafe.length / analyticsPageSize)} 
+                  onClick={() => setAnalyticsBroadcastsPage(p => p + 1)}
+                  style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1603,18 +2529,292 @@ export default function App() {
                   {(broadcasts || []).length === 0 && <tr><td colSpan="6" style={{ textAlign: 'center', padding: '24px' }}>No broadcasts sent yet.</td></tr>}
                 </tbody>
               </table>
+              <div style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #e2e8f0' }}>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={bPage === 1} 
+                  onClick={() => setBPage(p => p - 1)}
+                  style={{ padding: '6px 12px' }}
+                >
+                  Previous
+                </button>
+                <span style={{ fontSize: '0.9em', color: '#64748b' }}>
+                  Page {bPage} of {Math.ceil(bTotal / bLimit) || 1}
+                </span>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={bPage >= Math.ceil(bTotal / bLimit) || bTotal === 0} 
+                  onClick={() => setBPage(p => p + 1)}
+                  style={{ padding: '6px 12px' }}
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
         </div>
       );
     }
 
+    if (activeTab === 'inbox') {
+      const handleSelectConversation = async (conv) => {
+        setSelectedConversation(conv);
+        setErrorReplyMessage('');
+        try {
+          const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conv.PhoneNumber || conv.phoneNumber)}/messages`);
+          if (res.ok) setChatMessages(await res.json());
+        } catch(e){}
+      };
+
+      const handleSendReplyMessage = async () => {
+        if (!replyText.trim() || !selectedConversation) return;
+        setIsSendingReply(true);
+        setErrorReplyMessage('');
+        const phone = selectedConversation.PhoneNumber || selectedConversation.phoneNumber;
+        try {
+          const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}/reply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ body: replyText })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setReplyText('');
+            // reload messages
+            const msgRes = await fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}/messages`);
+            if (msgRes.ok) setChatMessages(await msgRes.json());
+            fetchData();
+          } else {
+            setErrorReplyMessage(data.message || 'Failed to send reply.');
+          }
+        } catch(err) {
+          setErrorReplyMessage('Failed to connect to backend.');
+        } finally {
+          setIsSendingReply(false);
+        }
+      };
+
+      return (
+        <div className="card" style={{ display: 'flex', height: 'calc(100vh - 180px)', padding: 0, overflow: 'hidden' }}>
+          {/* Active Conversations Left Sidebar */}
+          <div style={{ width: '320px', borderRight: '1px solid var(--border-color, #eee)', display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-secondary, #f8fafc)' }}>
+            <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color, #eee)', fontWeight: 600, fontSize: '0.95em' }}>Conversations Inbox</div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {(conversations || []).length === 0 ? (
+                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary, #64748b)', fontSize: '0.85em' }}>No conversations yet. Send a test template to start!</div>
+              ) : (
+                (conversations || []).map(conv => {
+                  const phone = conv.PhoneNumber || conv.phoneNumber;
+                  const name = conv.FirstName || conv.firstName ? `${conv.FirstName || conv.firstName} ${conv.LastName || conv.lastName}` : phone;
+                  const isSelected = selectedConversation && (selectedConversation.PhoneNumber || selectedConversation.phoneNumber) === phone;
+                  const hasUnread = (conv.UnreadCount || conv.unreadCount || 0) > 0;
+                  return (
+                    <div 
+                      key={phone} 
+                      onClick={() => handleSelectConversation(conv)}
+                      style={{ 
+                        padding: '12px 16px', 
+                        borderBottom: '1px solid var(--border-color, #eee)', 
+                        cursor: 'pointer',
+                        backgroundColor: isSelected ? 'var(--primary-light, #eff6ff)' : 'transparent',
+                        transition: 'background-color 0.2s',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '4px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: hasUnread ? 'bold' : 500, fontSize: '0.9em', color: isSelected ? 'var(--primary, #3b82f6)' : 'inherit' }}>{name}</span>
+                        {hasUnread && <span style={{ backgroundColor: 'var(--primary, #3b82f6)', color: 'white', fontSize: '0.7em', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>New</span>}
+                      </div>
+                      <div style={{ fontSize: '0.75em', color: 'var(--text-secondary, #64748b)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {conv.LastMessageText || conv.lastMessageText || 'No messages'}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Conversation Chat Bubbles View */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#efeae2', backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")' }}>
+            {selectedConversation ? (
+              <>
+                {/* Chat Top bar */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#075e54', padding: '12px 20px', color: '#fff' }}>
+                  <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: '#ece5dd', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#075e54', fontWeight: 'bold' }}>
+                    {(selectedConversation.FirstName || selectedConversation.firstName || 'G').charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.9em' }}>{selectedConversation.FirstName || selectedConversation.firstName ? `${selectedConversation.FirstName || selectedConversation.firstName} ${selectedConversation.LastName || selectedConversation.lastName}` : (selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}</div>
+                    <div style={{ fontSize: '0.7em', opacity: 0.85 }}>WhatsApp conversation</div>
+                  </div>
+                </div>
+
+                {/* Messages scroll section */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {chatMessages.map((msg, index) => {
+                    const isGuest = msg.Sender === 'Guest' || msg.sender === 'Guest';
+                    return (
+                      <div key={msg.Id || msg.id || index} style={{ display: 'flex', justifyContent: isGuest ? 'flex-start' : 'flex-end' }}>
+                        <div style={{ 
+                          backgroundColor: isGuest ? '#ffffff' : '#d9fdd3', 
+                          padding: '8px 12px', 
+                          borderRadius: '8px', 
+                          boxShadow: '0 1px 0.5px rgba(0,0,0,0.13)', 
+                          maxWidth: '75%', 
+                          fontSize: '0.85em', 
+                          wordBreak: 'break-word' 
+                        }}>
+                          <div>{msg.Content || msg.content}</div>
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '0.65em', color: '#8696a0', marginTop: '4px' }}>
+                            {new Date(msg.SentAt || msg.sentAt).toLocaleString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Meta Window and Error alerts */}
+                {errorReplyMessage && (
+                  <div style={{ margin: '8px 16px 0 16px', padding: '10px', backgroundColor: '#fef2f2', border: '1px solid #fee2e2', borderRadius: '6px', fontSize: '0.8em', color: '#ef4444' }}>
+                    <strong>Warning:</strong> {errorReplyMessage}
+                  </div>
+                )}
+
+                {/* Reply Footer Input Area */}
+                <div style={{ padding: '12px 16px', backgroundColor: '#f0f2f5', display: 'flex', gap: '12px', alignItems: 'center', borderTop: '1px solid var(--border-color, #eee)' }}>
+                  <input 
+                    type="text" 
+                    className="input" 
+                    placeholder="Type message reply..." 
+                    value={replyText} 
+                    onChange={e => setReplyText(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleSendReplyMessage();
+                    }}
+                    style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #ccc', backgroundColor: '#fff', color: '#000' }}
+                  />
+
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={handleSendReplyMessage} 
+                    disabled={isSendingReply || !replyText.trim()}
+                    style={{ padding: '10px 16px' }}
+                  >
+                    <Send size={16} />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', color: 'var(--text-secondary, #64748b)' }}>
+                <MessagesSquare size={48} style={{ marginBottom: '16px' }} />
+                <h3>Select a conversation to reply</h3>
+                <p style={{ fontSize: '0.85em' }}>Double-click any chat to retrieve thread history.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (activeTab === 'analytics') {
+      const successRate = analyticsData.TotalTriggered > 0 ? (((analyticsData.Delivered + analyticsData.Sent + analyticsData.Read) / (analyticsData.TotalTriggered || 1)) * 100).toFixed(1) : '100.0';
+
+      return (
+        <div>
+          {/* Card Widgets */}
+          <div style={{ display: 'flex', gap: '20px', marginBottom: '32px' }}>
+            <div className="card" style={{ flex: 1, borderLeft: '4px solid #3b82f6', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ color: 'var(--text-secondary, #64748b)', fontSize: '0.8rem', fontWeight: 600 }}>TOTAL DISPATCHED</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{analyticsData.TotalTriggered}</div>
+            </div>
+            <div className="card" style={{ flex: 1, borderLeft: '4px solid #10b981', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ color: '#10b981', fontSize: '0.8rem', fontWeight: 600 }}>SUCCESS DELIVERED</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#10b981' }}>{analyticsData.Delivered + analyticsData.Sent + analyticsData.Read}</div>
+            </div>
+            <div className="card" style={{ flex: 1, borderLeft: '4px solid #ef4444', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ color: '#ef4444', fontSize: '0.8rem', fontWeight: 600 }}>FAILED OUTBOX</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#ef4444' }}>{analyticsData.Failed}</div>
+            </div>
+            <div className="card" style={{ flex: 1, borderLeft: '4px solid #eab308', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ color: '#eab308', fontSize: '0.8rem', fontWeight: 600 }}>OVERALL SUCCESS RATE</div>
+              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#eab308' }}>{successRate}%</div>
+            </div>
+          </div>
+
+          {/* Delivery trends progress visualization */}
+          <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
+            <div className="card" style={{ flex: 1.5 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 className="card-title" style={{ margin: 0 }}>Delivery Trends (Last 7 Days)</h3>
+                <a 
+                  href={`${API_BASE}/analytics/export`} 
+                  download="MessageReport.csv"
+                  className="btn btn-secondary" 
+                  style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.85em', padding: '6px 12px' }}
+                >
+                  📥 Export CSV Report
+                </a>
+              </div>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {(deliveryTrends || []).length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary, #64748b)' }}>No historical delivery data found.</div>
+                ) : (
+                  (deliveryTrends || []).map((t, idx) => {
+                    const total = (t.Success || 0) + (t.Failed || 0);
+                    const rate = total > 0 ? ((t.Success / total) * 100).toFixed(1) : 100;
+                    return (
+                      <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85em', fontWeight: 500 }}>
+                          <span>{t.Day || t.day}</span>
+                          <span style={{ color: 'var(--text-secondary, #64748b)' }}>{t.Success} Sent / {t.Failed} Failed ({rate}%)</span>
+                        </div>
+                        <div style={{ width: '100%', height: '8px', backgroundColor: '#fee2e2', borderRadius: '4px', overflow: 'hidden', display: 'flex' }}>
+                          <div style={{ width: `${rate}%`, height: '100%', backgroundColor: '#10b981' }}></div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            
+            {/* Inbox widget snippet */}
+            <div className="card" style={{ flex: 1 }}>
+              <h3 className="card-title">Replies Ratio</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100%', padding: '20px 0', gap: '12px' }}>
+                <div style={{ fontSize: '48px', fontWeight: 'bold', color: 'var(--primary)' }}>
+                  {analyticsData.IncomingReplies}
+                </div>
+                <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                  Total incoming text responses received from guests in the Two-way Inbox.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (activeTab === 'manual-checkin') {
+      return <ManualCheckIn />;
+    }
+
+    if (activeTab === 'manual-checkout') {
+      return <ManualCheckOut />;
+    }
+
     return null;
   };
 
   return (
-    <div className="app-container">
-      <aside className="sidebar">
+    <div className="app-container" style={{ display: 'flex' }}>
+      <aside className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
         <div className="sidebar-header">
           <Hotel color="var(--primary)" /> HotelAuto
         </div>
@@ -1622,17 +2822,20 @@ export default function App() {
           <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
             <LayoutDashboard size={20} /> Dashboard
           </div>
+          <div className={`nav-item ${activeTab === 'inbox' ? 'active' : ''}`} onClick={() => setActiveTab('inbox')}>
+            <MessagesSquare size={20} /> Two-Way Inbox
+          </div>
           <div className={`nav-item ${activeTab === 'contacts' ? 'active' : ''}`} onClick={() => setActiveTab('contacts')}>
             <Users size={20} /> Contacts
           </div>
           <div className={`nav-item ${activeTab === 'templates' ? 'active' : ''}`} onClick={() => setActiveTab('templates')}>
-            <MessagesSquare size={20} /> Templates
+            <FileText size={20} /> Templates
           </div>
           <div className={`nav-item ${activeTab === 'broadcasts' ? 'active' : ''}`} onClick={() => setActiveTab('broadcasts')}>
             <Megaphone size={20} /> Broadcasts
           </div>
           <div className={`nav-item ${activeTab === 'rules' ? 'active' : ''}`} onClick={() => setActiveTab('rules')}>
-            <Workflow size={20} /> Automation Rules
+            <Workflow size={20} /> Automation
           </div>
           <div className={`nav-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
             <BarChart2 size={20} /> Analytics
@@ -1643,13 +2846,23 @@ export default function App() {
           <div className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}>
             <ScrollText size={20} /> Event Logs
           </div>
+          <div className="sidebar-divider" style={{ margin: '8px 16px', borderBottom: '1px solid var(--border)' }}></div>
+          <div className={`nav-item ${activeTab === 'manual-checkin' ? 'active' : ''}`} onClick={() => setActiveTab('manual-checkin')}>
+            <Hotel size={20} /> Manual Check-In
+          </div>
+          <div className={`nav-item ${activeTab === 'manual-checkout' ? 'active' : ''}`} onClick={() => setActiveTab('manual-checkout')}>
+            <CheckCircle2 size={20} /> Manual Check-Out
+          </div>
         </nav>
       </aside>
 
-      <main className="main-content">
+      <main className="main-content" style={{ flex: 1, overflowX: 'hidden', transition: 'margin-left 0.3s ease' }}>
         <header className="topbar">
-          <div className="topbar-title">
-            {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+          <div className="topbar-title" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => setSidebarOpen(!sidebarOpen)}>
+              <Menu size={20} />
+            </button>
+            {activeTab === 'rules' ? 'Automation' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
           </div>
         </header>
 

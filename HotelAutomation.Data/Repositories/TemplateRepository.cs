@@ -24,12 +24,26 @@ public sealed class TemplateRepository : ITemplateRepository
         return results.AsList();
     }
 
+    public async Task<(IReadOnlyList<MessageTemplate> Templates, int TotalCount)> GetAllPaginatedAsync(int page = 1, int limit = 50, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        
+        var total = await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM MessageTemplates");
+        
+        var offset = (page - 1) * limit;
+        var results = await conn.QueryAsync<MessageTemplate>(
+            "SELECT * FROM MessageTemplates ORDER BY CreatedAt DESC LIMIT @Limit OFFSET @Offset", 
+            new { Limit = limit, Offset = offset });
+            
+        return (results.AsList(), total);
+    }
+
     public async Task<int> AddAsync(MessageTemplate template, CancellationToken ct = default)
     {
         await using var conn = await _factory.OpenAsync(ct);
         var sql = @"
-            INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, BodyParamCount, Category, CreatedAt)
-            VALUES (@Name, @ExternalTemplateName, @LanguageCode, @ChannelType, @BodyParamCount, @Category, @CreatedAt);
+            INSERT INTO MessageTemplates (Name, ExternalTemplateName, LanguageCode, ChannelType, BodyParamCount, Category, HeaderType, BodyText, HeaderText, ParameterDefinitionsJson, CreatedAt)
+            VALUES (@Name, @ExternalTemplateName, @LanguageCode, @ChannelType, @BodyParamCount, @Category, @HeaderType, @BodyText, @HeaderText, @ParameterDefinitionsJson, @CreatedAt);
             SELECT last_insert_rowid();";
         
         return await conn.ExecuteScalarAsync<int>(sql, new
@@ -40,6 +54,10 @@ public sealed class TemplateRepository : ITemplateRepository
             template.ChannelType,
             template.BodyParamCount,
             template.Category,
+            template.HeaderType,
+            template.BodyText,
+            template.HeaderText,
+            template.ParameterDefinitionsJson,
             CreatedAt = DateTimeOffset.UtcNow.ToString("O")
         });
     }
@@ -49,7 +67,7 @@ public sealed class TemplateRepository : ITemplateRepository
         await using var conn = await _factory.OpenAsync(ct);
         var sql = @"
             UPDATE MessageTemplates 
-            SET Name = @Name, ExternalTemplateName = @ExternalTemplateName, LanguageCode = @LanguageCode, ChannelType = @ChannelType, BodyParamCount = @BodyParamCount, Category = @Category
+            SET Name = @Name, ExternalTemplateName = @ExternalTemplateName, LanguageCode = @LanguageCode, ChannelType = @ChannelType, BodyParamCount = @BodyParamCount, Category = @Category, HeaderType = @HeaderType, BodyText = @BodyText, HeaderText = @HeaderText, ParameterDefinitionsJson = @ParameterDefinitionsJson
             WHERE Id = @id";
         
         var rows = await conn.ExecuteAsync(sql, new
@@ -60,7 +78,11 @@ public sealed class TemplateRepository : ITemplateRepository
             template.LanguageCode,
             template.ChannelType,
             template.BodyParamCount,
-            template.Category
+            template.Category,
+            template.HeaderType,
+            template.BodyText,
+            template.HeaderText,
+            template.ParameterDefinitionsJson
         });
         return rows > 0;
     }

@@ -15,11 +15,13 @@ public class DateTriggerProcessor : BackgroundService
 {
     private readonly SqliteConnectionFactory _factory;
     private readonly ILogger<DateTriggerProcessor> _logger;
+    private readonly Services.VariantSelector _variantSelector;
 
-    public DateTriggerProcessor(SqliteConnectionFactory factory, ILogger<DateTriggerProcessor> logger)
+    public DateTriggerProcessor(SqliteConnectionFactory factory, ILogger<DateTriggerProcessor> logger, Services.VariantSelector variantSelector)
     {
         _factory = factory;
         _logger = logger;
+        _variantSelector = variantSelector;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -41,7 +43,14 @@ public class DateTriggerProcessor : BackgroundService
             // but in production it's usually daily. To make it demo-friendly, we'll check every 1 hour, 
             // but ensure we only queue things once per day by recording the execution date in Outbox logic.
             // For simplicity, we just delay 24 hours.
-            await Task.Delay(TimeSpan.FromHours(24), stoppingToken);
+            try
+            {
+                await Task.Delay(TimeSpan.FromHours(24), stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
         }
     }
 
@@ -58,16 +67,29 @@ public class DateTriggerProcessor : BackgroundService
         var contacts = await conn.QueryAsync("SELECT PhoneNumber, FirstName, LastName, CustomFieldsJson FROM Contacts");
         var contactList = contacts.AsList();
         
-        // 3. Fetch unsubscribed contacts for quick lookup
-        var unsubbedList = await conn.QueryAsync<string>("SELECT PhoneNumber FROM UnsubscribedContacts");
-        var unsubbed = unsubbedList.ToHashSet();
+        // 3. Fetch category-level unsubscribed contacts for quick lookup
+        // We will store a dictionary of PhoneNumber -> HashSet<CategoryId> for opted-out categories
+        var unsubQuery = @"
+            SELECT c.PhoneNumber, cc.CategoryId 
+            FROM ContactConsent cc
+            JOIN Contacts c ON c.Id = cc.ContactId
+            WHERE cc.IsSubscribed = 0";
+        var unsubData = await conn.QueryAsync(unsubQuery);
+        var unsubbed = new Dictionary<string, HashSet<long>>();
+        foreach (var u in unsubData)
+        {
+            var phone = (string)u.PhoneNumber;
+            var catId = (long)u.CategoryId;
+            if (!unsubbed.ContainsKey(phone)) unsubbed[phone] = new HashSet<long>();
+            unsubbed[phone].Add(catId);
+        }
 
         var today = DateTime.UtcNow.Date;
 
         foreach (var rule in ruleList)
         {
-            var templateCategory = await conn.QueryFirstOrDefaultAsync<string>(
-                "SELECT Category FROM MessageTemplates WHERE Id = @id", new { id = rule.TemplateId });
+            var templateInfo = await conn.QueryFirstOrDefaultAsync(
+                "SELECT Category, CategoryId FROM MessageTemplates t LEFT JOIN ContactCategories c ON c.Name = t.Category WHERE t.Id = @id", new { id = rule.TemplateId });
 
             if (string.IsNullOrWhiteSpace(rule.ConditionsJson)) continue;
             
@@ -107,7 +129,22 @@ public class DateTriggerProcessor : BackgroundService
                 var phone = (string)(contact.PhoneNumber ?? "");
                 if (string.IsNullOrWhiteSpace(phone)) continue;
 
-                if (templateCategory == "Marketing" && unsubbed.Contains(phone)) continue;
+                if (templateInfo != null)
+                {
+                    string? category = templateInfo.Category as string;
+                    if (category != "Utility")
+                    {
+                        var catIdObj = templateInfo.CategoryId;
+                        if (catIdObj != null)
+                        {
+                            var catId = (long)catIdObj;
+                            if (unsubbed.ContainsKey(phone) && unsubbed[phone].Contains(catId))
+                            {
+                                continue; // User unsubscribed from this category
+                            }
+                        }
+                    }
+                }
 
                 var customJson = (string)(contact.CustomFieldsJson ?? "{}");
                 Dictionary<string, object> fields;
@@ -168,13 +205,15 @@ public class DateTriggerProcessor : BackgroundService
                         foreach (var kv in fields) baseParams[kv.Key] = kv.Value;
 
                         var parametersJson = JsonSerializer.Serialize(baseParams);
+                        var variantId = await _variantSelector.SelectVariantIdAsync(rule.TemplateId);
 
                         await conn.ExecuteAsync(@"
-                            INSERT INTO OutboxMessages (ToPhoneNumber, TemplateId, ParametersJson, Status, RetryCount, CreatedAt, RuleId)
-                            VALUES (@ToPhoneNumber, @TemplateId, @ParametersJson, 'Pending', 0, @CreatedAt, @RuleId)", new
+                            INSERT INTO OutboxMessages (ToPhoneNumber, TemplateId, VariantId, ParametersJson, Status, RetryCount, CreatedAt, RuleId)
+                            VALUES (@ToPhoneNumber, @TemplateId, @VariantId, @ParametersJson, 'Pending', 0, @CreatedAt, @RuleId)", new
                         {
                             ToPhoneNumber = phone,
                             TemplateId = rule.TemplateId,
+                            VariantId = variantId,
                             ParametersJson = parametersJson,
                             CreatedAt = DateTimeOffset.UtcNow.ToString("O"),
                             RuleId = rule.Id

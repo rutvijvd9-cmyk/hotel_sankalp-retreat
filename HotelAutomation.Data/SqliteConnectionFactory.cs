@@ -143,6 +143,40 @@ public sealed class SqliteConnectionFactory
         }
         catch { }
 
+        // Template HeaderType migration
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE MessageTemplates ADD COLUMN HeaderType TEXT NOT NULL DEFAULT 'None';";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // Template BodyText and ParameterDefinitionsJson migration
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE MessageTemplates ADD COLUMN BodyText TEXT NULL;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE MessageTemplates ADD COLUMN ParameterDefinitionsJson TEXT NOT NULL DEFAULT '[]';";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            command.CommandText = "ALTER TABLE MessageTemplates ADD COLUMN HeaderText TEXT NULL;";
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
         // UnsubscribedContacts table
         try
         {
@@ -153,6 +187,155 @@ public sealed class SqliteConnectionFactory
                     UnsubscribedAt TEXT NOT NULL,
                     Source TEXT NOT NULL
                 );";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // ConversationReplies table
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS ConversationReplies (
+                    Id TEXT PRIMARY KEY,
+                    PhoneNumber TEXT NOT NULL,
+                    Sender TEXT NOT NULL,
+                    Content TEXT NOT NULL,
+                    SentAt TEXT NOT NULL
+                );";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // ShortenedLinks table for Click Tracking
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS ShortenedLinks (
+                    ShortCode TEXT PRIMARY KEY,
+                    OriginalUrl TEXT NOT NULL,
+                    OutboxMessageId INTEGER NOT NULL REFERENCES OutboxMessages(Id),
+                    ClickedCount INTEGER NOT NULL DEFAULT 0,
+                    FirstClickedAt TEXT NULL,
+                    LastClickedAt TEXT NULL
+                );";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // Campaigns.IsEnabled migration
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE Campaigns ADD COLUMN IsEnabled INTEGER NOT NULL DEFAULT 1;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // OutboxMessages.VariantId migration
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE OutboxMessages ADD COLUMN VariantId INTEGER REFERENCES TemplateVariants(Id);";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // OutboxMessages.ErrorMessage migration
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE OutboxMessages ADD COLUMN ErrorMessage TEXT NULL;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // ContactConsent table migration
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS ContactConsent (
+                    ContactId INTEGER NOT NULL REFERENCES Contacts(Id),
+                    CategoryId INTEGER NOT NULL REFERENCES ContactCategories(Id),
+                    IsSubscribed INTEGER NOT NULL DEFAULT 1,
+                    UpdatedAt TEXT NOT NULL,
+                    PRIMARY KEY (ContactId, CategoryId)
+                );";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // PmsMappings table migration
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS PmsMappings (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    PmsSystemName TEXT NOT NULL,
+                    JsonPathMapping TEXT NOT NULL,
+                    CreatedAt TEXT NOT NULL
+                );";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // TemplateVariants table migration
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS TemplateVariants (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    TemplateId INTEGER NOT NULL REFERENCES MessageTemplates(Id),
+                    VariantName TEXT NOT NULL,
+                    Body TEXT NOT NULL,
+                    Weight INTEGER NOT NULL DEFAULT 50,
+                    CreatedAt TEXT NOT NULL
+                );";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // Contacts UpdatedAt and UpdateCount migrations
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE Contacts ADD COLUMN UpdatedAt TEXT NOT NULL DEFAULT (datetime('now'));";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE Contacts ADD COLUMN UpdateCount INTEGER NOT NULL DEFAULT 0;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE Contacts ADD COLUMN CheckInCount INTEGER NOT NULL DEFAULT 0;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE Contacts ADD COLUMN AverageStayDays REAL NOT NULL DEFAULT 0;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE Contacts ADD COLUMN IsVip INTEGER NOT NULL DEFAULT 0;";
             await migCmd.ExecuteNonQueryAsync(ct);
         }
         catch { }

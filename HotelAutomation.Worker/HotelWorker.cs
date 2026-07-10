@@ -18,6 +18,7 @@ public sealed class HotelWorker : BackgroundService
     private readonly JobRepository _jobRepository;
     private readonly UnsubscribedContactRepository _unsubRepo;
     private readonly ILogger<HotelWorker> _logger;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     public HotelWorker(
         IPmsEventSource pmsSource,
@@ -27,7 +28,8 @@ public sealed class HotelWorker : BackgroundService
         EventLogRepository eventLog,
         JobRepository jobRepository,
         UnsubscribedContactRepository unsubRepo,
-        ILogger<HotelWorker> logger)
+        ILogger<HotelWorker> logger,
+        IServiceScopeFactory scopeFactory)
     {
         _pmsSource = pmsSource;
         _ruleRepository = ruleRepository;
@@ -37,6 +39,7 @@ public sealed class HotelWorker : BackgroundService
         _jobRepository = jobRepository;
         _unsubRepo = unsubRepo;
         _logger = logger;
+        _scopeFactory = scopeFactory;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -71,40 +74,84 @@ public sealed class HotelWorker : BackgroundService
 
             var (matchedTemplate, matchedRule) = match.Value;
 
-            // Stop Marketing messages if the user is unsubscribed
-            if (matchedTemplate.Category == "Marketing")
+            // Stop Marketing messages if the user is unsubscribed from the category
+            // We need to look up the CategoryId based on matchedTemplate.Category
+            // And then look up the ContactId based on pmsEvent.PhoneNumber
+            // To keep things decentralized, we use the DI injected repositories
+            if (matchedTemplate.Category != "Utility")
             {
-                var isUnsub = await _unsubRepo.IsUnsubscribedAsync(pmsEvent.PhoneNumber);
-                if (isUnsub)
+                using var scope = _logger.BeginScope("Category Check");
+                var contactRepo = _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<ContactRepository>();
+                var categoryRepo = _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<CategoryRepository>();
+                var consentRepo = _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<ContactConsentRepository>();
+                
+                var contact = await contactRepo.GetByPhoneNumberAsync(pmsEvent.PhoneNumber);
+                if (contact != null)
                 {
-                    _logger.LogInformation("Skipping marketing automation {RuleId} for {Phone} because user is unsubscribed.", matchedRule.Id, pmsEvent.PhoneNumber);
-                    return;
+                    var categories = await categoryRepo.GetAllAsync();
+                    var category = categories.FirstOrDefault(c => c.Name == matchedTemplate.Category);
+                    if (category != null)
+                    {
+                        var isSubscribed = await consentRepo.IsSubscribedAsync(contact.Id, category.Id);
+                        if (!isSubscribed)
+                        {
+                            _logger.LogInformation("Skipping {Category} automation {RuleId} for {Phone} because user opted out.", matchedTemplate.Category, matchedRule.Id, pmsEvent.PhoneNumber);
+                            return;
+                        }
+                    }
                 }
+            }
+
+            // Build the ParametersJson dictionary
+            var paramDict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            
+            // Core guest info
+            var guestName = pmsEvent.GuestName?.Trim() ?? "";
+            paramDict["Name"] = guestName;
+            
+            var nameParts = guestName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var firstName = nameParts.Length > 0 ? nameParts[0] : "";
+            var lastName = nameParts.Length > 1 ? string.Join(" ", nameParts.Skip(1)) : "";
+            paramDict["First Name"] = firstName;
+            paramDict["FirstName"] = firstName;
+            paramDict["Last Name"] = lastName;
+            paramDict["LastName"] = lastName;
+            
+            paramDict["Room"] = pmsEvent.RoomNumber ?? "";
+            paramDict["Amount"] = pmsEvent.Amount?.ToString("N2") ?? "0.00";
+            paramDict["HotelName"] = pmsEvent.HotelName ?? "Sankalp Retreat";
+            paramDict["CheckInDate"] = pmsEvent.CheckInDate ?? DateTimeOffset.UtcNow.ToString("d MMM yyyy");
+            paramDict["CheckOutDate"] = pmsEvent.CheckOutDate ?? DateTimeOffset.UtcNow.AddDays(1).ToString("d MMM yyyy");
+            paramDict["WifiPassword"] = pmsEvent.WifiPassword ?? "SankalpGuest@2026";
+            paramDict["BookingReference"] = pmsEvent.BookingReference ?? $"BK-{DateTimeOffset.UtcNow:yyyyMMdd}-{pmsEvent.RoomNumber}";
+            paramDict["FeedbackLink"] = pmsEvent.GuestFeedbackLink ?? "https://g.page/sankalp-retreat/review";
+            paramDict["ExtraNote"] = pmsEvent.ExtraNote ?? string.Empty;
+            paramDict["Greeting"] = SpintaxParser.Parse("{Hi|Hello|Namaste} ");
+
+            // Merge dynamic keys from RawPayload
+            if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
+            {
+                try
+                {
+                    var rawDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(pmsEvent.RawPayload);
+                    if (rawDict != null)
+                    {
+                        foreach (var kv in rawDict)
+                        {
+                            paramDict[kv.Key] = kv.Value.ToString() ?? "";
+                        }
+                    }
+                }
+                catch { }
             }
 
             // Enqueue into ScheduledJobs to support Drip Campaigns (Phase 1)
             var job = new ScheduledJob
             {
-                GuestName = pmsEvent.GuestName,
-                PhoneNumber = pmsEvent.PhoneNumber,
+                GuestName = pmsEvent.GuestName ?? "",
+                PhoneNumber = pmsEvent.PhoneNumber ?? "",
                 TemplateId = matchedTemplate.Id,
-                ParametersJson = System.Text.Json.JsonSerializer.Serialize(new 
-                { 
-                    // Core guest info
-                    Name = pmsEvent.GuestName,
-                    Room = pmsEvent.RoomNumber, 
-                    Amount = pmsEvent.Amount?.ToString("N2") ?? "0.00",
-                    HotelName = pmsEvent.HotelName ?? "Sankalp Retreat",
-                    // Rich check-in/out fields
-                    CheckInDate = pmsEvent.CheckInDate ?? DateTimeOffset.UtcNow.ToString("d MMM yyyy"),
-                    CheckOutDate = pmsEvent.CheckOutDate ?? DateTimeOffset.UtcNow.AddDays(1).ToString("d MMM yyyy"),
-                    WifiPassword = pmsEvent.WifiPassword ?? "SankalpGuest@2026",
-                    BookingReference = pmsEvent.BookingReference ?? $"BK-{DateTimeOffset.UtcNow:yyyyMMdd}-{pmsEvent.RoomNumber}",
-                    FeedbackLink = pmsEvent.GuestFeedbackLink ?? "https://g.page/sankalp-retreat/review",
-                    ExtraNote = pmsEvent.ExtraNote ?? string.Empty,
-                    // Greeting with spintax for variety
-                    Greeting = SpintaxParser.Parse("{Hi|Hello|Namaste} ")
-                }),
+                ParametersJson = System.Text.Json.JsonSerializer.Serialize(paramDict),
                 TriggerTime = DateTimeOffset.UtcNow.AddMinutes(matchedRule.DelayMinutes),
                 Status = "Pending",
                 RuleId = matchedRule.Id

@@ -1,6 +1,7 @@
 namespace HotelAutomation.Worker;
 
 using HotelAutomation.Core.Interfaces;
+using HotelAutomation.Worker.Services;
 using Microsoft.Extensions.Options;
 
 /// <summary>
@@ -13,6 +14,7 @@ public sealed class OutboxProcessor : BackgroundService
     private readonly IOutboxRepository _outboxRepository;
     private readonly ITemplateRepository _templateRepository;
     private readonly IEnumerable<IMessageChannel> _messageChannels;
+    private readonly LinkShortenerService _linkShortenerService;
     private readonly ILogger<OutboxProcessor> _logger;
     private readonly int _intervalSeconds;
     private readonly int _batchSize;
@@ -22,12 +24,14 @@ public sealed class OutboxProcessor : BackgroundService
         IOutboxRepository outboxRepository,
         ITemplateRepository templateRepository,
         IEnumerable<IMessageChannel> messageChannels,
+        LinkShortenerService linkShortenerService,
         IConfiguration configuration,
         ILogger<OutboxProcessor> logger)
     {
         _outboxRepository = outboxRepository;
         _templateRepository = templateRepository;
         _messageChannels = messageChannels;
+        _linkShortenerService = linkShortenerService;
         _logger = logger;
         _intervalSeconds = configuration.GetValue("OutboxProcessor:IntervalSeconds", 5);
         _batchSize = configuration.GetValue("OutboxProcessor:BatchSize", 10);
@@ -64,12 +68,6 @@ public sealed class OutboxProcessor : BackgroundService
                     continue;
                 }
 
-                // If this is a fallback message, the template.ChannelType might be WhatsApp, but we want to use the fallback channel.
-                // Wait, if it failed on WhatsApp, we create a NEW OutboxMessage with the SAME template but we need to track it's a fallback!
-                // A cleaner way: If OutboxMessage fails max retries, we just change its Status to "Failed" and enqueue a NEW OutboxMessage with the Fallback Channel if it exists.
-                // But OutboxMessage doesn't have a Channel property; it infers from Template. 
-                // To properly support this, we would need to add Fallback support directly.
-                // Since this is a test, let's keep it simple: we try to find the channel for the template.
                 var channelType = template.ChannelType;
 
                 var channel = _messageChannels.FirstOrDefault(c => c.ChannelType == channelType);
@@ -80,22 +78,39 @@ public sealed class OutboxProcessor : BackgroundService
                     continue;
                 }
 
-                var (success, externalId, failureReason) = await channel.SendAsync(message, ct);
+                var messageToProcess = message;
+
+                // --- URL SHORTENING INTERCEPTION ---
+                try 
+                {
+                    var paramDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(messageToProcess.ParametersJson ?? "{}");
+                    if (paramDict != null && paramDict.Count > 0)
+                    {
+                        var shortened = await _linkShortenerService.ShortenLinksInParametersAsync(messageToProcess.Id, paramDict, ct);
+                        messageToProcess = messageToProcess with { ParametersJson = System.Text.Json.JsonSerializer.Serialize(shortened) };
+                    }
+                } 
+                catch (Exception ex) 
+                {
+                    _logger.LogWarning(ex, "Failed to shorten links for message {Id}. Proceeding with original parameters.", messageToProcess.Id);
+                }
+
+                var (success, externalId, failureReason) = await channel.SendAsync(messageToProcess, ct);
 
                 if (success)
                 {
                     await _outboxRepository.UpdateStatusAsync(
-                        message.Id, "Sent", message.RetryCount, DateTimeOffset.UtcNow, externalId, null, ct);
-                    _logger.LogInformation("OutboxMessage {Id} → Sent via {Channel}", message.Id, channelType);
+                        messageToProcess.Id, "Sent", messageToProcess.RetryCount, DateTimeOffset.UtcNow, externalId, null, ct);
+                    _logger.LogInformation("OutboxMessage {Id} → Sent via {Channel}", messageToProcess.Id, channelType);
                 }
                 else
                 {
-                    var newRetryCount = message.RetryCount + 1;
+                    var newRetryCount = messageToProcess.RetryCount + 1;
                     
                     if (newRetryCount >= _maxRetries)
                     {
-                        await _outboxRepository.UpdateStatusAsync(message.Id, "Failed", newRetryCount, null, null, failureReason, ct);
-                        _logger.LogWarning("OutboxMessage {Id} failed permanently: {Reason}", message.Id, failureReason);
+                        await _outboxRepository.UpdateStatusAsync(messageToProcess.Id, "Failed", newRetryCount, null, null, failureReason, ct);
+                        _logger.LogWarning("OutboxMessage {Id} failed permanently: {Reason}", messageToProcess.Id, failureReason);
 
                         // FALLBACK LOGIC
                         if (!string.IsNullOrEmpty(template.FallbackChannelType))
