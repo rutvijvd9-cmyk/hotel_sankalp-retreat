@@ -108,9 +108,10 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
+    const pollInterval = activeTab === 'inbox' ? 1000 : 5000;
     const interval = setInterval(() => {
       fetchData();
-    }, 5000);
+    }, pollInterval);
     return () => clearInterval(interval);
   }, [activeTab, currentPage, pageSize, selectedCategory, bPage, analyticsPeriod]);
 
@@ -954,7 +955,7 @@ export default function App() {
                           onClick={() => {
                             let newKey = 'new_field';
                             let counter = 1;
-                            while(fields[newKey] !== undefined) {
+                            while(newKey in fields) {
                                 newKey = 'new_field_' + counter;
                                 counter++;
                             }
@@ -2349,7 +2350,7 @@ export default function App() {
                 {(Array.isArray(optOutsList) ? optOutsList : []).map(o => (
                   <tr key={o.PhoneNumber || o.phoneNumber}>
                     <td style={{ fontWeight: 600 }}>{o.PhoneNumber || o.phoneNumber}</td>
-                    <td>{o.FirstName || o.firstName ? `${o.FirstName || o.firstName} ${o.LastName || o.lastName}` : '-'}</td>
+                    <td>{o.FirstName || o.firstName ? `${o.FirstName || o.firstName} ${o.LastName && o.LastName !== 'undefined' ? o.LastName : (o.lastName && o.lastName !== 'undefined' ? o.lastName : '')}`.trim() : '-'}</td>
                     <td>{new Date(o.UnsubscribedAt || o.unsubscribedAt).toLocaleString()}</td>
                     <td><span className="badge badge-pending">{o.Source || o.source}</span></td>
                     <td style={{ textAlign: 'center' }}>
@@ -2606,7 +2607,7 @@ export default function App() {
                 (conversations || []).map(conv => {
                   const phone = conv.PhoneNumber || conv.phoneNumber;
                   const name = (conv.FirstName || conv.firstName) 
-                    ? `${conv.FirstName || conv.firstName} ${conv.LastName || conv.lastName || ''}`.trim() 
+                    ? `${conv.FirstName || conv.firstName} ${conv.LastName && conv.LastName !== 'undefined' ? conv.LastName : (conv.lastName && conv.lastName !== 'undefined' ? conv.lastName : '')}`.trim() 
                     : phone;
                   const isSelected = selectedConversation && (selectedConversation.PhoneNumber || selectedConversation.phoneNumber) === phone;
                   const hasUnread = (conv.UnreadCount || conv.unreadCount || 0) > 0;
@@ -2651,7 +2652,7 @@ export default function App() {
                   <div style={{ display: 'flex', flexDirection: 'column' }}>
                     <div style={{ fontWeight: 600, fontSize: '0.9em' }}>
                       {(selectedConversation.FirstName || selectedConversation.firstName)
-                        ? `${selectedConversation.FirstName || selectedConversation.firstName} ${selectedConversation.LastName || selectedConversation.lastName || ''}`.trim()
+                        ? `${selectedConversation.FirstName || selectedConversation.firstName} ${selectedConversation.LastName && selectedConversation.LastName !== 'undefined' ? selectedConversation.LastName : (selectedConversation.lastName && selectedConversation.lastName !== 'undefined' ? selectedConversation.lastName : '')}`.trim()
                         : (selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}
                     </div>
                     <div style={{ fontSize: '0.7em', opacity: 0.85 }}>{selectedConversation.PhoneNumber || selectedConversation.phoneNumber} • WhatsApp conversation</div>
