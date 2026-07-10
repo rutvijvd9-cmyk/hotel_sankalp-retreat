@@ -28,5 +28,8 @@ hotel_automation.db
 # User Secrets
 secrets.json
 
+# Build artifacts (React/Vite output copied by Worker build)
+HotelAutomation.Worker/wwwroot/
+
 # Mac
 .DS_Store

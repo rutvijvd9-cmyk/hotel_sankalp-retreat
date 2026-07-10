@@ -954,7 +954,7 @@ export default function App() {
                           onClick={() => {
                             let newKey = 'new_field';
                             let counter = 1;
-                            while(fields[newKey]) {
+                            while(fields[newKey] !== undefined) {
                                 newKey = 'new_field_' + counter;
                                 counter++;
                             }
