@@ -575,7 +575,7 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
       Description: ruleDescription,
       TriggerEventType: triggerType,
       TemplateId: parseInt(actionStep.templateId),
-      IsEnabled: true,
+      IsEnabled: false,
       ConditionsJson: conditionsJson,
       AudienceFilter: audienceFilterJson
     };

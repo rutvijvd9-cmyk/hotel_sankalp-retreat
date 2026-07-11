@@ -103,11 +103,20 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  const prevMessagesLengthRef = React.useRef(0);
+  const prevConversationRef = React.useRef(null);
+
   useEffect(() => {
-    if (chatMessages.length > 0) {
+    const isNewConversation = prevConversationRef.current !== selectedConversation;
+    const isNewMessage = chatMessages.length > prevMessagesLengthRef.current;
+    
+    if (chatMessages.length > 0 && (isNewConversation || isNewMessage)) {
       scrollToBottom();
     }
-  }, [chatMessages]);
+    
+    prevMessagesLengthRef.current = chatMessages.length;
+    prevConversationRef.current = selectedConversation;
+  }, [chatMessages, selectedConversation]);
 
   useEffect(() => {
     fetchData();
@@ -338,38 +347,6 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
-            <div className="card" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <h3 style={{ marginBottom: '8px' }}>PMS CheckOut Simulation</h3>
-                <p style={{ color: 'var(--text-secondary)' }}>Fires event for the given number. Starts the marketing drip campaign.</p>
-                <input 
-                  type="text" 
-                  value={testPhoneNumber} 
-                  onChange={e => setTestPhoneNumber(e.target.value)} 
-                  style={{ marginTop: '8px', padding: '8px', width: '200px', borderRadius: '4px', border: '1px solid #ccc', color: '#000' }} 
-                />
-              </div>
-              <button className="btn btn-primary" onClick={handleTestEvent} disabled={isFiring}>
-                <Send size={18} /> Trigger Event
-              </button>
-            </div>
-            
-            <div className="card" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <h3 style={{ marginBottom: '8px' }}>Analytics Webhook Simulator</h3>
-                <p style={{ color: 'var(--text-secondary)' }}>Simulates Meta sending Delivery/Read receipts.</p>
-              </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="btn btn-primary" onClick={() => handleSimulateWebhook('Delivered')} style={{ backgroundColor: '#10b981' }}>
-                  Simulate Delivered
-                </button>
-                <button className="btn btn-primary" onClick={() => handleSimulateWebhook('Read')} style={{ backgroundColor: '#3b82f6' }}>
-                  Simulate Read
-                </button>
-              </div>
-            </div>
-          </div>
 
           <div style={{ display: 'flex', gap: '24px' }}>
             <div className="card" style={{ flex: 1 }}>
@@ -2149,12 +2126,9 @@ export default function App() {
       const overallTriggered = analyticsData?.TotalTriggered || 0;
       const overallSent = (analyticsData?.Sent || 0) + (analyticsData?.Delivered || 0) + (analyticsData?.Read || 0);
       const overallFailed = analyticsData?.Failed || 0;
-      const successRate = overallTriggered > 0 ? ((overallSent / (overallSent + overallFailed || 1)) * 100).toFixed(1) : '100.0';
+      const successRate = overallTriggered > 0 ? ((overallSent / (overallSent + overallFailed || 1)) * 100).toFixed(1) : '0.0';
 
-      const overallRead = analyticsData?.Read || 0;
-      const overallClicked = analyticsData?.Clicked || 0;
-      const openRate = overallSent > 0 ? ((overallRead / overallSent) * 100).toFixed(1) : '0.0';
-      const clickRate = overallSent > 0 ? ((overallClicked / overallSent) * 100).toFixed(1) : '0.0';
+
 
       const analyticsPageSize = 10;
       const rulesSafe = rulesList || [];
@@ -2186,7 +2160,7 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '16px', marginBottom: '32px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
             <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #3b82f6' }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>OVERALL TRIGGERED</div>
               <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{overallTriggered}</div>
@@ -2202,16 +2176,6 @@ export default function App() {
             <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #eab308' }}>
               <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>DELIVERY SUCCESS RATE</div>
               <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#eab308' }}>{successRate}%</div>
-            </div>
-            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #8b5cf6' }}>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>OPEN RATE (READ %)</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#8b5cf6' }}>{openRate}%</div>
-              <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>{overallRead} read receipts</div>
-            </div>
-            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #f97316' }}>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>CLICK-THROUGH RATE (CTR %)</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#f97316' }}>{clickRate}%</div>
-              <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>{overallClicked} unique clicks</div>
             </div>
           </div>
 
@@ -2516,29 +2480,7 @@ export default function App() {
       );
     }
 
-    if (activeTab === 'logs') {
-      return (
-        <div className="card">
-          <h3 className="card-title">Event Logs</h3>
-          <div className="data-table-container">
-            <table className="data-table">
-              <thead><tr><th>Occurred At</th><th>Event Type</th><th>Payload</th></tr></thead>
-              <tbody>
-                {(Array.isArray(logs) ? logs : []).map(l => (
-                  <tr key={l.Id || l.id}>
-                    <td style={{ whiteSpace: 'nowrap' }}>{new Date(l.OccurredAt || l.occurredAt).toLocaleString()}</td>
-                    <td><span className="badge badge-delivered">{l.EventType || l.eventType}</span></td>
-                    <td style={{ fontFamily: 'monospace', fontSize: '0.85em', maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {l.RawPayloadJson || l.rawPayloadJson}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      );
-    }
+
 
     if (activeTab === 'broadcasts') {
       const handleSendBroadcast = async () => {
@@ -2960,7 +2902,7 @@ export default function App() {
     }
 
     if (activeTab === 'analytics') {
-      const successRate = analyticsData.TotalTriggered > 0 ? (((analyticsData.Delivered + analyticsData.Sent + analyticsData.Read) / (analyticsData.TotalTriggered || 1)) * 100).toFixed(1) : '100.0';
+      const successRate = analyticsData.TotalTriggered > 0 ? (((analyticsData.Delivered + analyticsData.Sent + analyticsData.Read) / (analyticsData.TotalTriggered || 1)) * 100).toFixed(1) : '0.0';
 
       return (
         <div>
@@ -3081,9 +3023,7 @@ export default function App() {
           <div className={`nav-item ${activeTab === 'optouts' ? 'active' : ''}`} onClick={() => setActiveTab('optouts')}>
             <UserX size={20} /> Opt-Outs
           </div>
-          <div className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}>
-            <ScrollText size={20} /> Event Logs
-          </div>
+
           <div className="sidebar-divider" style={{ margin: '8px 16px', borderBottom: '1px solid var(--border)' }}></div>
           <div className={`nav-item ${activeTab === 'manual-checkin' ? 'active' : ''}`} onClick={() => setActiveTab('manual-checkin')}>
             <Hotel size={20} /> Manual Check-In
