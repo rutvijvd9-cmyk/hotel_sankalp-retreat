@@ -2996,7 +2996,7 @@ export default function App() {
     <div className="app-container" style={{ display: 'flex' }}>
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
         <div className="sidebar-header">
-          <Hotel color="var(--primary)" /> HotelAuto
+          <img src="/logo.png" alt="HotelAuto Logo" style={{ width: '100%', maxHeight: '60px', objectFit: 'contain' }} />
         </div>
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 0' }}>
           <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
