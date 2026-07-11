@@ -103,7 +103,13 @@ public sealed class TemplateRepository : ITemplateRepository
         }
 
         // Check if used in Campaigns
-        var campaignName = await conn.QueryFirstOrDefaultAsync<string>("SELECT Name FROM Campaigns WHERE TemplateId = @id LIMIT 1", new { id });
+        var campaignName = await conn.QueryFirstOrDefaultAsync<string>(
+            @"SELECT c.Name 
+              FROM Campaigns c 
+              INNER JOIN CampaignSteps cs ON c.Id = cs.CampaignId 
+              WHERE cs.TemplateId = @id LIMIT 1", 
+            new { id });
+            
         if (!string.IsNullOrEmpty(campaignName))
         {
             throw new InvalidOperationException($"Cannot delete template because it is used in the campaign '{campaignName}'.");
@@ -116,15 +122,25 @@ public sealed class TemplateRepository : ITemplateRepository
             throw new InvalidOperationException("Cannot delete template because it is referenced by past or pending outbox messages.");
         }
 
+        // Also check if used in ScheduledJobs
+        var hasScheduled = await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM ScheduledJobs WHERE TemplateId = @id LIMIT 1", new { id }) > 0;
+        if (hasScheduled)
+        {
+            throw new InvalidOperationException("Cannot delete template because it is referenced by scheduled messages.");
+        }
+
         try
         {
+            // Automatically delete associated variants first to avoid foreign key constraint errors
+            await conn.ExecuteAsync("DELETE FROM TemplateVariants WHERE TemplateId = @id", new { id });
+            
             var sql = "DELETE FROM MessageTemplates WHERE Id = @id";
             var rows = await conn.ExecuteAsync(sql, new { id });
             return rows > 0;
         }
         catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 19)
         {
-            throw new InvalidOperationException("Cannot delete template because it is currently in use.");
+            throw new InvalidOperationException("Cannot delete template because it is currently in use by another part of the system.");
         }
     }
 }
