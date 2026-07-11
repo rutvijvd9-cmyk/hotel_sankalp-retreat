@@ -2,8 +2,10 @@ const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// In-memory queue to hold incoming webhook payloads until the local server polls them
-let webhookQueue = [];
+// Rolling history to hold incoming webhook payloads
+let webhookHistory = [];
+let nextMessageId = 1;
+const MAX_HISTORY = 500;
 
 app.use(express.json());
 
@@ -32,8 +34,11 @@ app.post('/api/webhooks/whatsapp', (req, res) => {
     
     // Validate that it's a WhatsApp webhook
     if (body.object === 'whatsapp_business_account') {
-        console.log(`Received payload with ${body.entry?.length || 0} entries. Queue size: ${webhookQueue.length + 1}`);
-        webhookQueue.push(body);
+        console.log(`Received payload with ${body.entry?.length || 0} entries.`);
+        webhookHistory.push({ id: nextMessageId++, payload: body });
+        if (webhookHistory.length > MAX_HISTORY) {
+            webhookHistory.shift(); // Keep only the last MAX_HISTORY items
+        }
         return res.status(200).send('EVENT_RECEIVED');
     }
     
@@ -42,11 +47,12 @@ app.post('/api/webhooks/whatsapp', (req, res) => {
 
 // 3. Endpoint for the local PC to poll and retrieve the queued webhooks
 app.get('/api/webhooks/poll', (req, res) => {
-    // Return the current queue and atomically clear it
-    const currentQueue = webhookQueue;
-    webhookQueue = [];
+    const lastId = parseInt(req.query.last_id || '0', 10);
     
-    res.json(currentQueue);
+    // Return all messages strictly newer than the requested last_id
+    const newMessages = webhookHistory.filter(msg => msg.id > lastId);
+    
+    res.json(newMessages);
 });
 
 // Simple health check for Render dashboard

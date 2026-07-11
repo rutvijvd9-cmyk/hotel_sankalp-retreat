@@ -15,6 +15,8 @@ public class WebhookRelayPoller : BackgroundService
     private readonly IConfiguration _config;
     private DateTime _lastPingTime = DateTime.MinValue;
     
+    private int _lastSeenId = 0;
+
     // Default to the Render app URL if provided via config
     private string RelayUrl => _config["WebhookRelay:Url"] ?? "https://hotel-sankalp-retreat.onrender.com";
     
@@ -41,36 +43,42 @@ public class WebhookRelayPoller : BackgroundService
                 using var client = _httpClientFactory.CreateClient();
                 client.Timeout = TimeSpan.FromSeconds(30);
                 
-                // 1. Fetch queued webhooks from Render
-                var response = await client.GetAsync($"{RelayUrl.TrimEnd('/')}/api/webhooks/poll", stoppingToken);
+                // 1. Fetch queued webhooks from Render, strictly newer than our last seen ID
+                var response = await client.GetAsync($"{RelayUrl.TrimEnd('/')}/api/webhooks/poll?last_id={_lastSeenId}", stoppingToken);
                 
                 if (response.IsSuccessStatusCode)
                 {
                     var content = await response.Content.ReadAsStringAsync(stoppingToken);
-                    var payloads = JsonSerializer.Deserialize<JsonElement[]>(content);
+                    var messages = JsonSerializer.Deserialize<JsonElement[]>(content);
                     
-                    if (payloads != null && payloads.Length > 0)
+                    if (messages != null && messages.Length > 0)
                     {
-                        _logger.LogInformation("Fetched {Count} webhook payloads from relay.", payloads.Length);
+                        _logger.LogInformation("Fetched {Count} new webhook messages from relay (since ID {LastId}).", messages.Length, _lastSeenId);
                         
                         // 2. Forward each payload to our local webhook endpoint
-                        foreach (var payload in payloads)
+                        foreach (var msg in messages)
                         {
-                            var json = payload.GetRawText();
-                            var localContent = new StringContent(json, Encoding.UTF8, "application/json");
+                            var id = msg.GetProperty("id").GetInt32();
+                            var payloadJson = msg.GetProperty("payload").GetRawText();
                             
+                            var localContent = new StringContent(payloadJson, Encoding.UTF8, "application/json");
                             var postResponse = await client.PostAsync(LocalWebhookUrl, localContent, stoppingToken);
+                            
                             if (!postResponse.IsSuccessStatusCode)
                             {
-                                _logger.LogError("Failed to forward payload to local endpoint. Status: {Status}", postResponse.StatusCode);
+                                _logger.LogError("Failed to forward payload (ID: {Id}) to local endpoint. Status: {Status}", id, postResponse.StatusCode);
                             }
                             else
                             {
-                                _logger.LogInformation("Successfully forwarded payload to local processing.");
+                                _logger.LogInformation("Successfully forwarded payload (ID: {Id}) to local processing.", id);
                             }
+                            
+                            // Always update _lastSeenId so we don't re-fetch even if local processing failed, 
+                            // though in a production system you might want robust retry logic here.
+                            _lastSeenId = Math.Max(_lastSeenId, id);
                         }
                     }
-                } // Added missing brace here
+                }
 
                 // 3. Ping the server every 10 minutes to keep it awake and verify it's live
                 if (DateTime.UtcNow - _lastPingTime > TimeSpan.FromMinutes(10))
