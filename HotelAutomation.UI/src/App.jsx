@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Papa from 'papaparse';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download, TrendingUp, Activity, Calendar, UserPlus } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import AutomationBuilder from './components/AutomationBuilder';
 import PreferenceCenter from './components/PreferenceCenter';
 import TemplateVariantManager from './components/TemplateVariantManager';
@@ -13,10 +14,6 @@ const API_BASE = '/api';
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const prefContactId = params.get('preferences_for');
-
-  if (prefContactId) {
-    return <PreferenceCenter contactId={parseInt(prefContactId)} />;
-  }
 
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem('hotelAuto_activeTab') || 'dashboard');
   
@@ -330,81 +327,189 @@ export default function App() {
 
   const renderContent = () => {
     if (activeTab === 'dashboard') {
+      // Compute Dynamic Chart Data & Trends (Last 7 Days vs Previous 7 Days)
+      const now = new Date();
+      const getDaysAgo = (dateStr) => {
+        if (!dateStr) return 999;
+        const d = new Date(dateStr);
+        return Math.floor((now - d) / (1000 * 60 * 60 * 24));
+      };
+
+      let outboxThisWeek = 0;
+      let outboxLastWeek = 0;
+      let inboxThisWeek = 0;
+      let inboxLastWeek = 0;
+      const chartData = [];
+
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        chartData.push({ name: d.toLocaleDateString('en-US', { weekday: 'short' }), messages: 0, dayOffset: i });
+      }
+
+      (Array.isArray(outbox) ? outbox : []).forEach(msg => {
+        const daysAgo = getDaysAgo(msg.CreatedAt || msg.createdAt);
+        if (daysAgo <= 6) {
+          outboxThisWeek++;
+          const chartItem = chartData.find(c => c.dayOffset === daysAgo);
+          if (chartItem) chartItem.messages++;
+        } else if (daysAgo > 6 && daysAgo <= 13) {
+          outboxLastWeek++;
+        }
+      });
+
+      (Array.isArray(inbox) ? inbox : []).forEach(msg => {
+        const daysAgo = getDaysAgo(msg.ReceivedAt || msg.receivedAt || msg.CreatedAt || msg.createdAt);
+        if (daysAgo <= 6) inboxThisWeek++;
+        else if (daysAgo > 6 && daysAgo <= 13) inboxLastWeek++;
+      });
+
+      const calcTrend = (current, previous) => {
+        if (previous === 0 && current > 0) return { val: 100, type: 'up' };
+        if (previous === 0 && current === 0) return { val: 0, type: 'neutral' };
+        const percent = ((current - previous) / previous) * 100;
+        return { val: Math.abs(percent).toFixed(1), type: percent > 0 ? 'up' : percent < 0 ? 'down' : 'neutral' };
+      };
+
+      const outTrend = calcTrend(outboxThisWeek, outboxLastWeek);
+      const inTrend = calcTrend(inboxThisWeek, inboxLastWeek);
+
       return (
-        <div>
-          <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
-            <div className="card" style={{ flex: 1 }}>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Total Messages</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{typeof stats.outbox === 'object' ? 0 : stats.outbox}</div>
+        <div className="premium-dashboard-container">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
+            <div className="premium-card">
+              <div className="premium-card-header">
+                <div>
+                  <div className="premium-metric-value">{typeof stats.outbox === 'object' ? 0 : stats.outbox}</div>
+                  <div className="premium-metric-label">Total Messages Sent</div>
+                </div>
+                <div className="premium-icon-box">
+                  <Send size={24} />
+                </div>
+              </div>
+              <div className={`premium-trend ${outTrend.type}`}>
+                {outTrend.type === 'up' && <TrendingUp size={16} />}
+                {outTrend.type === 'down' && <TrendingUp size={16} style={{transform: 'rotate(180deg)'}} />}
+                {outTrend.type === 'neutral' && <Activity size={16} />}
+                <span>{outTrend.type === 'neutral' ? 'No change' : `${outTrend.type === 'up' ? '+' : '-'}${outTrend.val}% this week`}</span>
+              </div>
             </div>
-            <div className="card" style={{ flex: 1 }}>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Active Rules</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{typeof stats.rules === 'object' ? 0 : stats.rules}</div>
+
+            <div className="premium-card">
+              <div className="premium-card-header">
+                <div>
+                  <div className="premium-metric-value">{typeof stats.rules === 'object' ? 0 : stats.rules}</div>
+                  <div className="premium-metric-label">Active Automations</div>
+                </div>
+                <div className="premium-icon-box gold">
+                  <Workflow size={24} />
+                </div>
+              </div>
+              <div className="premium-trend neutral">
+                <Activity size={16} />
+                <span>Running smoothly</span>
+              </div>
             </div>
-            <div className="card" style={{ flex: 1 }}>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Inbox Replies</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{typeof stats.inbox === 'object' ? 0 : stats.inbox}</div>
+
+            <div className="premium-card">
+              <div className="premium-card-header">
+                <div>
+                  <div className="premium-metric-value">{typeof stats.inbox === 'object' ? 0 : stats.inbox}</div>
+                  <div className="premium-metric-label">Inbox Replies</div>
+                </div>
+                <div className="premium-icon-box green">
+                  <MessagesSquare size={24} />
+                </div>
+              </div>
+              <div className={`premium-trend ${inTrend.type}`}>
+                {inTrend.type === 'up' && <TrendingUp size={16} />}
+                {inTrend.type === 'down' && <TrendingUp size={16} style={{transform: 'rotate(180deg)'}} />}
+                {inTrend.type === 'neutral' && <Activity size={16} />}
+                <span>{inTrend.type === 'neutral' ? 'No change' : `${inTrend.type === 'up' ? '+' : '-'}${inTrend.val}% this week`}</span>
+              </div>
             </div>
           </div>
 
+          <div className="premium-card" style={{ height: '400px' }}>
+            <div className="premium-section-title">
+              <BarChart2 size={20} style={{ color: 'var(--primary)' }} />
+              Weekly Message Volume
+            </div>
+            <div style={{ width: '100%', height: '300px' }}>
+              <ResponsiveContainer>
+                <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.05)" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} dx={-10} />
+                  <Tooltip 
+                    cursor={{ fill: 'rgba(59, 130, 246, 0.05)' }}
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}
+                  />
+                  <Bar dataKey="messages" fill="var(--primary)" radius={[6, 6, 6, 6]} barSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
 
-          <div style={{ display: 'flex', gap: '24px' }}>
-            <div className="card" style={{ flex: 1 }}>
-              <h3 className="card-title">Recent Outbox</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '24px' }}>
+            <div className="premium-card">
+              <div className="premium-section-title">
+                <Send size={20} style={{ color: 'var(--primary)' }} />
+                Recent Outbox
+              </div>
               {outbox.length === 0 ? (
                 <div className="empty-state">No outbox messages found.</div>
               ) : (
-                <div className="data-table-container">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Phone Number</th>
-                        <th>Status</th>
+                <table className="premium-table">
+                  <thead>
+                    <tr>
+                      <th>Phone Number</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(Array.isArray(outbox) ? outbox : []).slice(0, 5).map(msg => (
+                      <tr key={msg.Id || msg.id}>
+                        <td style={{ fontFamily: 'monospace', fontWeight: 500 }}>{msg.ToPhoneNumber || msg.toPhoneNumber}</td>
+                        <td>
+                          <span className={`badge badge-${(msg.Status || msg.status || 'unknown').toLowerCase()}`}>
+                            {(msg.Status || msg.status) === 'Sent' && <CheckCircle2 size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
+                            {(msg.Status || msg.status) === 'Failed' && <AlertCircle size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
+                            {(msg.Status || msg.status) === 'Pending' && <Clock size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
+                            {msg.Status || msg.status}
+                          </span>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {(Array.isArray(outbox) ? outbox : []).map(msg => (
-                        <tr key={msg.Id || msg.id}>
-                          <td style={{ fontFamily: 'monospace' }}>{msg.ToPhoneNumber || msg.toPhoneNumber}</td>
-                          <td>
-                            <span className={`badge badge-${(msg.Status || msg.status || 'unknown').toLowerCase()}`}>
-                              {(msg.Status || msg.status) === 'Sent' && <CheckCircle2 size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
-                              {(msg.Status || msg.status) === 'Failed' && <AlertCircle size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
-                              {(msg.Status || msg.status) === 'Pending' && <Clock size={12} style={{marginRight:'4px', verticalAlign:'middle'}}/>}
-                              {msg.Status || msg.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
 
-            <div className="card" style={{ flex: 1 }}>
-              <h3 className="card-title">Recent Inbox Replies</h3>
+            <div className="premium-card">
+              <div className="premium-section-title">
+                <MessagesSquare size={20} style={{ color: 'var(--primary)' }} />
+                Recent Inbox Replies
+              </div>
               {inbox.length === 0 ? (
                 <div className="empty-state">No replies received yet.</div>
               ) : (
-                <div className="data-table-container">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>From</th>
-                        <th>Message</th>
+                <table className="premium-table">
+                  <thead>
+                    <tr>
+                      <th>From</th>
+                      <th>Message</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(Array.isArray(inbox) ? inbox : []).slice(0, 5).map(msg => (
+                      <tr key={msg.Id || msg.id}>
+                        <td style={{ fontFamily: 'monospace', fontWeight: 500 }}>{msg.FromPhoneNumber || msg.fromPhoneNumber}</td>
+                        <td style={{ color: 'var(--text-secondary)' }}>{msg.Content || msg.content}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {(Array.isArray(inbox) ? inbox : []).map(msg => (
-                        <tr key={msg.Id || msg.id}>
-                          <td style={{ fontFamily: 'monospace' }}>{msg.FromPhoneNumber || msg.fromPhoneNumber}</td>
-                          <td>{msg.Content || msg.content}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>
@@ -627,12 +732,11 @@ export default function App() {
       };
 
       return (
-        <div>
-          <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', alignItems: 'center' }}>
+        <div className="premium-dashboard-container">
+          <div className="premium-toolbar">
             <select 
               value={selectedCategory} 
               onChange={e => { setSelectedCategory(e.target.value); setSelectedSmartList(''); setCurrentPage(1); }} 
-              style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
             >
               <option value="">All Categories</option>
               {(Array.isArray(categories) ? categories : []).map(c => <option key={c.Id || c.id} value={c.Id || c.id}>{c.Name || c.name}</option>)}
@@ -640,11 +744,10 @@ export default function App() {
             <button className="btn btn-secondary" onClick={handleAddCategory}>
               <Plus size={16} /> New Category
             </button>
-            <div style={{ width: '1px', height: '24px', backgroundColor: '#ccc', margin: '0 8px' }}></div>
+            <div className="premium-toolbar-divider"></div>
             <select 
               value={selectedSmartList} 
               onChange={e => { setSelectedSmartList(e.target.value); setSelectedCategory(''); setCurrentPage(1); }} 
-              style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
             >
               <option value="">All Smart Lists</option>
               {(Array.isArray(smartLists) ? smartLists : []).map(s => <option key={s.Id || s.id} value={s.Id || s.id}>{s.ListName || s.listName}</option>)}
@@ -659,18 +762,18 @@ export default function App() {
             <button className="btn btn-secondary" onClick={handleAddContactClick}>
               <Plus size={16} /> Add Contact
             </button>
-            <button className="btn btn-secondary" onClick={handleDeleteAllContacts} style={{ color: '#ef4444', borderColor: '#ef4444' }}>
+            <button className="btn btn-secondary" onClick={handleDeleteAllContacts} style={{ color: 'var(--danger)', borderColor: 'var(--border-color)' }}>
               <Trash2 size={16} /> Delete All
             </button>
-            <label className="btn btn-primary" style={{ cursor: isImporting ? 'not-allowed' : 'pointer', backgroundColor: isImporting ? '#94a3b8' : '#10b981' }}>
+            <label className="btn btn-primary" style={{ cursor: isImporting ? 'not-allowed' : 'pointer', opacity: isImporting ? 0.7 : 1 }}>
               {isImporting ? 'Loading CSV...' : <><Upload size={16} /> Import CSV</>}
               <input type="file" accept=".csv" style={{ display: 'none' }} onChange={handleFileSelect} disabled={isImporting} />
             </label>
           </div>
 
           {showColumnModal && createPortal((
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-              <div className="card" style={{ width: '400px' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+              <div className="premium-analytics-modal" style={{ width: '400px', animation: 'fadeIn 0.2s ease-out' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>Manage Custom Columns</h3>
                 <p style={{ fontSize: '0.9em', color: '#64748b', marginBottom: '16px' }}>
                   These columns were generated dynamically from your CSV imports. Deleting a column here will remove it from all contacts permanently.
@@ -697,18 +800,18 @@ export default function App() {
           ), document.body)}
 
           {showSmartListModal && createPortal((
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-              <div className="card" style={{ width: '500px' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+              <div className="premium-analytics-modal" style={{ width: '500px', animation: 'fadeIn 0.2s ease-out' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>Create Smart List</h3>
                 <div style={{ marginBottom: '12px' }}>
                   <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>List Name</label>
-                  <input type="text" className="input" placeholder="e.g. VIP Guests" value={newSmartList.ListName} onChange={e => setNewSmartList({ ...newSmartList, ListName: e.target.value })} />
+                  <input type="text" className="form-control" placeholder="e.g. VIP Guests" value={newSmartList.ListName} onChange={e => setNewSmartList({ ...newSmartList, ListName: e.target.value })} />
                 </div>
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '0.85em' }}>Filters</label>
                   {newSmartList.Filters.map((f, i) => (
                     <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                      <select className="input" value={f.field} onChange={e => {
+                      <select className="form-control" value={f.field} onChange={e => {
                         const newF = [...newSmartList.Filters];
                         newF[i].field = e.target.value;
                         setNewSmartList({ ...newSmartList, Filters: newF });
@@ -718,7 +821,7 @@ export default function App() {
                         <option value="Country">Country</option>
                         <option value="CategoryId">Category ID</option>
                       </select>
-                      <select className="input" value={f.operator} onChange={e => {
+                      <select className="form-control" value={f.operator} onChange={e => {
                         const newF = [...newSmartList.Filters];
                         newF[i].operator = e.target.value;
                         setNewSmartList({ ...newSmartList, Filters: newF });
@@ -726,7 +829,7 @@ export default function App() {
                         <option value="equals">Equals</option>
                         <option value="contains">Contains</option>
                       </select>
-                      <input type="text" className="input" placeholder="Value" value={f.value} onChange={e => {
+                      <input type="text" className="form-control" placeholder="Value" value={f.value} onChange={e => {
                         const newF = [...newSmartList.Filters];
                         newF[i].value = e.target.value;
                         setNewSmartList({ ...newSmartList, Filters: newF });
@@ -750,95 +853,102 @@ export default function App() {
             </div>
           ), document.body)}
 
-          <div className="card">
-            <h3 className="card-title">Contacts Directory</h3>
+          <div className="premium-table-card">
+            <div className="premium-section-title">
+              <Users size={20} style={{ color: 'var(--primary)' }} />
+              Contacts Directory
+            </div>
+            
             {contacts.length === 0 ? (
               <div className="empty-state">No contacts found. Try importing a CSV!</div>
             ) : (
-              <div className="data-table-container">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Phone</th>
-                      <th>First Name</th>
-                      <th>Last Name</th>
-                      {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => <th key={h}>{h}</th>)}
-                      <th>Added Date</th>
-                      <th>Updated Date</th>
-                      <th>Updates</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(Array.isArray(contacts) ? contacts : []).map(c => {
-                      let fields = {};
-                      try { fields = JSON.parse(c.CustomFieldsJson || c.customFieldsJson || '{}'); } catch(e){}
-                      return (
-                        <tr key={c.Id || c.id}>
-                          <td style={{ fontFamily: 'monospace' }}>{c.PhoneNumber || c.phoneNumber}</td>
-                          <td>{c.FirstName || c.firstName}</td>
-                          <td>{c.LastName || c.lastName}</td>
-                          {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => <td key={h}>{fields[h] || '-'}</td>)}
-                          <td>{new Date(c.CreatedAt || c.createdAt).toLocaleDateString()}</td>
-                          <td>{c.UpdatedAt || c.updatedAt ? new Date(c.UpdatedAt || c.updatedAt).toLocaleDateString() : '-'}</td>
-                          <td>{c.UpdateCount || c.updateCount || 0}</td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <button className="btn btn-secondary" style={{ padding: '4px', border: 'none' }} onClick={() => handleEditContactClick(c)}>
-                                <Edit2 size={16} color="#3b82f6" />
-                              </button>
-                              <button className="btn btn-secondary" style={{ padding: '4px', border: 'none' }} onClick={() => handleDeleteContact(c.Id || c.id)}>
-                                <Trash2 size={16} color="#ef4444" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {contacts.length > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', padding: '16px', borderTop: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ color: '#64748b' }}>Rows per page:</span>
-                  <select 
-                    value={pageSize} 
-                    onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
-                    style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #ccc' }}
-                  >
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                    <option value={50}>50</option>
-                    <option value={100}>100</option>
-                  </select>
-                  <span style={{ color: '#64748b', marginLeft: '16px' }}>Total: {totalContacts}</span>
+              <>
+                <div className="premium-table-wrapper">
+                  <table className="premium-table" style={{ margin: '0 24px', width: 'calc(100% - 48px)' }}>
+                    <thead>
+                      <tr>
+                        <th>Phone</th>
+                        <th>First Name</th>
+                        <th>Last Name</th>
+                        {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => <th key={h}>{h}</th>)}
+                        <th>Added Date</th>
+                        <th>Updated Date</th>
+                        <th>Updates</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(Array.isArray(contacts) ? contacts : []).map(c => {
+                        let fields = {};
+                        try { fields = JSON.parse(c.CustomFieldsJson || c.customFieldsJson || '{}'); } catch(e){}
+                        return (
+                          <tr key={c.Id || c.id}>
+                            <td style={{ fontFamily: 'monospace', fontWeight: 500 }}>{c.PhoneNumber || c.phoneNumber}</td>
+                            <td>{c.FirstName || c.firstName}</td>
+                            <td>{c.LastName || c.lastName}</td>
+                            {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => <td key={h}>{fields[h] || '-'}</td>)}
+                            <td>{new Date(c.CreatedAt || c.createdAt).toLocaleDateString()}</td>
+                            <td>{c.UpdatedAt || c.updatedAt ? new Date(c.UpdatedAt || c.updatedAt).toLocaleDateString() : '-'}</td>
+                            <td>
+                              <span className="badge badge-success">{c.UpdateCount || c.updateCount || 0}</span>
+                            </td>
+                            <td>
+                              <div className="premium-action-buttons">
+                                <button className="premium-icon-btn edit" onClick={() => handleEditContactClick(c)} title="Edit">
+                                  <Edit2 size={16} />
+                                </button>
+                                <button className="premium-icon-btn delete" onClick={() => handleDeleteContact(c.Id || c.id)} title="Delete">
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <button 
-                    className="btn btn-secondary" 
-                    disabled={currentPage === 1} 
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  >
-                    Previous
-                  </button>
-                  <span style={{ fontWeight: 500 }}>Page {currentPage} of {Math.ceil(totalContacts / pageSize) || 1}</span>
-                  <button 
-                    className="btn btn-secondary" 
-                    disabled={currentPage >= Math.ceil(totalContacts / pageSize)} 
-                    onClick={() => setCurrentPage(p => p + 1)}
-                  >
-                    Next
-                  </button>
+
+                <div className="premium-pagination">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>Rows per page:</span>
+                    <select 
+                      value={pageSize} 
+                      onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+                      style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none' }}
+                    >
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                    <span style={{ marginLeft: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>Total: {totalContacts}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <button 
+                      className="btn btn-secondary" 
+                      disabled={currentPage === 1} 
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    >
+                      Previous
+                    </button>
+                    <span style={{ fontWeight: 500 }}>Page {currentPage} of {Math.ceil(totalContacts / pageSize) || 1}</span>
+                    <button 
+                      className="btn btn-secondary" 
+                      disabled={currentPage >= Math.ceil(totalContacts / pageSize)} 
+                      onClick={() => setCurrentPage(p => p + 1)}
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </>
             )}
           </div>
           
           {showEditContactModal && createPortal((
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-              <div className="card" style={{ width: '500px' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+              <div className="premium-analytics-modal" style={{ width: '500px', animation: 'fadeIn 0.2s ease-out' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>{editingContactId ? 'Edit Contact' : 'Add Contact'}</h3>
                 
                 <div className="form-group" style={{ marginBottom: '16px' }}>
@@ -959,8 +1069,8 @@ export default function App() {
           ), document.body)}
 
           {importModalOpen && createPortal((
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-              <div className="card" style={{ width: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+              <div className="premium-analytics-modal" style={{ width: '800px', maxHeight: '90vh', overflowY: 'auto', animation: 'fadeIn 0.2s ease-out' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>Import Contacts Preview</h3>
                 
                 <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', alignItems: 'center' }}>
@@ -1159,9 +1269,9 @@ export default function App() {
       };
 
       return (
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <h3 className="card-title">Message Templates</h3>
+        <div className="premium-table-card" style={{ padding: '32px' }}>
+          <div className="premium-toolbar">
+            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>Message Templates</h3>
             <button className="btn btn-primary" onClick={() => {
               setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1, Category: 'Utility', HeaderType: 'None', BodyText: '', ParameterDefinitionsJson: '[]' });
               setIsEditingTemplate(false);
@@ -1173,8 +1283,8 @@ export default function App() {
           </div>
           
           {showTemplateModal && createPortal((
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-              <div className="card" style={{ width: '850px', maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', padding: '24px', overflow: 'hidden' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+              <div className="premium-analytics-modal" style={{ width: '850px', maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', padding: '32px', overflow: 'hidden', animation: 'fadeIn 0.2s ease-out' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color, #eee)', paddingBottom: '12px', marginBottom: '16px' }}>
                   <h3 className="card-title" style={{ margin: 0 }}>{isEditingTemplate ? 'Edit Message Template' : 'New Message Template'}</h3>
                   <button className="btn btn-secondary" style={{ minWidth: 'auto', padding: '4px 8px', border: 'none' }} onClick={() => setShowTemplateModal(false)}>✕</button>
@@ -1668,7 +1778,7 @@ export default function App() {
 
           {testModalOpen && createPortal((
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
-              <div className="card" style={{ width: '400px', animation: 'fadeIn 0.2s ease-out' }}>
+              <div className="premium-analytics-modal" style={{ width: '400px', animation: 'fadeIn 0.2s ease-out' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>Test Template: {templateToTest?.Name || templateToTest?.name}</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <label style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Enter a phone number with country code (e.g. 919876543210)</label>
@@ -1825,8 +1935,8 @@ export default function App() {
           </div>
 
           {showCampaignModal && createPortal((
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, overflowY: 'auto', padding: '20px' }}>
-              <div className="card" style={{ width: '600px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)', overflowY: 'auto', padding: '20px' }}>
+              <div className="premium-analytics-modal" style={{ width: '600px', maxHeight: '90vh', overflowY: 'auto', animation: 'fadeIn 0.2s ease-out' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>{editingCampaign?.Id || editingCampaign?.id ? 'Edit Campaign' : 'New Campaign'}</h3>
                 
                 <div style={{ marginBottom: '16px' }}>
@@ -1983,35 +2093,34 @@ export default function App() {
         return <AutomationBuilder onCancel={() => { setIsBuildingRule(false); setEditingRule(null); }} initialRule={editingRule} />;
       }
       return (
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <h3 className="card-title">Automation</h3>
-            <button className="btn btn-primary" onClick={() => { setEditingRule(null); setIsBuildingRule(true); }}>
+        <div className="premium-table-card">
+          <div className="premium-toolbar">
+            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>Automation Rules</h3>
+            <button className="btn btn-primary" onClick={() => { setEditingRule(null); setIsBuildingRule(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Plus size={16} /> Create Rule
             </button>
           </div>
-          <div className="data-table-container">
-            <table className="data-table">
-              <thead><tr><th>Name</th><th>Trigger</th><th>Action Template ID</th><th>Stats</th><th>Status</th><th>Actions</th></tr></thead>
+          <div className="premium-table-wrapper">
+            <table className="premium-table" style={{ margin: '0 24px', width: 'calc(100% - 48px)' }}>
+              <thead><tr><th>Name & Trigger</th><th>Action Template</th><th>Stats</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
                 {(Array.isArray(rulesList) ? rulesList : []).map(r => (
                   <tr key={r.Id || r.id} style={{ opacity: (r.IsEnabled ?? r.isEnabled) ? 1 : 0.6 }}>
                     <td>
-                      <div style={{ fontWeight: 600 }}>{r.Name || r.name}</div>
-                      <div style={{ fontSize: '0.8rem', color: '#64748b' }}>{r.Description || r.description}</div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>{r.Name || r.name}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>{r.Description || r.description}</div>
+                      <span className="badge badge-pending">{r.TriggerEventType || r.triggerEventType}</span>
                     </td>
-                    <td><span className="badge badge-pending">{r.TriggerEventType || r.triggerEventType}</span></td>
-                    <td><span className="badge badge-delivered">Template: {r.TemplateId || r.templateId}</span></td>
-                    <td style={{ fontSize: '0.8rem' }}>
+                    <td><span className="badge badge-delivered">Template ID: {r.TemplateId || r.templateId}</span></td>
+                    <td style={{ fontSize: '0.85rem' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <div style={{ fontWeight: 600, color: '#475569', marginBottom: '2px' }}>Analytics</div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <span title="Triggered" style={{ color: '#3b82f6' }}>T: {r.stats?.Triggered ?? r.stats?.triggered ?? 0}</span>
-                          <span title="Sent" style={{ color: '#10b981' }}>S: {r.stats?.TotalSent ?? r.stats?.totalSent ?? 0}</span>
-                          <span title="Failed" style={{ color: '#ef4444' }}>F: {r.stats?.Failed ?? r.stats?.failed ?? 0}</span>
+                        <div style={{ display: 'flex', gap: '12px' }}>
+                          <span title="Triggered" style={{ color: '#0d9488', fontWeight: 500 }}>T: {r.stats?.Triggered ?? r.stats?.triggered ?? 0}</span>
+                          <span title="Sent" style={{ color: '#2563eb', fontWeight: 500 }}>S: {r.stats?.TotalSent ?? r.stats?.totalSent ?? 0}</span>
+                          <span title="Failed" style={{ color: '#dc2626', fontWeight: 500 }}>F: {r.stats?.Failed ?? r.stats?.failed ?? 0}</span>
                         </div>
-                        <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
-                          {r.stats?.LastRun || r.stats?.lastRun ? `Last: ${new Date(r.stats?.LastRun || r.stats?.lastRun).toLocaleString()}` : 'Never run'}
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                          {r.stats?.LastRun || r.stats?.lastRun ? `Last run: ${new Date(r.stats?.LastRun || r.stats?.lastRun).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}` : 'Never run'}
                         </div>
                       </div>
                     </td>
@@ -2021,72 +2130,81 @@ export default function App() {
                       </span>
                     </td>
                      <td>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={() => handleEditRule(r)} title="Edit">
-                          <Edit2 size={14} />
+                      <div className="premium-action-buttons">
+                        <button className="premium-icon-btn edit" onClick={() => handleEditRule(r)} title="Edit">
+                          <Edit2 size={18} />
                         </button>
-                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: (r.IsEnabled ?? r.isEnabled) ? '#f59e0b' : '#10b981' }} onClick={() => handleToggleRule(r.Id || r.id, (r.IsEnabled ?? r.isEnabled))} title={(r.IsEnabled ?? r.isEnabled) ? "Pause" : "Resume"}>
-                          {(r.IsEnabled ?? r.isEnabled) ? <XCircle size={14} /> : <CheckCircle2 size={14} />}
+                        <button className="premium-icon-btn edit" style={{ color: (r.IsEnabled ?? r.isEnabled) ? '#f59e0b' : 'var(--success)', borderColor: 'transparent' }} onClick={() => handleToggleRule(r.Id || r.id, (r.IsEnabled ?? r.isEnabled))} title={(r.IsEnabled ?? r.isEnabled) ? "Pause" : "Resume"}>
+                          {(r.IsEnabled ?? r.isEnabled) ? <XCircle size={18} /> : <CheckCircle2 size={18} />}
                         </button>
-                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#3b82f6' }} onClick={() => handleShowAnalytics(r)} title="Analytics">
-                          <BarChart2 size={14} />
+                        <button className="premium-icon-btn edit" style={{ color: 'var(--primary)', borderColor: 'transparent' }} onClick={() => handleShowAnalytics(r)} title="Analytics">
+                          <BarChart2 size={18} />
                         </button>
-                        <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#ef4444' }} onClick={() => handleDeleteRule(r.Id || r.id)} title="Delete">
-                          <Trash2 size={14} />
+                        <button className="premium-icon-btn delete" onClick={() => handleDeleteRule(r.Id || r.id)} title="Delete">
+                          <Trash2 size={18} />
                         </button>
                       </div>
                     </td>
                   </tr>
                 ))}
+                {rulesList.length === 0 && (
+                  <tr>
+                    <td colSpan="5" style={{ textAlign: 'center', padding: '40px' }}>
+                      <div className="empty-state">No automation rules configured yet. Create one to get started!</div>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
 
           {analyticsRule && createPortal((
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-              <div className="card" style={{ width: '600px', maxWidth: '95%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
-                  <h3 className="card-title" style={{ margin: 0 }}>Analytics: {analyticsRule.Name || analyticsRule.name}</h3>
-                  <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={() => setAnalyticsRule(null)}>✕</button>
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+              <div className="premium-analytics-modal" style={{ animation: 'fadeIn 0.2s ease-out' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>Rule Analytics</h3>
+                  <button className="premium-icon-btn" onClick={() => setAnalyticsRule(null)}>✕</button>
                 </div>
                 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                  <div style={{ padding: '16px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 600 }}>TRIGGERED</div>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#15803d' }}>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '20px', fontSize: '0.95rem' }}>Viewing stats for: <strong>{analyticsRule.Name || analyticsRule.name}</strong></p>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '32px' }}>
+                  <div className="premium-stat-card premium-stat-triggered">
+                    <div style={{ fontSize: '0.8rem', color: '#0d9488', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>TRIGGERED</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#0f766e' }}>
                       {analyticsRule.stats?.Triggered ?? analyticsRule.stats?.triggered ?? 0}
                     </div>
                   </div>
-                  <div style={{ padding: '16px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.8rem', color: '#1e40af', fontWeight: 600 }}>SENT SUCCESSFULLY</div>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#1d4ed8' }}>
+                  <div className="premium-stat-card premium-stat-sent">
+                    <div style={{ fontSize: '0.8rem', color: '#2563eb', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>SENT SUCCESSFULLY</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1d4ed8' }}>
                       {analyticsRule.stats?.TotalSent ?? analyticsRule.stats?.totalSent ?? 0}
                     </div>
                   </div>
-                  <div style={{ padding: '16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.8rem', color: '#991b1b', fontWeight: 600 }}>FAILED</div>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#b91c1c' }}>
+                  <div className="premium-stat-card premium-stat-failed">
+                    <div style={{ fontSize: '0.8rem', color: '#dc2626', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>FAILED</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#b91c1c' }}>
                       {analyticsRule.stats?.Failed ?? analyticsRule.stats?.failed ?? 0}
                     </div>
                   </div>
                 </div>
 
-                <h4 style={{ marginBottom: '8px', color: '#334155', fontWeight: 600 }}>Failure Log (Recent Failed Numbers & Reasons)</h4>
-                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '350px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc', padding: '12px' }}>
+                <h4 style={{ marginBottom: '12px', color: 'var(--text-primary)', fontWeight: 600, fontSize: '1rem' }}>Recent Failure Log</h4>
+                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '300px', border: '1px solid var(--border-color)', borderRadius: '12px', backgroundColor: '#f8fafc', padding: '16px' }}>
                   {ruleFailures.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: '#64748b', padding: '24px 0' }}>
+                    <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '32px 0', fontSize: '0.95rem' }}>
                       No failed messages recorded for this rule.
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       {ruleFailures.map((f, i) => (
-                        <div key={i} style={{ padding: '10px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                            <span style={{ fontWeight: 600, color: '#334155' }}>Phone: {f.ToPhoneNumber || f.toPhoneNumber}</span>
-                            <span style={{ color: '#64748b' }}>{new Date(f.CreatedAt || f.createdAt).toLocaleString()}</span>
+                        <div key={i} style={{ padding: '12px', backgroundColor: '#ffffff', border: '1px solid var(--border-color)', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{f.ToPhoneNumber || f.toPhoneNumber}</span>
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{new Date(f.CreatedAt || f.createdAt).toLocaleString()}</span>
                           </div>
-                          <div style={{ fontSize: '0.8rem', color: '#ef4444', backgroundColor: '#fef2f2', padding: '6px 8px', borderRadius: '4px', border: '1px solid #fee2e2' }}>
-                            <strong>Reason:</strong> {f.FailureReason || f.failureReason || 'Failed to connect to Meta WhatsApp API.'}
+                          <div style={{ fontSize: '0.85rem', color: '#b91c1c', backgroundColor: '#fef2f2', padding: '8px 12px', borderRadius: '6px', border: '1px solid #fecaca' }}>
+                            <strong>Reason:</strong> {f.FailureReason || f.failureReason || 'Failed to connect to WhatsApp API.'}
                           </div>
                         </div>
                       ))}
@@ -2094,8 +2212,8 @@ export default function App() {
                   )}
                 </div>
                 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
-                  <button className="btn btn-primary" onClick={() => setAnalyticsRule(null)}>Close</button>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '24px' }}>
+                  <button className="btn btn-primary" onClick={() => setAnalyticsRule(null)}>Done</button>
                 </div>
               </div>
             </div>
@@ -2139,52 +2257,54 @@ export default function App() {
 
       return (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-            <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold' }}>Analytics Overview</h2>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 600 }}>Date Range:</span>
-              <select 
-                className="input" 
-                style={{ padding: '6px 12px', width: '200px' }}
-                value={analyticsPeriod}
-                onChange={(e) => setAnalyticsPeriod(e.target.value)}
-              >
-                <option value="today">Today</option>
-                <option value="7">Last 7 Days</option>
-                <option value="30">Last 30 Days</option>
-                <option value="all">All Time</option>
-              </select>
-              <button className="btn btn-secondary" onClick={() => window.location.href = `${API_BASE}/analytics/export`} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div className="premium-toolbar" style={{ marginBottom: '24px' }}>
+            <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>Analytics Overview</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Date Range:</span>
+                <select 
+                  className="premium-chat-input" 
+                  style={{ padding: '8px 16px', width: '200px', backgroundColor: '#fff', border: '1px solid var(--border-color)', borderRadius: '8px' }}
+                  value={analyticsPeriod}
+                  onChange={(e) => setAnalyticsPeriod(e.target.value)}
+                >
+                  <option value="today">Today</option>
+                  <option value="7">Last 7 Days</option>
+                  <option value="30">Last 30 Days</option>
+                  <option value="all">All Time</option>
+                </select>
+              </div>
+              <button className="btn btn-primary" onClick={() => window.location.href = `${API_BASE}/analytics/export`} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Download size={16} /> Export CSV
               </button>
             </div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
-            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #3b82f6' }}>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>OVERALL TRIGGERED</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{overallTriggered}</div>
+            <div className="premium-stat-card premium-stat-triggered">
+              <div style={{ color: '#0d9488', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.05em' }}>OVERALL TRIGGERED</div>
+              <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#0f766e' }}>{overallTriggered}</div>
             </div>
-            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #10b981' }}>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>SUCCESSFULLY SENT</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#10b981' }}>{overallSent}</div>
+            <div className="premium-stat-card premium-stat-sent">
+              <div style={{ color: '#2563eb', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.05em' }}>SUCCESSFULLY SENT</div>
+              <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#1d4ed8' }}>{overallSent}</div>
             </div>
-            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #ef4444' }}>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>FAILED DELIVERIES</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#ef4444' }}>{overallFailed}</div>
+            <div className="premium-stat-card premium-stat-failed">
+              <div style={{ color: '#dc2626', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.05em' }}>FAILED DELIVERIES</div>
+              <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#b91c1c' }}>{overallFailed}</div>
             </div>
-            <div className="card" style={{ gridColumn: 'span 2', borderLeft: '4px solid #eab308' }}>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>DELIVERY SUCCESS RATE</div>
-              <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#eab308' }}>{successRate}%</div>
+            <div className="premium-stat-card" style={{ background: 'linear-gradient(135deg, rgba(234, 179, 8, 0.1) 0%, rgba(202, 138, 4, 0.05) 100%)', border: '1px solid rgba(234, 179, 8, 0.2)' }}>
+              <div style={{ color: '#ca8a04', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.05em' }}>DELIVERY SUCCESS RATE</div>
+              <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#a16207' }}>{successRate}%</div>
             </div>
           </div>
 
-          <div className="card" style={{ marginBottom: '32px' }}>
-            <h3 className="card-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div className="premium-table-card" style={{ marginBottom: '32px' }}>
+            <h3 className="card-title" style={{ padding: '20px 24px', margin: 0, borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Workflow size={20} color="var(--primary)" /> Automation Performance
             </h3>
-            <div className="data-table-container">
-              <table className="data-table">
+            <div className="premium-table-wrapper">
+              <table className="premium-table" style={{ margin: '0 24px', width: 'calc(100% - 48px)' }}>
                 <thead>
                   <tr>
                     <th>Rule Name</th>
@@ -2204,7 +2324,7 @@ export default function App() {
                     const ruleRate = trig > 0 ? ((s / (s + f || 1)) * 100).toFixed(1) : '100.0';
                     return (
                       <tr key={r.Id || r.id}>
-                        <td style={{ fontWeight: 600 }}>{r.Name || r.name}</td>
+                        <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{r.Name || r.name}</td>
                         <td><span className="badge badge-pending">{r.TriggerEventType || r.triggerEventType}</span></td>
                         <td style={{ textAlign: 'center', fontWeight: 600 }}>{trig}</td>
                         <td style={{ textAlign: 'center', color: '#10b981', fontWeight: 600 }}>{s}</td>
@@ -2213,10 +2333,10 @@ export default function App() {
                         <td style={{ textAlign: 'center' }}>
                           <button 
                             className="btn btn-secondary" 
-                            style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'transparent', border: '1px solid var(--primary)', color: 'var(--primary)' }}
                             onClick={() => handleShowAnalytics(r)}
                           >
-                            <BarChart2 size={12} /> View Details
+                            <BarChart2 size={14} /> Details
                           </button>
                         </td>
                       </tr>
@@ -2224,15 +2344,17 @@ export default function App() {
                   })}
                   {currentRulesPage.length === 0 && (
                     <tr>
-                      <td colSpan="7" style={{ textAlign: 'center', padding: '24px' }}>No automation rules found.</td>
+                      <td colSpan="7" style={{ textAlign: 'center', padding: '32px' }}>
+                        <div className="empty-state">No automation rules found.</div>
+                      </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
             
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderTop: '1px solid var(--border)' }}>
-              <div style={{ color: '#64748b', fontSize: '0.9rem' }}>Total: {rulesSafe.length}</div>
+            <div className="premium-pagination">
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Total: {rulesSafe.length}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                 <button 
                   className="btn btn-secondary" 
@@ -2242,7 +2364,7 @@ export default function App() {
                 >
                   Previous
                 </button>
-                <span style={{ fontWeight: 500, fontSize: '0.9rem' }}>Page {analyticsRulesPage} of {Math.ceil(rulesSafe.length / analyticsPageSize) || 1}</span>
+                <span style={{ fontWeight: 500, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Page {analyticsRulesPage} of {Math.ceil(rulesSafe.length / analyticsPageSize) || 1}</span>
                 <button 
                   className="btn btn-secondary" 
                   disabled={analyticsRulesPage >= Math.ceil(rulesSafe.length / analyticsPageSize)} 
@@ -2255,12 +2377,12 @@ export default function App() {
             </div>
           </div>
 
-          <div className="card">
-            <h3 className="card-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div className="premium-table-card">
+            <h3 className="card-title" style={{ padding: '20px 24px', margin: 0, borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Megaphone size={20} color="var(--primary)" /> Broadcast Campaigns Performance
             </h3>
-            <div className="data-table-container">
-              <table className="data-table">
+            <div className="premium-table-wrapper">
+              <table className="premium-table" style={{ margin: '0 24px', width: 'calc(100% - 48px)' }}>
                 <thead>
                   <tr>
                     <th>Started At</th>
@@ -2282,8 +2404,8 @@ export default function App() {
                     const rate = total > 0 ? ((s / (s + f || 1)) * 100).toFixed(1) : '100.0';
                     return (
                       <tr key={i}>
-                        <td>{new Date(b.StartedAt || b.startedAt).toLocaleString()}</td>
-                        <td style={{ fontWeight: 600 }}>{b.TemplateName || b.templateName}</td>
+                        <td style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{new Date(b.StartedAt || b.startedAt).toLocaleString()}</td>
+                        <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{b.TemplateName || b.templateName}</td>
                         <td style={{ textAlign: 'center', fontWeight: 600 }}>{total}</td>
                         <td style={{ textAlign: 'center', color: '#10b981', fontWeight: 600 }}>{s}</td>
                         <td style={{ textAlign: 'center', color: '#ef4444', fontWeight: 600 }}>{f}</td>
@@ -2292,10 +2414,10 @@ export default function App() {
                         <td style={{ textAlign: 'center' }}>
                           <button 
                             className="btn btn-secondary" 
-                            style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'transparent', border: '1px solid var(--primary)', color: 'var(--primary)' }}
                             onClick={() => handleShowBroadcastAnalytics(b)}
                           >
-                            <BarChart2 size={12} /> View Details
+                            <BarChart2 size={14} /> Details
                           </button>
                         </td>
                       </tr>
@@ -2303,14 +2425,16 @@ export default function App() {
                   })}
                   {currentBroadcastsPage.length === 0 && (
                     <tr>
-                      <td colSpan="8" style={{ textAlign: 'center', padding: '24px' }}>No broadcast campaigns found.</td>
+                      <td colSpan="8" style={{ textAlign: 'center', padding: '32px' }}>
+                        <div className="empty-state">No broadcast campaigns found.</div>
+                      </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderTop: '1px solid var(--border)' }}>
-              <div style={{ color: '#64748b', fontSize: '0.9rem' }}>Total: {broadcastsSafe.length}</div>
+            <div className="premium-pagination">
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Total: {broadcastsSafe.length}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                 <button 
                   className="btn btn-secondary" 
@@ -2320,7 +2444,7 @@ export default function App() {
                 >
                   Previous
                 </button>
-                <span style={{ fontWeight: 500, fontSize: '0.9rem' }}>Page {analyticsBroadcastsPage} of {Math.ceil(broadcastsSafe.length / analyticsPageSize) || 1}</span>
+                <span style={{ fontWeight: 500, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Page {analyticsBroadcastsPage} of {Math.ceil(broadcastsSafe.length / analyticsPageSize) || 1}</span>
                 <button 
                   className="btn btn-secondary" 
                   disabled={analyticsBroadcastsPage >= Math.ceil(broadcastsSafe.length / analyticsPageSize)} 
@@ -2334,42 +2458,42 @@ export default function App() {
           </div>
 
           {analyticsRule && createPortal((
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-              <div className="card" style={{ width: '600px', maxWidth: '95%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
-                  <h3 className="card-title" style={{ margin: 0 }}>Analytics: {analyticsRule.Name || analyticsRule.name}</h3>
-                  <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={() => setAnalyticsRule(null)}>✕</button>
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+              <div className="premium-analytics-modal" style={{ animation: 'fadeIn 0.2s ease-out' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>Analytics: {analyticsRule.Name || analyticsRule.name}</h3>
+                  <button className="premium-icon-btn" onClick={() => setAnalyticsRule(null)}>✕</button>
                 </div>
                 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                  <div style={{ padding: '16px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 600 }}>TRIGGERED</div>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#15803d' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '32px' }}>
+                  <div className="premium-stat-card premium-stat-triggered">
+                    <div style={{ fontSize: '0.8rem', color: '#0d9488', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>TRIGGERED</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#0f766e' }}>
                       {analyticsRule.stats?.Triggered ?? analyticsRule.stats?.triggered ?? 0}
                     </div>
                   </div>
-                  <div style={{ padding: '16px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.8rem', color: '#1e40af', fontWeight: 600 }}>SENT SUCCESSFULLY</div>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#1d4ed8' }}>
+                  <div className="premium-stat-card premium-stat-sent">
+                    <div style={{ fontSize: '0.8rem', color: '#2563eb', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>SENT SUCCESSFULLY</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1d4ed8' }}>
                       {analyticsRule.stats?.TotalSent ?? analyticsRule.stats?.totalSent ?? 0}
                     </div>
                   </div>
-                  <div style={{ padding: '16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.8rem', color: '#991b1b', fontWeight: 600 }}>FAILED</div>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#b91c1c' }}>
+                  <div className="premium-stat-card premium-stat-failed">
+                    <div style={{ fontSize: '0.8rem', color: '#dc2626', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>FAILED</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#b91c1c' }}>
                       {analyticsRule.stats?.Failed ?? analyticsRule.stats?.failed ?? 0}
                     </div>
                   </div>
                 </div>
 
-                <h4 style={{ marginBottom: '8px', color: '#334155', fontWeight: 600 }}>Delivery Details Log</h4>
-                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '350px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc', padding: '12px' }}>
+                <h4 style={{ marginBottom: '12px', color: 'var(--text-primary)', fontWeight: 600, fontSize: '1rem' }}>Delivery Details Log</h4>
+                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '350px', border: '1px solid var(--border-color)', borderRadius: '12px', backgroundColor: '#f8fafc', padding: '16px' }}>
                   {ruleFailures.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: '#64748b', padding: '24px 0' }}>
+                    <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '32px 0', fontSize: '0.95rem' }}>
                       No messages recorded.
                     </div>
                   ) : (
-                    <table className="data-table" style={{ margin: 0, backgroundColor: 'white' }}>
+                    <table className="premium-table" style={{ margin: 0, backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                       <thead>
                         <tr>
                           <th>Phone</th>
@@ -2381,10 +2505,10 @@ export default function App() {
                       <tbody>
                         {ruleFailures.map((f, i) => (
                           <tr key={i}>
-                            <td style={{ fontWeight: 600 }}>
+                            <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
                               {f.ToPhoneNumber || f.toPhoneNumber}
                               {(f.IsUnsubscribed || f.isUnsubscribed) === 1 && (
-                                <span style={{ marginLeft: '6px', fontSize: '10px', backgroundColor: '#ef4444', color: 'white', padding: '2px 4px', borderRadius: '4px' }}>Unsubscribed</span>
+                                <span style={{ marginLeft: '8px', fontSize: '10px', backgroundColor: '#ef4444', color: 'white', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Unsubscribed</span>
                               )}
                             </td>
                             <td>
@@ -2392,7 +2516,7 @@ export default function App() {
                                 {f.Status || f.status}
                               </span>
                             </td>
-                            <td style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                            <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                               {new Date(f.CreatedAt || f.createdAt).toLocaleString()}
                             </td>
                             <td style={{ fontSize: '0.85rem' }}>
@@ -2409,7 +2533,7 @@ export default function App() {
                   )}
                 </div>
                 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '24px' }}>
                   <button className="btn btn-primary" onClick={() => setAnalyticsRule(null)}>Close</button>
                 </div>
               </div>
@@ -2431,15 +2555,19 @@ export default function App() {
       };
 
       return (
-        <div className="card">
-          <h3 className="card-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <UserX size={20} color="var(--primary)" /> Marketing Opt-Outs (Unsubscribed)
-          </h3>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>
-            Users who have replied "STOP" or opted out of "Offers and announcements" on WhatsApp. They will not receive marketing templates.
-          </p>
-          <div className="data-table-container">
-            <table className="data-table">
+        <div className="premium-table-card">
+          <div className="premium-toolbar">
+            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <UserX size={20} color="var(--primary)" /> Marketing Opt-Outs (Unsubscribed)
+            </h3>
+          </div>
+          <div style={{ padding: '0 24px 16px 24px' }}>
+            <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.95rem' }}>
+              Users who have replied "STOP" or opted out of "Offers and announcements" on WhatsApp. They will not receive marketing templates.
+            </p>
+          </div>
+          <div className="premium-table-wrapper">
+            <table className="premium-table" style={{ margin: '0 24px', width: 'calc(100% - 48px)' }}>
               <thead>
                 <tr>
                   <th>Phone Number</th>
@@ -2452,25 +2580,27 @@ export default function App() {
               <tbody>
                 {(Array.isArray(optOutsList) ? optOutsList : []).map(o => (
                   <tr key={o.PhoneNumber || o.phoneNumber}>
-                    <td style={{ fontWeight: 600 }}>{o.PhoneNumber || o.phoneNumber}</td>
+                    <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{o.PhoneNumber || o.phoneNumber}</td>
                     <td>{o.FirstName || o.firstName ? `${o.FirstName || o.firstName} ${o.LastName && o.LastName !== 'undefined' ? o.LastName : (o.lastName && o.lastName !== 'undefined' ? o.lastName : '')}`.trim() : '-'}</td>
-                    <td>{new Date(o.UnsubscribedAt || o.unsubscribedAt).toLocaleString()}</td>
+                    <td style={{ color: 'var(--text-secondary)' }}>{new Date(o.UnsubscribedAt || o.unsubscribedAt).toLocaleString()}</td>
                     <td><span className="badge badge-pending">{o.Source || o.source}</span></td>
                     <td style={{ textAlign: 'center' }}>
                       <button 
                         className="btn btn-secondary" 
-                        style={{ padding: '6px 12px', fontSize: '0.8rem', color: '#10b981' }}
+                        style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'transparent', border: '1px solid #10b981', color: '#10b981' }}
                         onClick={() => handleResubscribe(o.PhoneNumber || o.phoneNumber)}
                         title="Re-Subscribe User"
                       >
-                        Re-Subscribe
+                        <UserPlus size={14} /> Re-Subscribe
                       </button>
                     </td>
                   </tr>
                 ))}
                 {(optOutsList || []).length === 0 && (
                   <tr>
-                    <td colSpan="5" style={{ textAlign: 'center', padding: '24px' }}>No unsubscribed contacts found.</td>
+                    <td colSpan="5" style={{ textAlign: 'center', padding: '32px' }}>
+                      <div className="empty-state">No unsubscribed contacts found.</div>
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -2479,8 +2609,6 @@ export default function App() {
         </div>
       );
     }
-
-
 
     if (activeTab === 'broadcasts') {
       const handleSendBroadcast = async () => {
@@ -2531,108 +2659,125 @@ export default function App() {
       };
 
       return (
-        <div>
-          <div className="card" style={{ marginBottom: '24px' }}>
-            <h3 className="card-title">New Broadcast Campaign</h3>
-            <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end' }}>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Target Audience</label>
+        <div className="premium-dashboard-container">
+          <div className="premium-campaign-card">
+            <h3 className="card-title" style={{ fontSize: '1.25rem', marginBottom: '8px' }}>New Broadcast Campaign</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Select an audience and a template to launch a new messaging campaign.</p>
+            
+            <div className="premium-campaign-form">
+              <div className="form-group">
+                <label>Target Audience</label>
                 <select 
-                  className="input" 
                   value={selectedBroadcastCategory}
                   onChange={e => setSelectedBroadcastCategory(e.target.value)}
-                  style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0' }}
                 >
                   <option value="">All Contacts</option>
                   {(Array.isArray(categories) ? categories : []).map(c => <option key={c.Id || c.id} value={c.Id || c.id}>{c.Name || c.name}</option>)}
                 </select>
               </div>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Message Template</label>
+              <div className="form-group">
+                <label>Message Template</label>
                 <select 
-                  className="input"
                   value={selectedBroadcastTemplate}
                   onChange={e => setSelectedBroadcastTemplate(e.target.value)}
-                  style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0' }}
                 >
                   <option value="">Select a template...</option>
                   {(Array.isArray(templatesList) ? templatesList : []).map(t => <option key={t.Id || t.id} value={t.Id || t.id}>{t.Name || t.name}</option>)}
                 </select>
               </div>
               <div>
-                <button className="btn btn-primary" onClick={handleSendBroadcast} style={{ padding: '10px 24px' }}>
-                  <Megaphone size={16} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
+                <button className="btn btn-primary" onClick={handleSendBroadcast} style={{ padding: '12px 24px', borderRadius: '8px', fontSize: '0.95rem' }}>
+                  <Megaphone size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
                   Send Broadcast
                 </button>
               </div>
             </div>
           </div>
 
-          <div className="card">
-            <h3 className="card-title">Recent Broadcasts</h3>
-            <div className="data-table-container">
-              <table className="data-table">
-                <thead><tr><th>Started At</th><th>Template</th><th>Total Queued</th><th>Delivered</th><th>Pending</th><th>Failed</th><th>Actions</th></tr></thead>
-                <tbody>
-                  {(Array.isArray(broadcasts) ? broadcasts : []).map((b, i) => (
-                    <tr key={i}>
-                      <td>{new Date(b.StartedAt || b.startedAt).toLocaleString()}</td>
-                      <td>{b.TemplateName || b.templateName}</td>
-                      <td>{b.TotalQueued ?? b.totalQueued ?? b.TotalSent ?? b.totalSent ?? 0}</td>
-                      <td><span className="badge badge-delivered">{b.Delivered ?? b.delivered ?? 0}</span></td>
-                      <td><span className="badge badge-pending">{b.Pending ?? b.pending ?? 0}</span></td>
-                      <td><span className="badge" style={{ backgroundColor: '#fee2e2', color: '#991b1b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600 }}>{b.Failed ?? b.failed ?? 0}</span></td>
-                      <td>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          {(b.Pending || b.pending) > 0 && (
-                            <button 
-                              className="btn btn-secondary" 
-                              style={{ padding: '4px 8px', fontSize: '0.8rem', color: '#eab308', borderColor: '#eab308' }} 
-                              onClick={() => handleStopBroadcast(b)}
-                              title="Stop pending messages"
-                            >
-                              <XCircle size={14} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
-                              Stop
-                            </button>
-                          )}
-                          <button 
-                            className="btn btn-secondary" 
-                            style={{ padding: '4px 8px', fontSize: '0.8rem', color: '#ef4444', borderColor: '#ef4444' }} 
-                            onClick={() => handleDeleteBroadcast(b)}
-                            title="Delete from history"
-                          >
-                            <Trash2 size={14} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {(broadcasts || []).length === 0 && <tr><td colSpan="6" style={{ textAlign: 'center', padding: '24px' }}>No broadcasts sent yet.</td></tr>}
-                </tbody>
-              </table>
-              <div style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #e2e8f0' }}>
-                <button 
-                  className="btn btn-secondary" 
-                  disabled={bPage === 1} 
-                  onClick={() => setBPage(p => p - 1)}
-                  style={{ padding: '6px 12px' }}
-                >
-                  Previous
-                </button>
-                <span style={{ fontSize: '0.9em', color: '#64748b' }}>
-                  Page {bPage} of {Math.ceil(bTotal / bLimit) || 1}
-                </span>
-                <button 
-                  className="btn btn-secondary" 
-                  disabled={bPage >= Math.ceil(bTotal / bLimit) || bTotal === 0} 
-                  onClick={() => setBPage(p => p + 1)}
-                  style={{ padding: '6px 12px' }}
-                >
-                  Next
-                </button>
-              </div>
+          <div className="premium-table-card">
+            <div className="premium-section-title">
+              <Activity size={20} style={{ color: 'var(--primary)' }} />
+              Recent Broadcasts
             </div>
+            
+            {(broadcasts || []).length === 0 ? (
+              <div className="empty-state">No broadcasts sent yet. Start a new campaign above!</div>
+            ) : (
+              <>
+                <div className="premium-table-wrapper">
+                  <table className="premium-table" style={{ margin: '0 24px', width: 'calc(100% - 48px)' }}>
+                    <thead>
+                      <tr>
+                        <th>Started At</th>
+                        <th>Template</th>
+                        <th>Total Queued</th>
+                        <th>Delivered</th>
+                        <th>Pending</th>
+                        <th>Failed</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(Array.isArray(broadcasts) ? broadcasts : []).map((b, i) => (
+                        <tr key={i}>
+                          <td style={{ fontWeight: 500 }}>{new Date(b.StartedAt || b.startedAt).toLocaleString()}</td>
+                          <td>{b.TemplateName || b.templateName}</td>
+                          <td style={{ fontFamily: 'monospace', fontSize: '1.05em' }}>{b.TotalQueued ?? b.totalQueued ?? b.TotalSent ?? b.totalSent ?? 0}</td>
+                          <td><span className="badge badge-delivered">{b.Delivered ?? b.delivered ?? 0}</span></td>
+                          <td><span className="badge badge-pending">{b.Pending ?? b.pending ?? 0}</span></td>
+                          <td><span className="badge badge-failed">{b.Failed ?? b.failed ?? 0}</span></td>
+                          <td>
+                            <div className="premium-action-buttons">
+                              {(b.Pending || b.pending) > 0 && (
+                                <button 
+                                  className="premium-icon-btn warning" 
+                                  onClick={() => handleStopBroadcast(b)}
+                                  title="Stop pending messages"
+                                >
+                                  <XCircle size={18} />
+                                </button>
+                              )}
+                              <button 
+                                className="premium-icon-btn delete" 
+                                onClick={() => handleDeleteBroadcast(b)}
+                                title="Delete from history"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="premium-pagination">
+                  <div>
+                    <span style={{ color: 'var(--text-secondary)' }}>Showing {broadcasts.length} campaigns</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <button 
+                      className="btn btn-secondary" 
+                      disabled={bPage === 1} 
+                      onClick={() => setBPage(p => p - 1)}
+                    >
+                      Previous
+                    </button>
+                    <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
+                      Page {bPage} of {Math.ceil(bTotal / bLimit) || 1}
+                    </span>
+                    <button 
+                      className="btn btn-secondary" 
+                      disabled={bPage >= Math.ceil(bTotal / bLimit) || bTotal === 0} 
+                      onClick={() => setBPage(p => p + 1)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       );
@@ -2678,22 +2823,25 @@ export default function App() {
 
       return (
         <>
-        <div className="card" style={{ display: 'flex', height: 'calc(100vh - 180px)', padding: 0, overflow: 'hidden' }}>
+        <div className="premium-inbox-container">
           {/* Active Conversations Left Sidebar */}
-          <div style={{ width: '320px', borderRight: '1px solid var(--border-color, #eee)', display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-secondary, #f8fafc)' }}>
-            <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color, #eee)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ fontWeight: 600, fontSize: '0.95em' }}>Conversations Inbox</div>
+          <div className="premium-chat-sidebar">
+            <div className="premium-chat-sidebar-header">
+              <div style={{ fontWeight: 600, fontSize: '1.05em', color: 'var(--text-primary)' }}>Inbox</div>
               <button 
                 className="btn btn-primary" 
-                style={{ padding: '4px 8px', fontSize: '0.8em', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                style={{ padding: '6px 12px', borderRadius: '8px' }}
                 onClick={() => setShowNewConversationModal(true)}
               >
-                <Plus size={14} /> New
+                <Plus size={16} /> <span style={{ marginLeft: '4px' }}>New</span>
               </button>
             </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               {(conversations || []).length === 0 ? (
-                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary, #64748b)', fontSize: '0.85em' }}>No conversations yet. Send a test template to start!</div>
+                <div style={{ padding: '32px 24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                  <MessagesSquare size={32} style={{ margin: '0 auto 12px', opacity: 0.5 }} />
+                  <div style={{ fontSize: '0.9em' }}>No conversations yet.</div>
+                </div>
               ) : (
                 (conversations || []).map(conv => {
                   const phone = conv.PhoneNumber || conv.phoneNumber;
@@ -2705,24 +2853,22 @@ export default function App() {
                   return (
                     <div 
                       key={phone} 
+                      className={`premium-conv-item ${isSelected ? 'active' : ''}`}
                       onClick={() => handleSelectConversation(conv)}
-                      style={{ 
-                        padding: '12px 16px', 
-                        borderBottom: '1px solid var(--border-color, #eee)', 
-                        cursor: 'pointer',
-                        backgroundColor: isSelected ? 'var(--primary-light, #eff6ff)' : 'transparent',
-                        transition: 'background-color 0.2s',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '4px'
-                      }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontWeight: hasUnread ? 'bold' : 500, fontSize: '0.9em', color: isSelected ? 'var(--primary, #3b82f6)' : 'inherit' }}>{name}</span>
-                        {hasUnread && <span style={{ backgroundColor: 'var(--primary, #3b82f6)', color: 'white', fontSize: '0.7em', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>New</span>}
+                      <div className="premium-avatar">
+                        {(conv.FirstName || conv.firstName || 'U').charAt(0).toUpperCase()}
                       </div>
-                      <div style={{ fontSize: '0.75em', color: 'var(--text-secondary, #64748b)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {conv.LastMessageText || conv.lastMessageText || 'No messages'}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                          <span style={{ fontWeight: hasUnread ? 700 : 600, fontSize: '0.95em', color: isSelected ? 'var(--primary)' : 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {name}
+                          </span>
+                          {hasUnread && <span style={{ backgroundColor: 'var(--primary)', color: 'white', fontSize: '0.7em', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>New</span>}
+                        </div>
+                        <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {conv.LastMessageText || conv.lastMessageText || 'No messages'}
+                        </div>
                       </div>
                     </div>
                   );
@@ -2732,43 +2878,35 @@ export default function App() {
           </div>
 
           {/* Conversation Chat Bubbles View */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#efeae2', backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")' }}>
+          <div className="premium-chat-main">
             {selectedConversation ? (
               <>
                 {/* Chat Top bar */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#075e54', padding: '12px 20px', color: '#fff' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: '#ece5dd', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#075e54', fontWeight: 'bold' }}>
-                    {(selectedConversation.FirstName || selectedConversation.firstName || 'G').charAt(0).toUpperCase()}
+                <div className="premium-chat-header">
+                  <div className="premium-avatar">
+                    {(selectedConversation.FirstName || selectedConversation.firstName || 'U').charAt(0).toUpperCase()}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ fontWeight: 600, fontSize: '0.9em' }}>
+                    <div style={{ fontWeight: 600, fontSize: '1.05em', color: 'var(--text-primary)' }}>
                       {(selectedConversation.FirstName || selectedConversation.firstName)
                         ? `${selectedConversation.FirstName || selectedConversation.firstName} ${selectedConversation.LastName && selectedConversation.LastName !== 'undefined' ? selectedConversation.LastName : (selectedConversation.lastName && selectedConversation.lastName !== 'undefined' ? selectedConversation.lastName : '')}`.trim()
                         : (selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}
                     </div>
-                    <div style={{ fontSize: '0.7em', opacity: 0.85 }}>{selectedConversation.PhoneNumber || selectedConversation.phoneNumber} • WhatsApp conversation</div>
+                    <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
+                      {selectedConversation.PhoneNumber || selectedConversation.phoneNumber} • WhatsApp
+                    </div>
                   </div>
                 </div>
 
                 {/* Messages scroll section */}
-                <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div className="premium-chat-messages">
                   {chatMessages.map((msg, index) => {
                     const isGuest = msg.Sender === 'Guest' || msg.sender === 'Guest';
                     return (
-                      <div key={msg.Id || msg.id || index} style={{ display: 'flex', justifyContent: isGuest ? 'flex-start' : 'flex-end' }}>
-                        <div style={{ 
-                          backgroundColor: isGuest ? '#ffffff' : '#d9fdd3', 
-                          padding: '8px 12px', 
-                          borderRadius: '8px', 
-                          boxShadow: '0 1px 0.5px rgba(0,0,0,0.13)', 
-                          maxWidth: '75%', 
-                          fontSize: '0.85em', 
-                          wordBreak: 'break-word' 
-                        }}>
-                          <div>{msg.Content || msg.content}</div>
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '0.65em', color: '#8696a0', marginTop: '4px' }}>
-                            {new Date(msg.SentAt || msg.sentAt).toLocaleString([], { hour: '2-digit', minute: '2-digit' })}
-                          </div>
+                      <div key={msg.Id || msg.id || index} className={`premium-bubble ${isGuest ? 'incoming' : 'outgoing'}`}>
+                        <div>{msg.Content || msg.content}</div>
+                        <div className="premium-bubble-time" style={{ color: isGuest ? 'var(--text-secondary)' : 'rgba(255,255,255,0.8)' }}>
+                          {new Date(msg.SentAt || msg.sentAt).toLocaleString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
                     );
@@ -2778,40 +2916,40 @@ export default function App() {
 
                 {/* Meta Window and Error alerts */}
                 {errorReplyMessage && (
-                  <div style={{ margin: '8px 16px 0 16px', padding: '10px', backgroundColor: '#fef2f2', border: '1px solid #fee2e2', borderRadius: '6px', fontSize: '0.8em', color: '#ef4444' }}>
+                  <div style={{ margin: '8px 24px', padding: '12px', backgroundColor: '#fef2f2', border: '1px solid #fee2e2', borderRadius: '8px', fontSize: '0.9em', color: '#ef4444' }}>
+                    <AlertCircle size={16} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle' }} />
                     <strong>Warning:</strong> {errorReplyMessage}
                   </div>
                 )}
 
                 {/* Reply Footer Input Area */}
-                <div style={{ padding: '12px 16px', backgroundColor: '#f0f2f5', display: 'flex', gap: '12px', alignItems: 'center', borderTop: '1px solid var(--border-color, #eee)' }}>
+                <div className="premium-chat-input-area">
                   <input 
                     type="text" 
-                    className="input" 
-                    placeholder="Type message reply..." 
+                    className="premium-chat-input" 
+                    placeholder="Type a message..." 
                     value={replyText} 
                     onChange={e => setReplyText(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === 'Enter') handleSendReplyMessage();
                     }}
-                    style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #ccc', backgroundColor: '#fff', color: '#000' }}
                   />
-
                   <button 
-                    className="btn btn-primary" 
+                    className="premium-send-btn" 
                     onClick={handleSendReplyMessage} 
                     disabled={isSendingReply || !replyText.trim()}
-                    style={{ padding: '10px 16px' }}
                   >
-                    <Send size={16} />
+                    <Send size={20} />
                   </button>
                 </div>
               </>
             ) : (
-              <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', color: 'var(--text-secondary, #64748b)' }}>
-                <MessagesSquare size={48} style={{ marginBottom: '16px' }} />
-                <h3>Select a conversation to reply</h3>
-                <p style={{ fontSize: '0.85em' }}>Double-click any chat to retrieve thread history.</p>
+              <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', color: 'var(--text-secondary)' }}>
+                <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'linear-gradient(135deg, rgba(59,130,246,0.1) 0%, rgba(37,99,235,0.05) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+                  <MessagesSquare size={40} style={{ color: 'var(--primary)' }} />
+                </div>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>Select a conversation</h3>
+                <p style={{ fontSize: '0.95em', maxWidth: '300px', textAlign: 'center' }}>Choose a conversation from the sidebar to view the thread and reply to guests.</p>
               </div>
             )}
           </div>
@@ -2820,7 +2958,7 @@ export default function App() {
         {/* New Conversation Modal */}
         {showNewConversationModal && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
-            <div className="card" style={{ width: '100%', maxWidth: '420px', padding: '32px' }}>
+            <div className="premium-analytics-modal" style={{ width: '100%', maxWidth: '420px', padding: '32px', animation: 'fadeIn 0.2s ease-out' }}>
               <h3 className="card-title" style={{ marginBottom: '20px', fontSize: '1.25rem' }}>Start New Conversation</h3>
               
               <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-color)', padding: '16px', borderRadius: '8px', marginBottom: '24px', border: '1px solid var(--border-color)', lineHeight: '1.5' }}>
@@ -2991,6 +3129,10 @@ export default function App() {
 
     return null;
   };
+
+  if (prefContactId) {
+    return <PreferenceCenter contactId={parseInt(prefContactId)} />;
+  }
 
   return (
     <div className="app-container" style={{ display: 'flex' }}>

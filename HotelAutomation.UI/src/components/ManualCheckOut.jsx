@@ -98,42 +98,47 @@ export default function ManualCheckOut() {
   };
 
   return (
-    <div className="card" style={{ maxWidth: '800px', margin: '0 auto', animation: 'fadeIn 0.3s ease' }}>
-      <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px' }}>
-        <CheckCircle2 color="var(--primary)" /> Manual Check-Out
-      </h3>
-      <p style={{ color: 'var(--text-secondary)', marginBottom: '16px', fontSize: '0.9rem' }}>
+    <div className="premium-table-card" style={{ maxWidth: '800px', margin: '40px auto', padding: '32px', animation: 'fadeIn 0.3s ease' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+        <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: 'linear-gradient(135deg, rgba(59,130,246,0.1) 0%, rgba(37,99,235,0.05) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <CheckCircle2 size={24} color="var(--primary)" />
+        </div>
+        <h3 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+          Manual Check-Out
+        </h3>
+      </div>
+      <p style={{ color: 'var(--text-secondary)', marginBottom: '24px', fontSize: '0.95rem' }}>
         Use this form to manually trigger a Check-Out event. You can search for existing contacts to autofill details.
       </p>
 
       {/* Search Bar */}
-      <div style={{ position: 'relative', marginBottom: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: '6px', padding: '8px 12px', background: 'var(--surface)' }}>
-          <Search size={18} color="var(--text-secondary)" style={{ marginRight: '8px' }} />
+      <div style={{ position: 'relative', marginBottom: '32px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '12px 16px', background: '#fff' }}>
+          <Search size={18} color="var(--text-secondary)" style={{ marginRight: '12px' }} />
           <input 
             type="text" 
             placeholder="Search contacts by name or phone..." 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ border: 'none', background: 'transparent', outline: 'none', width: '100%', color: 'var(--text-primary)' }}
+            style={{ border: 'none', background: 'transparent', outline: 'none', width: '100%', color: 'var(--text-primary)', fontSize: '0.95rem' }}
           />
           {isSearching && <Loader2 size={16} className="spinner" style={{ color: 'var(--text-secondary)' }} />}
         </div>
         
         {searchResults.length > 0 && (
-          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', zIndex: 10, marginTop: '4px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', maxHeight: '200px', overflowY: 'auto' }}>
+          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid var(--border-color)', borderRadius: '8px', zIndex: 10, marginTop: '8px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', maxHeight: '250px', overflowY: 'auto' }}>
             {searchResults.map((contact, idx) => (
               <div 
                 key={idx} 
                 onClick={() => handleSelectContact(contact)}
-                style={{ padding: '12px', borderBottom: idx < searchResults.length - 1 ? '1px solid var(--border)' : 'none', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                style={{ padding: '16px', borderBottom: idx < searchResults.length - 1 ? '1px solid var(--border-color)' : 'none', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                 className="hover-bg"
               >
                 <div>
-                  <div style={{ fontWeight: 500 }}>{contact.firstName} {contact.lastName}</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{contact.phoneNumber}</div>
+                  <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>{contact.firstName} {contact.lastName}</div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{contact.phoneNumber}</div>
                 </div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--primary)' }}>Select</div>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--primary)' }}>Select</div>
               </div>
             ))}
           </div>
@@ -141,81 +146,81 @@ export default function ManualCheckOut() {
       </div>
 
       {status.startsWith('error') && (
-        <div style={{ padding: '12px', background: '#fee2e2', color: '#ef4444', borderRadius: '4px', marginBottom: '16px', fontSize: '0.9rem' }}>
+        <div style={{ padding: '16px', background: '#fef2f2', border: '1px solid #fee2e2', color: '#ef4444', borderRadius: '8px', marginBottom: '24px', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
           {status.replace('error: ', '')}
         </div>
       )}
       
       {status === 'success' && (
-        <div style={{ padding: '12px', background: '#dcfce7', color: '#10b981', borderRadius: '4px', marginBottom: '16px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <CheckCircle2 size={16} /> Check-Out event successfully triggered!
+        <div style={{ padding: '16px', background: '#f0fdf4', border: '1px solid #dcfce7', color: '#10b981', borderRadius: '8px', marginBottom: '24px', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <CheckCircle2 size={20} /> Check-Out event successfully triggered!
         </div>
       )}
 
-      <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+      <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
         <div className="form-group">
-          <label><User size={14} style={{ marginRight: '4px' }}/> Guest Name *</label>
-          <input type="text" name="GuestName" value={formData.GuestName} onChange={handleChange} className="form-control" placeholder="John Doe" required />
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><User size={16} /> Guest Name *</label>
+          <input type="text" name="GuestName" value={formData.GuestName} onChange={handleChange} className="premium-chat-input" placeholder="John Doe" required style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
         
         <div className="form-group">
-          <label><Phone size={14} style={{ marginRight: '4px' }}/> Phone Number *</label>
-          <input type="text" name="PhoneNumber" value={formData.PhoneNumber} onChange={handleChange} className="form-control" placeholder="+1234567890" required />
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><Phone size={16} /> Phone Number *</label>
+          <input type="text" name="PhoneNumber" value={formData.PhoneNumber} onChange={handleChange} className="premium-chat-input" placeholder="+1234567890" required style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
 
         <div className="form-group">
-          <label><DoorClosed size={14} style={{ marginRight: '4px' }}/> Room Number</label>
-          <input type="text" name="RoomNumber" value={formData.RoomNumber} onChange={handleChange} className="form-control" placeholder="101" />
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><DoorClosed size={16} /> Room Number</label>
+          <input type="text" name="RoomNumber" value={formData.RoomNumber} onChange={handleChange} className="premium-chat-input" placeholder="101" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
 
         <div className="form-group">
-          <label><DollarSign size={14} style={{ marginRight: '4px' }}/> Total Bill</label>
-          <input type="number" step="0.01" name="TotalBill" value={formData.TotalBill} onChange={handleChange} className="form-control" placeholder="150.00" />
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><DollarSign size={16} /> Total Bill</label>
+          <input type="number" step="0.01" name="TotalBill" value={formData.TotalBill} onChange={handleChange} className="premium-chat-input" placeholder="150.00" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
 
         <div className="form-group">
-          <label><Calendar size={14} style={{ marginRight: '4px' }}/> Check-In Date</label>
-          <input type="date" name="CheckInDate" value={formData.CheckInDate} onChange={handleChange} className="form-control" />
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><Calendar size={16} /> Check-In Date</label>
+          <input type="date" name="CheckInDate" value={formData.CheckInDate} onChange={handleChange} className="premium-chat-input" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
 
         <div className="form-group">
-          <label><Calendar size={14} style={{ marginRight: '4px' }}/> Check-Out Date</label>
-          <input type="date" name="CheckOutDate" value={formData.CheckOutDate} onChange={handleChange} className="form-control" />
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><Calendar size={16} /> Check-Out Date</label>
+          <input type="date" name="CheckOutDate" value={formData.CheckOutDate} onChange={handleChange} className="premium-chat-input" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
 
         <div className="form-group">
-          <label><Lock size={14} style={{ marginRight: '4px' }}/> Wifi Password</label>
-          <input type="text" name="WifiPassword" value={formData.WifiPassword} onChange={handleChange} className="form-control" placeholder="Guest@2026" />
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><Lock size={16} /> Wifi Password</label>
+          <input type="text" name="WifiPassword" value={formData.WifiPassword} onChange={handleChange} className="premium-chat-input" placeholder="Guest@2026" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
 
         <div className="form-group">
-          <label><Hash size={14} style={{ marginRight: '4px' }}/> Booking Reference</label>
-          <input type="text" name="BookingReference" value={formData.BookingReference} onChange={handleChange} className="form-control" placeholder="BK-12345" />
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><Hash size={16} /> Booking Reference</label>
+          <input type="text" name="BookingReference" value={formData.BookingReference} onChange={handleChange} className="premium-chat-input" placeholder="BK-12345" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
         
         <div className="form-group">
-          <label><Hotel size={14} style={{ marginRight: '4px' }}/> Hotel Name</label>
-          <input type="text" name="HotelName" value={formData.HotelName} onChange={handleChange} className="form-control" placeholder="Sankalp Retreat" />
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><Hotel size={16} /> Hotel Name</label>
+          <input type="text" name="HotelName" value={formData.HotelName} onChange={handleChange} className="premium-chat-input" placeholder="Sankalp Retreat" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
 
         <div className="form-group">
-          <label><Link size={14} style={{ marginRight: '4px' }}/> Feedback Link</label>
-          <input type="text" name="GuestFeedbackLink" value={formData.GuestFeedbackLink} onChange={handleChange} className="form-control" placeholder="https://g.page/review" />
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><Link size={16} /> Feedback Link</label>
+          <input type="text" name="GuestFeedbackLink" value={formData.GuestFeedbackLink} onChange={handleChange} className="premium-chat-input" placeholder="https://g.page/review" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
 
         <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-          <label><FileText size={14} style={{ marginRight: '4px' }}/> Extra Note</label>
-          <textarea name="ExtraNote" value={formData.ExtraNote} onChange={handleChange} className="form-control" placeholder="Any special requests or notes" rows={2}></textarea>
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><FileText size={16} /> Extra Note</label>
+          <textarea name="ExtraNote" value={formData.ExtraNote} onChange={handleChange} className="premium-chat-input" placeholder="Any special requests or notes" rows={3} style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none', resize: 'vertical' }}></textarea>
         </div>
 
-        <div style={{ gridColumn: '1 / -1', marginTop: '16px' }}>
-          <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', padding: '12px', fontSize: '1rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
-            <Send size={18} /> {loading ? 'Triggering Check-Out...' : 'Trigger Check-Out Event'}
+        <div style={{ gridColumn: '1 / -1', marginTop: '24px' }}>
+          <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', padding: '14px', fontSize: '1rem', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', borderRadius: '12px' }}>
+            <Send size={20} /> {loading ? 'Triggering Check-Out...' : 'Trigger Check-Out Event'}
           </button>
         </div>
       </form>
       <style>{`
-        .hover-bg:hover { background-color: var(--surface-hover); }
+        .hover-bg:hover { background-color: #f1f5f9 !important; }
       `}</style>
     </div>
   );
