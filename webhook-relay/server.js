@@ -4,6 +4,7 @@ const port = process.env.PORT || 3000;
 
 // Rolling history to hold incoming webhook payloads
 let webhookHistory = [];
+let legacyQueue = [];
 let nextMessageId = 1;
 const MAX_HISTORY = 500;
 
@@ -36,8 +37,12 @@ app.post('/api/webhooks/whatsapp', (req, res) => {
     if (body.object === 'whatsapp_business_account') {
         console.log(`Received payload with ${body.entry?.length || 0} entries.`);
         webhookHistory.push({ id: nextMessageId++, payload: body });
+        legacyQueue.push(body);
         if (webhookHistory.length > MAX_HISTORY) {
             webhookHistory.shift(); // Keep only the last MAX_HISTORY items
+        }
+        if (legacyQueue.length > MAX_HISTORY) {
+            legacyQueue.shift();
         }
         return res.status(200).send('EVENT_RECEIVED');
     }
@@ -47,6 +52,13 @@ app.post('/api/webhooks/whatsapp', (req, res) => {
 
 // 3. Endpoint for the local PC to poll and retrieve the queued webhooks
 app.get('/api/webhooks/poll', (req, res) => {
+    // Backward compatibility for old clients not sending last_id
+    if (req.query.last_id === undefined) {
+        const currentQueue = legacyQueue;
+        legacyQueue = [];
+        return res.json(currentQueue);
+    }
+
     const lastId = parseInt(req.query.last_id || '0', 10);
     
     // Return all messages strictly newer than the requested last_id

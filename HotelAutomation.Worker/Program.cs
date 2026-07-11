@@ -892,7 +892,20 @@ app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository in
     try
     {
         using var doc = System.Text.Json.JsonDocument.Parse(body);
-        var entryArray = doc.RootElement.GetProperty("entry");
+        var root = doc.RootElement;
+        
+        // Backward compatibility: if an older WebhookRelayPoller forwarded the new { id, payload } wrapper, unwrap it.
+        if (root.TryGetProperty("payload", out var wrappedPayload) && root.TryGetProperty("id", out _))
+        {
+            root = wrappedPayload;
+        }
+
+        if (!root.TryGetProperty("entry", out var entryArray))
+        {
+            logger.LogWarning("Webhook payload missing 'entry' property.");
+            return Results.BadRequest("Invalid payload");
+        }
+
         foreach (var entry in entryArray.EnumerateArray())
         {
             var changesArray = entry.GetProperty("changes");
