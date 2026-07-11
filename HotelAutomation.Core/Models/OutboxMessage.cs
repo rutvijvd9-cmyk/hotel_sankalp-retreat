@@ -13,5 +13,5 @@ public sealed record OutboxMessage
     public DateTimeOffset? SentAt { get; init; }
     public string? ExternalMessageId { get; init; }
     public int? RuleId { get; init; }
-    public string? FailureReason { get; init; }
+    public string? ErrorMessage { get; init; }
 }

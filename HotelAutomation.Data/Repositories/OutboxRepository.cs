@@ -45,7 +45,7 @@ public sealed class OutboxRepository : IOutboxRepository
         await using var conn = await _factory.OpenAsync(ct);
         await conn.ExecuteAsync("""
             UPDATE OutboxMessages
-            SET Status = @status, RetryCount = @retryCount, SentAt = @sentAt, ExternalMessageId = @externalMessageId, FailureReason = @failureReason
+            SET Status = @status, RetryCount = @retryCount, SentAt = @sentAt, ExternalMessageId = @externalMessageId, ErrorMessage = @failureReason
             WHERE Id = @id
             """, new { id, status, retryCount, sentAt = sentAt?.ToString("O"), externalMessageId, failureReason });
     }
