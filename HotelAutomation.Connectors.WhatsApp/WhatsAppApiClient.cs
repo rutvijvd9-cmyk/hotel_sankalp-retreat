@@ -54,7 +54,7 @@ public sealed class WhatsAppApiClient
     {
         try
         {
-            var url = $"{_options.ApiVersion}/{_options.PhoneNumberId}/media";
+            var url = $"https://graph.facebook.com/{_options.ApiVersion}/{_options.PhoneNumberId}/media";
             
             using var content = new MultipartFormDataContent();
             content.Add(new StringContent("whatsapp"), "messaging_product");

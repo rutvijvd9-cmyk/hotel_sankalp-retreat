@@ -172,8 +172,24 @@ public sealed class SqliteConnectionFactory
         try
         {
             await using var migCmd = connection.CreateCommand();
-            command.CommandText = "ALTER TABLE MessageTemplates ADD COLUMN HeaderText TEXT NULL;";
-            await command.ExecuteNonQueryAsync(ct);
+            migCmd.CommandText = "ALTER TABLE MessageTemplates ADD COLUMN HeaderText TEXT NULL;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE MessageTemplates ADD COLUMN FooterText TEXT NULL;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE MessageTemplates ADD COLUMN ButtonsJson TEXT NOT NULL DEFAULT '[]';";
+            await migCmd.ExecuteNonQueryAsync(ct);
         }
         catch { }
 

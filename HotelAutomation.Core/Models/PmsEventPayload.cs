@@ -9,7 +9,7 @@ public sealed record PmsEventPayload
     // Required fields
     public required string GuestName { get; init; }
     public required string PhoneNumber { get; init; }   // E.164 format: +919876543210
-    public required string RoomNumber { get; init; }
+    public string? RoomNumber { get; init; }
 
     // Optional billing
     public decimal? TotalBill { get; init; }

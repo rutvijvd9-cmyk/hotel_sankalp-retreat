@@ -15,6 +15,7 @@ public sealed class OutboxProcessor : BackgroundService
     private readonly ITemplateRepository _templateRepository;
     private readonly IEnumerable<IMessageChannel> _messageChannels;
     private readonly LinkShortenerService _linkShortenerService;
+    private readonly HotelAutomation.Data.SqliteConnectionFactory _dbFactory;
     private readonly ILogger<OutboxProcessor> _logger;
     private readonly int _intervalSeconds;
     private readonly int _batchSize;
@@ -25,6 +26,7 @@ public sealed class OutboxProcessor : BackgroundService
         ITemplateRepository templateRepository,
         IEnumerable<IMessageChannel> messageChannels,
         LinkShortenerService linkShortenerService,
+        HotelAutomation.Data.SqliteConnectionFactory dbFactory,
         IConfiguration configuration,
         ILogger<OutboxProcessor> logger)
     {
@@ -32,6 +34,7 @@ public sealed class OutboxProcessor : BackgroundService
         _templateRepository = templateRepository;
         _messageChannels = messageChannels;
         _linkShortenerService = linkShortenerService;
+        _dbFactory = dbFactory;
         _logger = logger;
         _intervalSeconds = configuration.GetValue("OutboxProcessor:IntervalSeconds", 5);
         _batchSize = configuration.GetValue("OutboxProcessor:BatchSize", 10);
@@ -101,6 +104,34 @@ public sealed class OutboxProcessor : BackgroundService
                 {
                     await _outboxRepository.UpdateStatusAsync(
                         messageToProcess.Id, "Sent", messageToProcess.RetryCount, DateTimeOffset.UtcNow, externalId, null, ct);
+                    
+                    // Log to ConversationReplies so it shows up in Two-Way Inbox UI
+                    try 
+                    {
+                        using var conn = await _dbFactory.OpenAsync();
+                        string contentText = $"[Automated Template: {template.Name}]";
+                        if (!string.IsNullOrEmpty(messageToProcess.ParametersJson) && messageToProcess.ParametersJson != "{}") 
+                        {
+                            contentText += $"\n{messageToProcess.ParametersJson}";
+                        }
+                        
+                        // Check if Dapper extension is available, else use standard command
+                        var cmd = conn.CreateCommand();
+                        cmd.CommandText = "INSERT INTO ConversationReplies (Id, PhoneNumber, Sender, Content, SentAt) VALUES (@Id, @Phone, 'Agent', @Content, @SentAt)";
+                        
+                        var pId = cmd.CreateParameter(); pId.ParameterName = "@Id"; pId.Value = Guid.NewGuid().ToString(); cmd.Parameters.Add(pId);
+                        var cleanPhone = new string((messageToProcess.ToPhoneNumber ?? "").Where(char.IsDigit).ToArray());
+                        var pPhone = cmd.CreateParameter(); pPhone.ParameterName = "@Phone"; pPhone.Value = cleanPhone; cmd.Parameters.Add(pPhone);
+                        var pContent = cmd.CreateParameter(); pContent.ParameterName = "@Content"; pContent.Value = contentText; cmd.Parameters.Add(pContent);
+                        var pSentAt = cmd.CreateParameter(); pSentAt.ParameterName = "@SentAt"; pSentAt.Value = DateTimeOffset.UtcNow.ToString("O"); cmd.Parameters.Add(pSentAt);
+                        
+                        await cmd.ExecuteNonQueryAsync(ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to log OutboxMessage {Id} to ConversationReplies", messageToProcess.Id);
+                    }
+
                     _logger.LogInformation("OutboxMessage {Id} → Sent via {Channel}", messageToProcess.Id, channelType);
                 }
                 else

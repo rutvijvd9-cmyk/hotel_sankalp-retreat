@@ -34,7 +34,7 @@ public class WebhookRelayPoller : BackgroundService
     {
         _logger.LogInformation("WebhookRelayPoller started. Polling {Url} every 5 seconds.", RelayUrl);
         
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {

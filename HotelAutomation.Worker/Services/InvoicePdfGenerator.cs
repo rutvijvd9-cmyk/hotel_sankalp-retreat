@@ -28,11 +28,21 @@ public sealed class InvoicePdfGenerator : IPdfGenerator
         {
             var p = JsonSerializer.Deserialize<JsonElement>(job.ParametersJson);
             if (p.TryGetProperty("Room", out var roomProp)) roomNumber = roomProp.GetString() ?? roomNumber;
+            if (p.TryGetProperty("room_number", out var roomProp2)) roomNumber = roomProp2.GetString() ?? roomNumber;
+            
             if (p.TryGetProperty("CheckInDate", out var ciProp)) checkIn = ciProp.GetString() ?? "";
+            if (p.TryGetProperty("check_in", out var ciProp2)) checkIn = ciProp2.GetString() ?? checkIn;
+            
             if (p.TryGetProperty("CheckOutDate", out var coProp)) checkOut = coProp.GetString() ?? "";
-            if (p.TryGetProperty("Amount", out var amtProp)) amount = amtProp.GetString() ?? amount;
+            if (p.TryGetProperty("check_out", out var coProp2)) checkOut = coProp2.GetString() ?? checkOut;
+            
+            if (p.TryGetProperty("Amount", out var amtProp) && amtProp.GetString() != "0.00") amount = amtProp.GetString() ?? amount;
+            if (p.TryGetProperty("total_bill", out var amtProp2)) amount = amtProp2.GetString() ?? amount;
+            
             if (p.TryGetProperty("HotelName", out var hProp)) hotelName = hProp.GetString() ?? hotelName;
+            
             if (p.TryGetProperty("BookingReference", out var bProp)) bookingRef = bProp.GetString() ?? bookingRef;
+            if (p.TryGetProperty("booking_ref", out var bProp2)) bookingRef = bProp2.GetString() ?? bookingRef;
         }
         catch { }
 
