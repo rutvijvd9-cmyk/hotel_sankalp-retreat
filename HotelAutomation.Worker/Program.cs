@@ -101,11 +101,68 @@ app.UseCors();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+var uploadsPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "uploads");
+if (!System.IO.Directory.Exists(uploadsPath)) System.IO.Directory.CreateDirectory(uploadsPath);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(uploadsPath),
+    RequestPath = "/uploads"
+});
+
 // ── API Endpoints for UI ──────────────────────────────────────────────────────
-app.MapGet("/api/templates", async (ITemplateRepository repo, int page = 1, int limit = 50) => 
+app.MapGet("/api/templates", async (ITemplateRepository repo, WhatsAppApiClient whatsappClient, int page = 1, int limit = 50) => 
 {
     var (list, total) = await repo.GetAllPaginatedAsync(page, limit);
-    return Results.Ok(new { Templates = list, TotalCount = total });
+    
+    var metaTemplatesDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    try
+    {
+        var (success, content, error) = await whatsappClient.GetTemplatesAsync();
+        if (success && !string.IsNullOrEmpty(content))
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(content);
+            if (doc.RootElement.TryGetProperty("data", out var dataProp) && dataProp.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var item in dataProp.EnumerateArray())
+                {
+                    if (item.TryGetProperty("name", out var nameProp) && item.TryGetProperty("status", out var statusProp))
+                    {
+                        var name = nameProp.GetString();
+                        var status = statusProp.GetString();
+                        if (name != null && status != null)
+                        {
+                            metaTemplatesDict[name] = status;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    catch { }
+
+    var enriched = list.Select(t => {
+        metaTemplatesDict.TryGetValue(t.ExternalTemplateName, out var status);
+        return new {
+            t.Id,
+            t.Name,
+            t.ExternalTemplateName,
+            t.LanguageCode,
+            t.ChannelType,
+            t.BodyParamCount,
+            t.FallbackChannelType,
+            t.Category,
+            t.HeaderType,
+            t.BodyText,
+            t.HeaderText,
+            t.ParameterDefinitionsJson,
+            t.FooterText,
+            t.ButtonsJson,
+            t.CreatedAt,
+            Status = status ?? "NOT_FOUND"
+        };
+    });
+
+    return Results.Ok(new { Templates = enriched, TotalCount = total });
 });
 
 app.MapGet("/api/rules", async (SqliteConnectionFactory factory) => 
@@ -128,7 +185,7 @@ app.MapGet("/api/logs", async (EventLogRepository repo) =>
 });
 
 // Boilerplate stubs to support UI Builder saves if not implemented
-app.MapPost("/api/templates", async (HotelAutomation.Core.Models.MessageTemplate template, ITemplateRepository repo) => 
+app.MapPost("/api/templates", async (HotelAutomation.Core.Models.MessageTemplate template, ITemplateRepository repo, WhatsAppApiClient whatsappClient, Microsoft.Extensions.Logging.ILogger<Program> logger) => 
 {
     var trimmed = template with 
     { 
@@ -138,20 +195,161 @@ app.MapPost("/api/templates", async (HotelAutomation.Core.Models.MessageTemplate
     };
 
     int paramCount = trimmed.BodyParamCount;
+    List<HotelAutomation.Core.Models.ParameterDefinition>? paramDefs = null;
     if (!string.IsNullOrEmpty(trimmed.ParameterDefinitionsJson))
     {
         try
         {
-            var defs = System.Text.Json.JsonSerializer.Deserialize<List<HotelAutomation.Core.Models.ParameterDefinition>>(trimmed.ParameterDefinitionsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (defs != null)
+            paramDefs = System.Text.Json.JsonSerializer.Deserialize<List<HotelAutomation.Core.Models.ParameterDefinition>>(trimmed.ParameterDefinitionsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (paramDefs != null)
             {
-                paramCount = defs.Count;
+                paramCount = paramDefs.Count;
             }
         }
         catch { }
     }
 
     var finalTemplate = trimmed with { BodyParamCount = paramCount };
+
+    // Build ordered sample values list (position 1..N), falling back to placeholder if blank
+    var orderedSamples = new List<string>();
+    if (paramDefs != null && paramDefs.Count > 0)
+    {
+        var sorted = paramDefs.OrderBy(d => d.Position).ToList();
+        for (int i = 0; i < sorted.Count; i++)
+        {
+            var sv = sorted[i].SampleValue;
+            orderedSamples.Add(string.IsNullOrWhiteSpace(sv) ? $"Sample{i + 1}" : sv);
+        }
+    }
+
+    // Register template in Meta WABA
+    var components = new List<object>();
+
+    if (!string.Equals(finalTemplate.HeaderType, "None", StringComparison.OrdinalIgnoreCase))
+    {
+        if (string.Equals(finalTemplate.HeaderType, "Text", StringComparison.OrdinalIgnoreCase))
+        {
+            // Check if header text contains a variable like {{1}}
+            bool headerHasVar = !string.IsNullOrEmpty(finalTemplate.HeaderText) &&
+                                System.Text.RegularExpressions.Regex.IsMatch(finalTemplate.HeaderText, @"\{\{\d+\}\}");
+            if (headerHasVar && orderedSamples.Count > 0)
+            {
+                components.Add(new {
+                    type = "HEADER",
+                    format = "TEXT",
+                    text = finalTemplate.HeaderText ?? string.Empty,
+                    example = new { header_text = new[] { orderedSamples[0] } }
+                });
+            }
+            else
+            {
+                components.Add(new {
+                    type = "HEADER",
+                    format = "TEXT",
+                    text = finalTemplate.HeaderText ?? string.Empty
+                });
+            }
+        }
+        else
+        {
+            components.Add(new {
+                type = "HEADER",
+                format = finalTemplate.HeaderType.ToUpperInvariant()
+            });
+        }
+    }
+
+    // Include example body_text if we have sample values - Meta requires this for templates with variables
+    if (orderedSamples.Count > 0)
+    {
+        components.Add(new {
+            type = "BODY",
+            text = finalTemplate.BodyText ?? string.Empty,
+            example = new { body_text = new[] { orderedSamples.ToArray() } }
+        });
+    }
+    else
+    {
+        components.Add(new {
+            type = "BODY",
+            text = finalTemplate.BodyText ?? string.Empty
+        });
+    }
+
+    if (!string.IsNullOrEmpty(finalTemplate.FooterText))
+    {
+        components.Add(new {
+            type = "FOOTER",
+            text = finalTemplate.FooterText
+        });
+    }
+
+    if (!string.IsNullOrEmpty(finalTemplate.ButtonsJson))
+    {
+        try
+        {
+            var rawButtons = System.Text.Json.JsonSerializer.Deserialize<List<System.Text.Json.JsonElement>>(finalTemplate.ButtonsJson);
+            if (rawButtons != null && rawButtons.Count > 0)
+            {
+                var formattedButtons = new List<object>();
+                foreach (var btn in rawButtons)
+                {
+                    if (btn.TryGetProperty("type", out var typeProp))
+                    {
+                        var typeVal = typeProp.GetString();
+                        if (typeVal == "QUICK_REPLY")
+                        {
+                            formattedButtons.Add(new {
+                                type = "QUICK_REPLY",
+                                text = btn.GetProperty("text").GetString()
+                            });
+                        }
+                        else if (typeVal == "URL")
+                        {
+                            formattedButtons.Add(new {
+                                type = "URL",
+                                text = btn.GetProperty("text").GetString(),
+                                url = btn.GetProperty("url").GetString()
+                            });
+                        }
+                        else if (typeVal == "PHONE_NUMBER")
+                        {
+                            formattedButtons.Add(new {
+                                type = "PHONE_NUMBER",
+                                text = btn.GetProperty("text").GetString(),
+                                phone_number = btn.GetProperty("phone_number").GetString()
+                            });
+                        }
+                    }
+                }
+
+                if (formattedButtons.Count > 0)
+                {
+                    components.Add(new {
+                        type = "BUTTONS",
+                        buttons = formattedButtons
+                    });
+                }
+            }
+        }
+        catch { }
+    }
+
+    var metaPayload = new {
+        name = finalTemplate.ExternalTemplateName,
+        category = finalTemplate.Category.ToUpperInvariant(),
+        language = finalTemplate.LanguageCode,
+        components = components
+    };
+
+    var (success, content, error) = await whatsappClient.CreateTemplateAsync(metaPayload);
+    if (!success)
+    {
+        logger.LogError("Meta API rejected template creation. Response: {MetaError}", error ?? "Unknown error");
+        return Results.BadRequest(new { message = $"Meta API Error: {error ?? "Unknown error"}" });
+    }
+
     var id = await repo.AddAsync(finalTemplate);
     return Results.Ok(new { id });
 });
@@ -247,16 +445,147 @@ app.MapPut("/api/templates/{id}", async (int id, HotelAutomation.Core.Models.Mes
     return success ? Results.Ok() : Results.NotFound();
 });
 
-app.MapDelete("/api/templates/{id}", async (int id, ITemplateRepository repo) => 
+app.MapDelete("/api/templates/{id}", async (int id, ITemplateRepository repo, WhatsAppApiClient whatsappClient) => 
 {
     try 
     {
+        var template = await repo.GetByIdAsync(id);
+        if (template != null)
+        {
+            await whatsappClient.DeleteTemplateAsync(template.ExternalTemplateName);
+        }
         var success = await repo.DeleteAsync(id);
         return success ? Results.Ok(new { message = "Template deleted successfully" }) : Results.NotFound();
     }
     catch (InvalidOperationException ex)
     {
         return Results.BadRequest(new { message = ex.Message });
+    }
+});
+
+app.MapPost("/api/templates/sync", async (ITemplateRepository repo, WhatsAppApiClient whatsappClient) => 
+{
+    try
+    {
+        var (success, content, error) = await whatsappClient.GetTemplatesAsync();
+        if (!success || string.IsNullOrEmpty(content))
+        {
+            return Results.BadRequest(new { message = $"Meta Sync Error: {error ?? "Unknown error"}" });
+        }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(content);
+        if (!doc.RootElement.TryGetProperty("data", out var dataProp) || dataProp.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return Results.Ok(new { message = "No templates found in Meta WABA" });
+        }
+
+        var localTemplates = await repo.GetAllAsync();
+        var localNames = localTemplates.Select(t => t.ExternalTemplateName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        int added = 0;
+
+        foreach (var item in dataProp.EnumerateArray())
+        {
+            if (item.TryGetProperty("name", out var nameProp))
+            {
+                var name = nameProp.GetString();
+                if (string.IsNullOrEmpty(name) || localNames.Contains(name)) continue;
+
+                var category = item.TryGetProperty("category", out var catProp) ? catProp.GetString() ?? "Utility" : "Utility";
+                var lang = item.TryGetProperty("language", out var langProp) ? langProp.GetString() ?? "en" : "en";
+                
+                string bodyText = "";
+                string headerText = "";
+                string headerType = "None";
+                string footerText = "";
+                string buttonsJson = "[]";
+
+                if (item.TryGetProperty("components", out var compsProp) && compsProp.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var comp in compsProp.EnumerateArray())
+                    {
+                        var type = comp.TryGetProperty("type", out var typeP) ? typeP.GetString() : "";
+                        if (type == "BODY")
+                        {
+                            bodyText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
+                        }
+                        else if (type == "HEADER")
+                        {
+                            headerType = comp.TryGetProperty("format", out var fmtP) ? fmtP.GetString() ?? "Text" : "Text";
+                            if (headerType == "TEXT")
+                            {
+                                headerText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
+                            }
+                        }
+                        else if (type == "FOOTER")
+                        {
+                            footerText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
+                        }
+                        else if (type == "BUTTONS")
+                        {
+                            var btns = new List<object>();
+                            if (comp.TryGetProperty("buttons", out var btnsP) && btnsP.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            {
+                                foreach (var b in btnsP.EnumerateArray())
+                                {
+                                    var bType = b.TryGetProperty("type", out var btP) ? btP.GetString() : "";
+                                    var bText = b.TryGetProperty("text", out var btTxt) ? btTxt.GetString() ?? "" : "";
+                                    if (bType == "QUICK_REPLY")
+                                    {
+                                        btns.Add(new { type = "QUICK_REPLY", text = bText });
+                                    }
+                                    else if (bType == "URL")
+                                    {
+                                        var bUrl = b.TryGetProperty("url", out var btUrl) ? btUrl.GetString() ?? "" : "";
+                                        btns.Add(new { type = "URL", text = bText, url = bUrl });
+                                    }
+                                    else if (bType == "PHONE_NUMBER")
+                                    {
+                                        var bPhone = b.TryGetProperty("phone_number", out var btPhone) ? btPhone.GetString() ?? "" : "";
+                                        btns.Add(new { type = "PHONE_NUMBER", text = bText, phone_number = bPhone });
+                                    }
+                                }
+                            }
+                            buttonsJson = System.Text.Json.JsonSerializer.Serialize(btns);
+                        }
+                    }
+                }
+
+                // Parse parameter definitions from bodyText
+                var matches = System.Text.RegularExpressions.Regex.Matches(bodyText, @"\{\{(\d+)\}\}");
+                var positions = matches.Cast<System.Text.RegularExpressions.Match>().Select(m => int.Parse(m.Groups[1].Value)).Distinct().OrderBy(p => p).ToList();
+                var defs = positions.Select(pos => new {
+                    Position = pos,
+                    Label = $"Variable {pos}",
+                    SampleValue = "",
+                    SourceColumn = "",
+                    DynamicKey = ""
+                }).ToList();
+
+                var newT = new HotelAutomation.Core.Models.MessageTemplate
+                {
+                    Name = name,
+                    ExternalTemplateName = name,
+                    LanguageCode = lang,
+                    Category = category,
+                    HeaderType = headerType,
+                    BodyText = bodyText,
+                    HeaderText = string.IsNullOrEmpty(headerText) ? null : headerText,
+                    FooterText = string.IsNullOrEmpty(footerText) ? null : footerText,
+                    ButtonsJson = buttonsJson,
+                    ParameterDefinitionsJson = System.Text.Json.JsonSerializer.Serialize(defs),
+                    BodyParamCount = defs.Count
+                };
+
+                await repo.AddAsync(newT);
+                added++;
+            }
+        }
+
+        return Results.Ok(new { message = "Sync completed successfully", addedCount = added });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"Sync failed: {ex.Message}" });
     }
 });
 
@@ -601,7 +930,17 @@ app.MapGet("/api/conversations", async (SqliteConnectionFactory dbFactory) =>
             i.FromPhoneNumber as PhoneNumber, 
             COALESCE(c.FirstName, (SELECT SenderName FROM InboxMessages WHERE FromPhoneNumber = i.FromPhoneNumber AND SenderName IS NOT NULL AND SenderName != '' ORDER BY ReceivedAt DESC LIMIT 1)) as FirstName, 
             c.LastName,
-            (SELECT Content FROM InboxMessages WHERE FromPhoneNumber = i.FromPhoneNumber ORDER BY ReceivedAt DESC LIMIT 1) as LastMessageText,
+            (SELECT 
+                CASE MessageType
+                    WHEN 'image' THEN '📷 Image'
+                    WHEN 'audio' THEN '🎵 Audio'
+                    WHEN 'video' THEN '🎥 Video'
+                    WHEN 'document' THEN '📄 Document'
+                    ELSE Content
+                END
+             FROM InboxMessages 
+             WHERE FromPhoneNumber = i.FromPhoneNumber 
+             ORDER BY ReceivedAt DESC LIMIT 1) as LastMessageText,
             (SELECT ReceivedAt FROM InboxMessages WHERE FromPhoneNumber = i.FromPhoneNumber ORDER BY ReceivedAt DESC LIMIT 1) as LastMessageAt,
             (SELECT COUNT(*) FROM InboxMessages WHERE FromPhoneNumber = i.FromPhoneNumber AND IsRead = 0) as UnreadCount
         FROM InboxMessages i
@@ -626,7 +965,9 @@ app.MapGet("/api/conversations/{phoneNumber}/messages", async (string phoneNumbe
                 FromPhoneNumber as PhoneNumber,
                 'Guest' as Sender,
                 Content,
-                ReceivedAt as SentAt
+                ReceivedAt as SentAt,
+                MessageType,
+                MediaUrl
             FROM InboxMessages
             WHERE FromPhoneNumber = @Phone
             
@@ -637,7 +978,9 @@ app.MapGet("/api/conversations/{phoneNumber}/messages", async (string phoneNumbe
                 PhoneNumber,
                 Sender,
                 Content,
-                SentAt
+                SentAt,
+                'text' as MessageType,
+                NULL as MediaUrl
             FROM ConversationReplies
             WHERE PhoneNumber = @Phone
         )
@@ -726,6 +1069,127 @@ app.MapPost("/api/conversations/{phoneNumber}/reply", async (string phoneNumber,
 
     return Results.Ok(new { message = "Reply sent successfully!", id = replyId });
 });
+
+app.MapDelete("/api/conversations/{phoneNumber}", async (string phoneNumber, SqliteConnectionFactory dbFactory) =>
+{
+    using var conn = await dbFactory.OpenAsync();
+    await conn.ExecuteAsync("DELETE FROM InboxMessages WHERE FromPhoneNumber = @Phone", new { Phone = phoneNumber });
+    await conn.ExecuteAsync("DELETE FROM ConversationReplies WHERE PhoneNumber = @Phone", new { Phone = phoneNumber });
+    return Results.Ok(new { message = "Conversation deleted successfully." });
+});
+
+app.MapPost("/api/conversations/{phoneNumber}/reply-file", async (
+    string phoneNumber,
+    IFormFile file,
+    [Microsoft.AspNetCore.Mvc.FromForm] string? caption,
+    SqliteConnectionFactory dbFactory,
+    WhatsAppApiClient apiClient,
+    ILogger<Program> logger) =>
+{
+    if (file == null || file.Length == 0)
+    {
+        return Results.BadRequest(new { message = "File attachment cannot be empty." });
+    }
+
+    using var conn = await dbFactory.OpenAsync();
+
+    // Verify 24-hour service window from Meta. Check guest's last message time
+    var lastReceived = await conn.QueryFirstOrDefaultAsync<string>(
+        "SELECT ReceivedAt FROM InboxMessages WHERE FromPhoneNumber = @Phone ORDER BY ReceivedAt DESC LIMIT 1",
+        new { Phone = phoneNumber }
+    );
+
+    if (string.IsNullOrEmpty(lastReceived))
+    {
+        return Results.BadRequest(new { message = "Cannot initiate a conversation without prior incoming WhatsApp message from the recipient." });
+    }
+
+    if (DateTimeOffset.TryParse(lastReceived, out var lastReceivedTime))
+    {
+        var age = DateTimeOffset.UtcNow - lastReceivedTime;
+        if (age.TotalHours > 24)
+        {
+            return Results.BadRequest(new { message = "The 24-hour customer service window has expired. You must use an approved Meta Message Template to resume contact." });
+        }
+    }
+
+    // Read file bytes
+    using var ms = new MemoryStream();
+    await file.CopyToAsync(ms);
+    var fileBytes = ms.ToArray();
+
+    // Upload media to Meta
+    var (uploadSuccess, mediaId, uploadError) = await apiClient.UploadMediaAsync(fileBytes, file.FileName, file.ContentType);
+    if (!uploadSuccess || string.IsNullOrEmpty(mediaId))
+    {
+        logger.LogError("Failed to upload media to Meta: {Error}", uploadError);
+        return Results.BadRequest(new { message = $"Failed to upload media to Meta: {uploadError ?? "Unknown error"}" });
+    }
+
+    // Construct WhatsApp payload depending on file type
+    object payload;
+    bool isImage = file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+
+    if (isImage)
+    {
+        payload = new
+        {
+            messaging_product = "whatsapp",
+            recipient_type = "individual",
+            to = phoneNumber,
+            type = "image",
+            image = new { id = mediaId, caption = caption }
+        };
+    }
+    else
+    {
+        payload = new
+        {
+            messaging_product = "whatsapp",
+            recipient_type = "individual",
+            to = phoneNumber,
+            type = "document",
+            document = new { id = mediaId, filename = file.FileName, caption = caption }
+        };
+    }
+
+    var (success, errorBody) = await apiClient.PostAsync(payload);
+    if (!success)
+    {
+        logger.LogError("Failed to send media reply to {Phone}. Meta returned: {Error}", phoneNumber, errorBody);
+        return Results.BadRequest(new { message = $"Meta API Rejected Reply: {errorBody ?? "Unknown Error"}" });
+    }
+
+    // Parse external message ID if present
+    string? externalId = null;
+    try
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(errorBody ?? "{}");
+        if (doc.RootElement.TryGetProperty("messages", out var messagesArray) &&
+            messagesArray.GetArrayLength() > 0 &&
+            messagesArray[0].TryGetProperty("id", out var idProp))
+        {
+            externalId = idProp.GetString();
+        }
+    }
+    catch { }
+
+    var replyId = externalId ?? Guid.NewGuid().ToString();
+    var content = $"[File: {file.FileName}] {caption ?? ""}".Trim();
+
+    await conn.ExecuteAsync(@"
+        INSERT INTO ConversationReplies (Id, PhoneNumber, Sender, Content, SentAt)
+        VALUES (@Id, @Phone, 'Agent', @Content, @SentAt);",
+        new
+        {
+            Id = replyId,
+            Phone = phoneNumber,
+            Content = content,
+            SentAt = DateTimeOffset.UtcNow.ToString("O")
+        });
+
+    return Results.Ok(new { message = "File sent successfully!", id = replyId });
+}).DisableAntiforgery();
 
 // ── Analytics Overview Endpoints (Part B) ──
 
@@ -883,7 +1347,7 @@ app.MapGet("/api/webhooks/whatsapp", (HttpContext ctx, Microsoft.Extensions.Opti
     return Results.BadRequest("Verification failed");
 });
 
-app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository inboxRepo, JobRepository jobRepo, SqliteConnectionFactory dbFactory, UnsubscribedContactRepository unsubRepo, Microsoft.Extensions.Logging.ILogger<Program> logger) => 
+app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository inboxRepo, JobRepository jobRepo, SqliteConnectionFactory dbFactory, UnsubscribedContactRepository unsubRepo, HotelAutomation.Connectors.WhatsApp.WhatsAppApiClient whatsappClient, Microsoft.Extensions.Logging.ILogger<Program> logger) => 
 {
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
@@ -921,13 +1385,59 @@ app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository in
                     {
                         var from = msg.GetProperty("from").GetString();
 
-                        // Skip non-text messages (images, video, audio, etc.)
-                        if (!msg.TryGetProperty("text", out var textProp))
+                        var msgType = "text";
+                        if (msg.TryGetProperty("type", out var typeProp))
                         {
-                            logger.LogWarning("Skipping non-text message from {From}", from);
+                            msgType = typeProp.GetString() ?? "text";
+                        }
+
+                        var text = "";
+                        string? mediaUrl = null;
+
+                        if (msgType == "text" && msg.TryGetProperty("text", out var textProp))
+                        {
+                            text = textProp.GetProperty("body").GetString() ?? "";
+                        }
+                        else if ((msgType == "image" || msgType == "audio" || msgType == "video" || msgType == "document") && msg.TryGetProperty(msgType, out var mediaProp))
+                        {
+                            if (mediaProp.TryGetProperty("caption", out var captionProp)) text = captionProp.GetString() ?? "";
+                            else if (mediaProp.TryGetProperty("filename", out var fnProp)) text = fnProp.GetString() ?? "";
+
+                            if (mediaProp.TryGetProperty("id", out var mediaIdProp))
+                            {
+                                var mediaId = mediaIdProp.GetString();
+                                if (!string.IsNullOrEmpty(mediaId))
+                                {
+                                    var (success, bytes, mime, err) = await whatsappClient.DownloadMediaAsync(mediaId);
+                                    if (success && bytes != null)
+                                    {
+                                        var ext = msgType switch {
+                                            "image" => ".jpg",
+                                            "audio" => ".ogg",
+                                            "video" => ".mp4",
+                                            "document" => ".pdf",
+                                            _ => ".bin"
+                                        };
+                                        if (mime?.Contains("png") == true) ext = ".png";
+                                        
+                                        var dir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "inbox");
+                                        Directory.CreateDirectory(dir);
+                                        var filename = $"{Guid.NewGuid()}{ext}";
+                                        await File.WriteAllBytesAsync(Path.Combine(dir, filename), bytes);
+                                        mediaUrl = $"/uploads/inbox/{filename}";
+                                    }
+                                    else
+                                    {
+                                        logger.LogWarning("Failed to download media {MediaId}: {Error}", mediaId, err);
+                                    }
+                                }
+                            }
+                        }
+                        else if (msgType != "text")
+                        {
+                            logger.LogWarning("Skipping unsupported message type {Type} from {From}", msgType, from);
                             continue;
                         }
-                        var text = textProp.GetProperty("body").GetString();
                         
                         var senderName = string.Empty;
                         if (value.TryGetProperty("contacts", out var contacts))
@@ -948,7 +1458,9 @@ app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository in
                         {
                             FromPhoneNumber = from ?? "unknown",
                             SenderName = senderName,
-                            Content = text ?? "",
+                            Content = text,
+                            MessageType = msgType,
+                            MediaUrl = mediaUrl,
                             IsRead = false,
                             ReceivedAt = DateTimeOffset.UtcNow
                         };
@@ -1460,6 +1972,9 @@ app.Lifetime.ApplicationStarted.Register(() =>
         using var cmd = conn.CreateCommand();
         cmd.CommandText = initScript;
         cmd.ExecuteNonQuery();
+
+        try { Dapper.SqlMapper.Execute(conn, "ALTER TABLE InboxMessages ADD COLUMN MessageType TEXT NOT NULL DEFAULT 'text'"); } catch { }
+        try { Dapper.SqlMapper.Execute(conn, "ALTER TABLE InboxMessages ADD COLUMN MediaUrl TEXT NULL"); } catch { }
         
         // Open browser automatically
         var url = app.Urls.FirstOrDefault() ?? "http://localhost:5000";

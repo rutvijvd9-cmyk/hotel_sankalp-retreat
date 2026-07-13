@@ -91,4 +91,140 @@ public sealed class WhatsAppApiClient
             return (false, null, ex.Message);
         }
     }
+
+    /// <summary>
+    /// Fetches all message templates from the WhatsApp Business Account.
+    /// </summary>
+    public async Task<(bool Success, string? Content, string? Error)> GetTemplatesAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var url = $"https://graph.facebook.com/{_options.ApiVersion}/{_options.WhatsAppBusinessAccountId}/message_templates?limit=1000";
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.AccessToken);
+
+            var response = await _httpClient.SendAsync(request, ct);
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                return (true, responseBody, null);
+            }
+            return (false, null, responseBody);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get message templates from Meta");
+            return (false, null, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Creates a message template in the WhatsApp Business Account.
+    /// </summary>
+    public async Task<(bool Success, string? Content, string? Error)> CreateTemplateAsync(object payload, CancellationToken ct = default)
+    {
+        try
+        {
+            var url = $"https://graph.facebook.com/{_options.ApiVersion}/{_options.WhatsAppBusinessAccountId}/message_templates";
+            var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = JsonContent.Create(payload)
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.AccessToken);
+
+            var response = await _httpClient.SendAsync(request, ct);
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                return (true, responseBody, null);
+            }
+            return (false, null, responseBody);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create message template in Meta");
+            return (false, null, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Deletes a message template in the WhatsApp Business Account.
+    /// </summary>
+    public async Task<(bool Success, string? Content, string? Error)> DeleteTemplateAsync(string templateName, CancellationToken ct = default)
+    {
+        try
+        {
+            var url = $"https://graph.facebook.com/{_options.ApiVersion}/{_options.WhatsAppBusinessAccountId}/message_templates?name={templateName}";
+            var request = new HttpRequestMessage(HttpMethod.Delete, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.AccessToken);
+
+            var response = await _httpClient.SendAsync(request, ct);
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                return (true, responseBody, null);
+            }
+            return (false, null, responseBody);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete message template from Meta");
+            return (false, null, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Downloads media from Meta's CDN given a media_id.
+    /// </summary>
+    public async Task<(bool Success, byte[]? FileBytes, string? MimeType, string? Error)> DownloadMediaAsync(string mediaId, CancellationToken ct = default)
+    {
+        try
+        {
+            // 1. Get Media URL
+            var urlRequestUrl = $"https://graph.facebook.com/{_options.ApiVersion}/{mediaId}";
+            var urlRequest = new HttpRequestMessage(HttpMethod.Get, urlRequestUrl);
+            urlRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.AccessToken);
+
+            var urlResponse = await _httpClient.SendAsync(urlRequest, ct);
+            var urlResponseBody = await urlResponse.Content.ReadAsStringAsync(ct);
+
+            if (!urlResponse.IsSuccessStatusCode)
+            {
+                return (false, null, null, $"Failed to get media URL: {urlResponseBody}");
+            }
+
+            using var doc = System.Text.Json.JsonDocument.Parse(urlResponseBody);
+            if (!doc.RootElement.TryGetProperty("url", out var urlProp) || !doc.RootElement.TryGetProperty("mime_type", out var mimeProp))
+            {
+                return (false, null, null, "Media URL or mime_type not found in response.");
+            }
+
+            var downloadUrl = urlProp.GetString();
+            var mimeType = mimeProp.GetString();
+
+            if (string.IsNullOrEmpty(downloadUrl)) return (false, null, null, "Download URL is empty.");
+
+            // 2. Download actual bytes
+            var downloadRequest = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
+            downloadRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.AccessToken);
+            
+            var downloadResponse = await _httpClient.SendAsync(downloadRequest, ct);
+            if (!downloadResponse.IsSuccessStatusCode)
+            {
+                var errBody = await downloadResponse.Content.ReadAsStringAsync(ct);
+                return (false, null, null, $"Failed to download media bytes: {errBody}");
+            }
+
+            var bytes = await downloadResponse.Content.ReadAsByteArrayAsync(ct);
+            return (true, bytes, mimeType, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to download media {MediaId}", mediaId);
+            return (false, null, null, ex.Message);
+        }
+    }
 }

@@ -19,14 +19,16 @@ namespace HotelAutomation.Data.Repositories
         {
             using var connection = await _dbFactory.OpenAsync();
             const string sql = @"
-                INSERT INTO InboxMessages (Id, FromPhoneNumber, SenderName, Content, IsRead, ReceivedAt)
-                VALUES (@Id, @FromPhoneNumber, @SenderName, @Content, @IsRead, @ReceivedAt);";
+                INSERT INTO InboxMessages (Id, FromPhoneNumber, SenderName, Content, MessageType, MediaUrl, IsRead, ReceivedAt)
+                VALUES (@Id, @FromPhoneNumber, @SenderName, @Content, @MessageType, @MediaUrl, @IsRead, @ReceivedAt);";
             
             await connection.ExecuteAsync(sql, new {
                 Id = message.Id,
                 message.FromPhoneNumber,
                 message.SenderName,
                 message.Content,
+                message.MessageType,
+                message.MediaUrl,
                 IsRead = message.IsRead ? 1 : 0,
                 message.ReceivedAt
             });

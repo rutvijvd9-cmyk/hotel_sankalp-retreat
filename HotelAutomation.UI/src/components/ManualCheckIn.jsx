@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Send, Hotel, CheckCircle2, User, Phone, DoorClosed, DollarSign, Calendar, Lock, Hash, Link, FileText } from 'lucide-react';
+import { Send, Hotel, CheckCircle2, User, Phone, DoorClosed, DollarSign, Calendar, Hash, Link } from 'lucide-react';
 
 export default function ManualCheckIn() {
   const [formData, setFormData] = useState({
@@ -8,11 +8,8 @@ export default function ManualCheckIn() {
     RoomNumber: '',
     CheckInDate: '',
     CheckOutDate: '',
-    WifiPassword: '',
     BookingReference: '',
-    GuestFeedbackLink: '',
-    HotelName: '',
-    ExtraNote: ''
+    HotelName: ''
   });
   
   const [status, setStatus] = useState('');
@@ -44,8 +41,8 @@ export default function ManualCheckIn() {
         setStatus('success');
         setFormData({
           GuestName: '', PhoneNumber: '', RoomNumber: '', 
-          CheckInDate: '', CheckOutDate: '', WifiPassword: '', 
-          BookingReference: '', GuestFeedbackLink: '', HotelName: '', ExtraNote: ''
+          CheckInDate: '', CheckOutDate: '', 
+          BookingReference: '', HotelName: ''
         });
         setTimeout(() => setStatus(''), 3000);
       } else {
@@ -111,11 +108,6 @@ export default function ManualCheckIn() {
         </div>
 
         <div className="form-group">
-          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><Lock size={16} /> Wifi Password</label>
-          <input type="text" name="WifiPassword" value={formData.WifiPassword} onChange={handleChange} className="premium-chat-input" placeholder="Guest@2026" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
-        </div>
-
-        <div className="form-group">
           <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><Hash size={16} /> Booking Reference</label>
           <input type="text" name="BookingReference" value={formData.BookingReference} onChange={handleChange} className="premium-chat-input" placeholder="BK-12345" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
@@ -125,15 +117,7 @@ export default function ManualCheckIn() {
           <input type="text" name="HotelName" value={formData.HotelName} onChange={handleChange} className="premium-chat-input" placeholder="Sankalp Retreat" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
         </div>
 
-        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><Link size={16} /> Feedback Link</label>
-          <input type="text" name="GuestFeedbackLink" value={formData.GuestFeedbackLink} onChange={handleChange} className="premium-chat-input" placeholder="https://g.page/review" style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
-        </div>
 
-        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><FileText size={16} /> Extra Note</label>
-          <textarea name="ExtraNote" value={formData.ExtraNote} onChange={handleChange} className="premium-chat-input" placeholder="Any special requests or notes" rows={3} style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none', resize: 'vertical' }}></textarea>
-        </div>
 
         <div style={{ gridColumn: '1 / -1', marginTop: '24px' }}>
           <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', padding: '14px', fontSize: '1rem', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', borderRadius: '12px' }}>

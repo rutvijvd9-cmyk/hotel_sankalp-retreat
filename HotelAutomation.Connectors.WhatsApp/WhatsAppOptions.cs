@@ -12,6 +12,7 @@ public sealed class WhatsAppOptions
     public string PhoneNumberId { get; set; } = string.Empty;
     public string ApiVersion { get; set; } = "v19.0";
     public string VerifyToken { get; set; } = string.Empty;
+    public string WhatsAppBusinessAccountId { get; set; } = string.Empty;
 
     public string BaseUrl => $"https://graph.facebook.com/{ApiVersion}/{PhoneNumberId}/messages";
 }

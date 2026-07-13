@@ -62,8 +62,8 @@ body {
 }
 
 .sidebar {
-  width: 260px;
-  min-width: 260px;
+  width: 210px;
+  min-width: 190;
   background-color: var(--sidebar-bg);
   color: var(--sidebar-text);
   display: flex;
@@ -81,14 +81,27 @@ body {
 }
 
 .sidebar-header {
-  padding: 24px;
+  padding: 20px 20px 16px;
   font-size: 1.25rem;
   font-weight: 700;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 12px;
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 12px;
+  min-height: 72px;
+  overflow: hidden;
+}
+
+.sidebar-logo {
+  display: block;
+  width: 100%;
+  max-width: 200px;
+  height: auto;
+  max-height: 56px;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .nav-item {
@@ -453,6 +466,7 @@ body {
 
 .premium-chat-sidebar {
   width: 340px;
+  flex-shrink: 0;
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
@@ -503,6 +517,7 @@ body {
 
 .premium-chat-main {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: #f8fafc;
@@ -537,6 +552,8 @@ body {
   line-height: 1.5;
   position: relative;
   box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .premium-bubble.incoming {
@@ -732,6 +749,8 @@ body {
   line-height: 1.5;
   position: relative;
   box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .premium-bubble.incoming {

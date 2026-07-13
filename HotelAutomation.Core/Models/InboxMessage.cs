@@ -8,6 +8,8 @@ namespace HotelAutomation.Core.Models
         public string FromPhoneNumber { get; set; } = string.Empty;
         public string SenderName { get; set; } = string.Empty;
         public string Content { get; set; } = string.Empty;
+        public string MessageType { get; set; } = "text"; // "text", "image", "audio", "video", "document"
+        public string? MediaUrl { get; set; }
         public bool IsRead { get; set; } = false;
         public DateTimeOffset ReceivedAt { get; set; } = DateTimeOffset.UtcNow;
     }

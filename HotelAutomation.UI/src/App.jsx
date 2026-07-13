@@ -11,6 +11,14 @@ import ManualCheckOut from './components/ManualCheckOut';
 
 const API_BASE = '/api';
 
+const parseDateSafe = (dateStr) => {
+  if (!dateStr) return new Date();
+  let normalized = dateStr.trim().replace(' ', 'T');
+  normalized = normalized.replace(/\.(\d{1,6})/, (match, p1) => `.${p1.substring(0, 3)}`);
+  const parsed = new Date(normalized);
+  return isNaN(parsed.getTime()) ? new Date(dateStr) : parsed;
+};
+
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const prefContactId = params.get('preferences_for');
@@ -41,6 +49,7 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [templatesList, setTemplatesList] = useState([]);
   const [totalTemplates, setTotalTemplates] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [rulesList, setRulesList] = useState([]);
   const [broadcasts, setBroadcasts] = useState([]);
   const [bPage, setBPage] = useState(1);
@@ -93,9 +102,14 @@ export default function App() {
   const [analyticsRulesPage, setAnalyticsRulesPage] = useState(1);
   const [analyticsBroadcastsPage, setAnalyticsBroadcastsPage] = useState(1);
   const [errorReplyMessage, setErrorReplyMessage] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [fileCaption, setFileCaption] = useState('');
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const [isDeletingConversation, setIsDeletingConversation] = useState(false);
 
   // Scroll handler ref for chat thread
   const messagesEndRef = React.useRef(null);
+  const fileInputRef = React.useRef(null);
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -218,18 +232,16 @@ export default function App() {
       }
 
       // Fetch active conversations list
-      if (activeTab === 'inbox') {
-        const convRes = await fetch(`${API_BASE}/conversations`).catch(() => null);
-        if (convRes && convRes.ok) {
-          const convData = await convRes.json();
-          setConversations(convData);
-          
-          // Keep active conversation messages in sync
-          if (selectedConversation) {
-            const msgRes = await fetch(`${API_BASE}/conversations/${encodeURIComponent(selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}/messages`).catch(() => null);
-            if (msgRes && msgRes.ok) {
-              setChatMessages(await msgRes.json());
-            }
+      const convRes = await fetch(`${API_BASE}/conversations`).catch(() => null);
+      if (convRes && convRes.ok) {
+        const convData = await convRes.json();
+        setConversations(convData);
+        
+        // Keep active conversation messages in sync
+        if (activeTab === 'inbox' && selectedConversation) {
+          const msgRes = await fetch(`${API_BASE}/conversations/${encodeURIComponent(selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}/messages`).catch(() => null);
+          if (msgRes && msgRes.ok) {
+            setChatMessages(await msgRes.json());
           }
         }
       }
@@ -1160,7 +1172,13 @@ export default function App() {
             setEditingTemplateId(null);
             fetchData();
           } else {
-            alert('Failed to save template');
+            try {
+              const errData = await res.json();
+              const metaMsg = errData?.message || 'Failed to save template';
+              alert(`Failed to save template:\n\n${metaMsg}`);
+            } catch {
+              alert('Failed to save template');
+            }
           }
         } catch (err) {
           alert('Error saving template');
@@ -1249,6 +1267,29 @@ export default function App() {
         }
       };
 
+      const handleSyncTemplates = async () => {
+        setIsSyncing(true);
+        try {
+          const res = await fetch(`${API_BASE}/templates/sync`, { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            alert(`Sync successful! Added ${data.addedCount} new templates from Meta.`);
+            fetchData();
+          } else {
+            let errorMsg = 'Failed to sync templates';
+            try {
+              const err = await res.json();
+              if (err && err.message) errorMsg = err.message;
+            } catch (e) {}
+            alert(errorMsg);
+          }
+        } catch (e) {
+          alert('Error syncing templates with Meta');
+        } finally {
+          setIsSyncing(false);
+        }
+      };
+      
       const handleDeleteTemplate = async (id) => {
         if (!window.confirm('Are you sure you want to delete this template?')) return;
         try {
@@ -1272,14 +1313,24 @@ export default function App() {
         <div className="premium-table-card" style={{ padding: '32px' }}>
           <div className="premium-toolbar">
             <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>Message Templates</h3>
-            <button className="btn btn-primary" onClick={() => {
-              setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1, Category: 'Utility', HeaderType: 'None', BodyText: '', ParameterDefinitionsJson: '[]' });
-              setIsEditingTemplate(false);
-              setEditingTemplateId(null);
-              setShowTemplateModal(true);
-            }}>
-              <Plus size={16} /> Create Template
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button 
+                className="btn btn-secondary" 
+                onClick={handleSyncTemplates} 
+                disabled={isSyncing}
+                style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                {isSyncing ? 'Syncing...' : 'Sync with Meta'}
+              </button>
+              <button className="btn btn-primary" onClick={() => {
+                setNewTemplate({ Name: '', ExternalTemplateName: '', LanguageCode: 'en', ChannelType: 'WhatsApp', BodyParamCount: -1, Category: 'Utility', HeaderType: 'None', BodyText: '', ParameterDefinitionsJson: '[]' });
+                setIsEditingTemplate(false);
+                setEditingTemplateId(null);
+                setShowTemplateModal(true);
+              }}>
+                <Plus size={16} /> Create Template
+              </button>
+            </div>
           </div>
           
           {showTemplateModal && createPortal((
@@ -1293,42 +1344,42 @@ export default function App() {
                 <div style={{ display: 'flex', gap: '24px', flex: 1, overflow: 'auto' }}>
                   {/* Left Column: Form & Parameter Table */}
                   <div style={{ flex: 1.3, display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', paddingRight: '8px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Display Name (e.g. CheckIn Welcome)</label>
-                        <input type="text" className="input" placeholder="Display Name" value={newTemplate.Name} onChange={e => setNewTemplate({...newTemplate, Name: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85em', color: 'var(--text-secondary)' }}>Display Name (e.g. CheckIn Welcome)</label>
+                        <input type="text" className="form-control" placeholder="Display Name" value={newTemplate.Name} onChange={e => setNewTemplate({...newTemplate, Name: e.target.value})} />
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Meta Template Name</label>
-                        <input type="text" className="input" placeholder="e.g. hotel_checkin" value={newTemplate.ExternalTemplateName} onChange={e => setNewTemplate({...newTemplate, ExternalTemplateName: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85em', color: 'var(--text-secondary)' }}>Meta Template Name</label>
+                        <input type="text" className="form-control" placeholder="e.g. hotel_checkin" value={newTemplate.ExternalTemplateName} onChange={e => setNewTemplate({...newTemplate, ExternalTemplateName: e.target.value})} />
                       </div>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Language (e.g. en_US)</label>
-                        <input type="text" className="input" placeholder="en" value={newTemplate.LanguageCode} onChange={e => setNewTemplate({...newTemplate, LanguageCode: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85em', color: 'var(--text-secondary)' }}>Language (e.g. en_US)</label>
+                        <input type="text" className="form-control" placeholder="en" value={newTemplate.LanguageCode} onChange={e => setNewTemplate({...newTemplate, LanguageCode: e.target.value})} />
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Channel Type</label>
-                        <select className="input" value={newTemplate.ChannelType} onChange={e => setNewTemplate({...newTemplate, ChannelType: e.target.value})} style={{ width: '100%', padding: '8px 24px 8px 8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85em', color: 'var(--text-secondary)' }}>Channel Type</label>
+                        <select className="form-control" value={newTemplate.ChannelType} onChange={e => setNewTemplate({...newTemplate, ChannelType: e.target.value})} style={{ appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%2364748b\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '16px', paddingRight: '36px' }}>
                           <option value="WhatsApp">WhatsApp</option>
                           <option value="SMS">SMS</option>
                         </select>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Category</label>
-                        <select className="input" value={newTemplate.Category || 'Utility'} onChange={e => setNewTemplate({...newTemplate, Category: e.target.value})} style={{ width: '100%', padding: '8px 24px 8px 8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85em', color: 'var(--text-secondary)' }}>Category</label>
+                        <select className="form-control" value={newTemplate.Category || 'Utility'} onChange={e => setNewTemplate({...newTemplate, Category: e.target.value})} style={{ appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%2364748b\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '16px', paddingRight: '36px' }}>
                           <option value="Utility">Utility (Transactional)</option>
                           <option value="Marketing">Marketing (Promotional)</option>
                         </select>
                       </div>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
                       <div>
-                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>Header Media Type</label>
-                        <select className="input" value={newTemplate.HeaderType || 'None'} onChange={e => setNewTemplate({...newTemplate, HeaderType: e.target.value})} style={{ width: '100%', padding: '8px 24px 8px 8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85em', color: 'var(--text-secondary)' }}>Header Media Type</label>
+                        <select className="form-control" value={newTemplate.HeaderType || 'None'} onChange={e => setNewTemplate({...newTemplate, HeaderType: e.target.value})} style={{ appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%2364748b\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '16px', paddingRight: '36px' }}>
                           <option value="None">None</option>
                           <option value="Text">Text</option>
                           <option value="Document">Document (PDF Invoice generation)</option>
@@ -1339,7 +1390,7 @@ export default function App() {
                       
                       {newTemplate.HeaderType && newTemplate.HeaderType !== 'None' && (
                         <div>
-                          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, fontSize: '0.85em' }}>
+                          <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85em', color: 'var(--text-secondary)' }}>
                             {newTemplate.HeaderType === 'Text' && 'Header Text'}
                             {newTemplate.HeaderType === 'Image' && 'Header Image URL'}
                             {newTemplate.HeaderType === 'Video' && 'Header Video URL'}
@@ -1347,25 +1398,24 @@ export default function App() {
                           </label>
                           <input 
                             type="text" 
-                            className="input" 
+                            className="form-control" 
                             placeholder={
                               newTemplate.HeaderType === 'Text' ? "Enter header text (e.g. Booking Confirmed)" : "https://domain.com/media-file"
                             }
                             value={newTemplate.HeaderText || ''} 
                             onChange={e => setNewTemplate({...newTemplate, HeaderText: e.target.value})} 
-                            style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} 
                           />
                         </div>
                       )}
                     </div>
 
                     <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <label style={{ fontWeight: 500, fontSize: '0.85em' }}>Body Text</label>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <label style={{ fontWeight: 600, fontSize: '0.85em', color: 'var(--text-secondary)' }}>Body Text</label>
                         <span style={{ fontSize: '0.8em', color: 'var(--text-secondary, #64748b)' }}>Use <code>{"{{1}}"}</code>, <code>{"{{2}}"}</code> for placeholders</span>
                       </div>
                       <textarea 
-                        className="input" 
+                        className="form-control" 
                         rows={5} 
                         placeholder="Hello {{1}}, welcome to Sankalp Retreat! Your room number is {{2}}." 
                         value={newTemplate.BodyText || ''} 
@@ -1399,7 +1449,7 @@ export default function App() {
                             BodyParamCount: updatedDefs.length
                           });
                         }} 
-                        style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', fontFamily: 'monospace', resize: 'vertical' }} 
+                        style={{ fontFamily: 'monospace', resize: 'vertical' }} 
                       />
                     </div>
 
@@ -1433,26 +1483,28 @@ export default function App() {
                                     <td style={{ padding: '8px' }}>
                                       <input 
                                         type="text" 
+                                        className="form-control"
                                         value={def.Label || def.label || ''} 
                                         onChange={e => {
                                           const val = e.target.value;
                                           const next = defs.map((d, i) => i === idx ? { ...d, Label: val } : d);
                                           setNewTemplate({ ...newTemplate, ParameterDefinitionsJson: JSON.stringify(next) });
                                         }}
-                                        style={{ width: '100%', padding: '4px', border: '1px solid #ccc', borderRadius: '3px' }} 
+                                        style={{ padding: '6px 10px', fontSize: '0.9em' }} 
                                         placeholder="e.g. GuestName"
                                       />
                                     </td>
                                     <td style={{ padding: '8px' }}>
                                       <input 
                                         type="text" 
+                                        className="form-control"
                                         value={def.SampleValue || def.sampleValue || ''} 
                                         onChange={e => {
                                           const val = e.target.value;
                                           const next = defs.map((d, i) => i === idx ? { ...d, SampleValue: val } : d);
                                           setNewTemplate({ ...newTemplate, ParameterDefinitionsJson: JSON.stringify(next) });
                                         }}
-                                        style={{ width: '100%', padding: '4px', border: '1px solid #ccc', borderRadius: '3px' }} 
+                                        style={{ padding: '6px 10px', fontSize: '0.9em' }} 
                                         placeholder="John Doe"
                                       />
                                     </td>
@@ -1508,7 +1560,8 @@ export default function App() {
                                           }
                                           setNewTemplate({ ...newTemplate, ParameterDefinitionsJson: JSON.stringify(next) });
                                         }}
-                                        style={{ width: '100%', padding: '4px', border: '1px solid var(--border-color, #ccc)', borderRadius: '3px', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)', marginBottom: (def.DynamicKey || def.dynamicKey) ? '4px' : '0' }}
+                                        className="form-control"
+                                        style={{ appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%2364748b\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '12px', paddingRight: '24px', padding: '6px 10px', fontSize: '0.9em', marginBottom: (def.DynamicKey || def.dynamicKey) ? '4px' : '0' }}
                                       >
                                         <option value="">-- None --</option>
                                         <option value="__dynamic__">📡 Event / API Variable</option>
@@ -1538,6 +1591,7 @@ export default function App() {
                                         return (
                                           <input
                                             type="text"
+                                            className="form-control"
                                             value={dynKey.trim()}
                                             onChange={e => {
                                               const val = e.target.value;
@@ -1552,7 +1606,7 @@ export default function App() {
                                               setNewTemplate({ ...newTemplate, ParameterDefinitionsJson: JSON.stringify(next) });
                                             }}
                                             placeholder="e.g. CheckInDate"
-                                            style={{ width: '100%', padding: '4px', border: '1px solid var(--primary, #3b82f6)', borderRadius: '3px', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)', fontSize: '0.8em' }}
+                                            style={{ padding: '4px 8px', fontSize: '0.8em', borderColor: 'var(--primary)' }}
                                           />
                                         );
                                       })()}
@@ -1567,21 +1621,20 @@ export default function App() {
                     </div>
                     {/* Footer Configuration */}
                     <div>
-                      <label style={{ fontWeight: 500, fontSize: '0.85em', display: 'block', marginBottom: '4px' }}>Footer Text (Optional)</label>
+                      <label style={{ fontWeight: 600, fontSize: '0.85em', display: 'block', marginBottom: '6px', color: 'var(--text-secondary)' }}>Footer Text (Optional)</label>
                       <input 
                         type="text"
-                        className="input"
+                        className="form-control"
                         placeholder="e.g. Reply STOP to unsubscribe"
                         value={newTemplate.FooterText || ''}
                         onChange={e => setNewTemplate({...newTemplate, FooterText: e.target.value})}
-                        style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
                       />
                     </div>
 
                     {/* Buttons Configuration */}
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <label style={{ fontWeight: 500, fontSize: '0.85em' }}>Buttons (Optional)</label>
+                        <label style={{ fontWeight: 600, fontSize: '0.85em', color: 'var(--text-secondary)' }}>Buttons (Optional)</label>
                         <button 
                           className="btn btn-secondary" 
                           style={{ padding: '4px 8px', fontSize: '0.75em' }}
@@ -1606,7 +1659,7 @@ export default function App() {
                             {btns.map((btn, idx) => (
                               <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                 <select 
-                                  className="input"
+                                  className="form-control"
                                   value={btn.type}
                                   onChange={e => {
                                     const next = [...btns];
@@ -1615,7 +1668,7 @@ export default function App() {
                                     if (e.target.value !== 'PHONE_NUMBER') delete next[idx].phone_number;
                                     setNewTemplate({ ...newTemplate, ButtonsJson: JSON.stringify(next) });
                                   }}
-                                  style={{ padding: '6px', width: '150px', fontSize: '0.8em' }}
+                                  style={{ appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%2364748b\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '12px', paddingRight: '24px', padding: '6px 10px', width: '150px', fontSize: '0.85em' }}
                                 >
                                   <option value="QUICK_REPLY">Quick Reply</option>
                                   <option value="URL">Visit Website</option>
@@ -1623,7 +1676,7 @@ export default function App() {
                                 </select>
                                 <input 
                                   type="text" 
-                                  className="input"
+                                  className="form-control"
                                   placeholder="Button Text (max 25 chars)"
                                   value={btn.text || ''}
                                   maxLength={25}
@@ -1632,12 +1685,12 @@ export default function App() {
                                     next[idx].text = e.target.value;
                                     setNewTemplate({ ...newTemplate, ButtonsJson: JSON.stringify(next) });
                                   }}
-                                  style={{ padding: '6px', flex: 1, fontSize: '0.8em' }}
+                                  style={{ padding: '6px 10px', flex: 1, fontSize: '0.85em' }}
                                 />
                                 {btn.type === 'URL' && (
                                   <input 
                                     type="text" 
-                                    className="input"
+                                    className="form-control"
                                     placeholder="URL (https://...)"
                                     value={btn.url || ''}
                                     onChange={e => {
@@ -1645,13 +1698,13 @@ export default function App() {
                                       next[idx].url = e.target.value;
                                       setNewTemplate({ ...newTemplate, ButtonsJson: JSON.stringify(next) });
                                     }}
-                                    style={{ padding: '6px', flex: 1, fontSize: '0.8em' }}
+                                    style={{ padding: '6px 10px', flex: 1, fontSize: '0.85em' }}
                                   />
                                 )}
                                 {btn.type === 'PHONE_NUMBER' && (
                                   <input 
                                     type="text" 
-                                    className="input"
+                                    className="form-control"
                                     placeholder="+123456789"
                                     value={btn.phone_number || ''}
                                     onChange={e => {
@@ -1659,7 +1712,7 @@ export default function App() {
                                       next[idx].phone_number = e.target.value;
                                       setNewTemplate({ ...newTemplate, ButtonsJson: JSON.stringify(next) });
                                     }}
-                                    style={{ padding: '6px', flex: 1, fontSize: '0.8em' }}
+                                    style={{ padding: '6px 10px', flex: 1, fontSize: '0.85em' }}
                                   />
                                 )}
                                 <button 
@@ -1796,13 +1849,27 @@ export default function App() {
 
           <div className="data-table-container">
             <table className="data-table">
-              <thead><tr><th>Name</th><th>External Name</th><th>Channel</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Name</th><th>External Name</th><th>Channel</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
                 {(Array.isArray(templatesList) ? templatesList : []).map(t => (
                   <tr key={t.Id || t.id}>
                     <td>{t.Name || t.name}</td>
                     <td>{t.ExternalTemplateName || t.externalTemplateName || '-'}</td>
                     <td><span className="badge badge-sent">{t.ChannelType || t.channelType}</span></td>
+                    <td>
+                      {(() => {
+                        const status = (t.Status || t.status || 'APPROVED').toUpperCase();
+                        let badgeStyle = { backgroundColor: 'var(--surface-color)', color: 'var(--text-secondary)' };
+                        if (status === 'APPROVED') {
+                          badgeStyle = { backgroundColor: '#dcfce7', color: '#15803d' };
+                        } else if (status === 'PENDING') {
+                          badgeStyle = { backgroundColor: '#fef9c3', color: '#a16207' };
+                        } else if (status === 'REJECTED' || status === 'PAUSED') {
+                          badgeStyle = { backgroundColor: '#fee2e2', color: '#b91c1c' };
+                        }
+                        return <span className="badge" style={{ ...badgeStyle, padding: '4px 8px', borderRadius: '4px', fontSize: '0.75em', fontWeight: 600 }}>{status}</span>;
+                      })()}
+                    </td>
                     <td>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button className="btn btn-secondary" style={{ padding: '4px 8px', color: '#10b981', borderColor: '#10b981' }} title="Test Template" onClick={() => {
@@ -2821,11 +2888,68 @@ export default function App() {
         }
       };
 
+      const handleDeleteConversation = async (phone) => {
+        if (!window.confirm("Are you sure you want to delete this conversation? This will permanently remove all message history from the database.")) return;
+        setIsDeletingConversation(true);
+        setErrorReplyMessage('');
+        try {
+          const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}`, {
+            method: 'DELETE'
+          });
+          if (res.ok) {
+            setSelectedConversation(null);
+            setChatMessages([]);
+            fetchData();
+          } else {
+            const data = await res.json();
+            setErrorReplyMessage(data.message || 'Failed to delete conversation.');
+          }
+        } catch (err) {
+          setErrorReplyMessage('Failed to connect to backend.');
+        } finally {
+          setIsDeletingConversation(false);
+        }
+      };
+
+      const handleSendFile = async () => {
+        if (!selectedFile || !selectedConversation) return;
+        setIsUploadingFile(true);
+        setErrorReplyMessage('');
+        const phone = selectedConversation.PhoneNumber || selectedConversation.phoneNumber;
+        
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        if (fileCaption.trim()) {
+          formData.append('caption', fileCaption.trim());
+        }
+
+        try {
+          const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}/reply-file`, {
+            method: 'POST',
+            body: formData
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setSelectedFile(null);
+            setFileCaption('');
+            const msgRes = await fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}/messages`);
+            if (msgRes.ok) setChatMessages(await msgRes.json());
+            fetchData();
+          } else {
+            setErrorReplyMessage(data.message || 'Failed to send file.');
+          }
+        } catch (err) {
+          setErrorReplyMessage('Failed to connect to backend.');
+        } finally {
+          setIsUploadingFile(false);
+        }
+      };
+
       return (
         <>
-        <div className="premium-inbox-container">
+        <div className="premium-inbox-container" style={{ display: 'grid', gridTemplateColumns: '340px 1fr', height: 'calc(100vh - 128px)' }}>
           {/* Active Conversations Left Sidebar */}
-          <div className="premium-chat-sidebar">
+          <div className="premium-chat-sidebar" style={{ display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border-color)', overflow: 'hidden' }}>
             <div className="premium-chat-sidebar-header">
               <div style={{ fontWeight: 600, fontSize: '1.05em', color: 'var(--text-primary)' }}>Inbox</div>
               <button 
@@ -2878,38 +3002,119 @@ export default function App() {
           </div>
 
           {/* Conversation Chat Bubbles View */}
-          <div className="premium-chat-main">
+          <div className="premium-chat-main" style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
             {selectedConversation ? (
               <>
                 {/* Chat Top bar */}
-                <div className="premium-chat-header">
-                  <div className="premium-avatar">
-                    {(selectedConversation.FirstName || selectedConversation.firstName || 'U').charAt(0).toUpperCase()}
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ fontWeight: 600, fontSize: '1.05em', color: 'var(--text-primary)' }}>
-                      {(selectedConversation.FirstName || selectedConversation.firstName)
-                        ? `${selectedConversation.FirstName || selectedConversation.firstName} ${selectedConversation.LastName && selectedConversation.LastName !== 'undefined' ? selectedConversation.LastName : (selectedConversation.lastName && selectedConversation.lastName !== 'undefined' ? selectedConversation.lastName : '')}`.trim()
-                        : (selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}
+                <div className="premium-chat-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div className="premium-avatar">
+                      {(selectedConversation.FirstName || selectedConversation.firstName || 'U').charAt(0).toUpperCase()}
                     </div>
-                    <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
-                      {selectedConversation.PhoneNumber || selectedConversation.phoneNumber} • WhatsApp
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ fontWeight: 600, fontSize: '1.05em', color: 'var(--text-primary)' }}>
+                        {(selectedConversation.FirstName || selectedConversation.firstName)
+                          ? `${selectedConversation.FirstName || selectedConversation.firstName} ${selectedConversation.LastName && selectedConversation.LastName !== 'undefined' ? selectedConversation.LastName : (selectedConversation.lastName && selectedConversation.lastName !== 'undefined' ? selectedConversation.lastName : '')}`.trim()
+                          : (selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}
+                      </div>
+                      <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
+                        {selectedConversation.PhoneNumber || selectedConversation.phoneNumber} • WhatsApp
+                      </div>
                     </div>
                   </div>
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ padding: '8px', color: '#ef4444', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '8px' }}
+                    onClick={() => handleDeleteConversation(selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}
+                    title="Delete Conversation"
+                    disabled={isDeletingConversation}
+                  >
+                    <Trash2 size={16} /> <span style={{ fontSize: '0.85em', fontWeight: 600 }}>Delete Chat</span>
+                  </button>
                 </div>
 
                 {/* Messages scroll section */}
-                <div className="premium-chat-messages">
+                <div className="premium-chat-messages" style={{ overflowX: 'hidden' }}>
                   {chatMessages.map((msg, index) => {
-                    const isGuest = msg.Sender === 'Guest' || msg.sender === 'Guest';
-                    return (
-                      <div key={msg.Id || msg.id || index} className={`premium-bubble ${isGuest ? 'incoming' : 'outgoing'}`}>
-                        <div>{msg.Content || msg.content}</div>
-                        <div className="premium-bubble-time" style={{ color: isGuest ? 'var(--text-secondary)' : 'rgba(255,255,255,0.8)' }}>
-                          {new Date(msg.SentAt || msg.sentAt).toLocaleString([], { hour: '2-digit', minute: '2-digit' })}
+                      const isGuest = msg.Sender === 'Guest' || msg.sender === 'Guest';
+                      const contentText = msg.Content || msg.content || '';
+                      const fileRegex = /^\[File:\s*([^\]]+)\](.*)$/;
+                      const fileMatch = contentText.match(fileRegex);
+                      
+                      const msgType = msg.MessageType || msg.messageType || 'text';
+                      const mediaUrl = msg.MediaUrl || msg.mediaUrl;
+                      
+                      let bubbleContent;
+                      if (msgType === 'image' && mediaUrl) {
+                        bubbleContent = (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <a href={mediaUrl} target="_blank" rel="noopener noreferrer">
+                              <img src={mediaUrl} alt="Incoming Image" style={{ maxWidth: '100%', borderRadius: '8px', maxHeight: '300px', objectFit: 'contain' }} />
+                            </a>
+                            {contentText && <div>{contentText}</div>}
+                          </div>
+                        );
+                      } else if (msgType === 'audio' && mediaUrl) {
+                        bubbleContent = (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <audio controls src={mediaUrl} style={{ maxWidth: '240px', height: '40px' }} />
+                          </div>
+                        );
+                      } else if (msgType === 'video' && mediaUrl) {
+                        bubbleContent = (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <video controls src={mediaUrl} style={{ maxWidth: '100%', borderRadius: '8px', maxHeight: '300px' }} />
+                            {contentText && <div>{contentText}</div>}
+                          </div>
+                        );
+                      } else if (msgType === 'document' && mediaUrl) {
+                        bubbleContent = (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <a href={mediaUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: isGuest ? 'var(--bg-color, #f1f5f9)' : 'rgba(255,255,255,0.15)', borderRadius: '8px', border: '1px solid rgba(0,0,0,0.05)' }}>
+                                <FileText size={24} />
+                                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                                  <span style={{ fontSize: '0.9em', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contentText || 'Document'}</span>
+                                </div>
+                              </div>
+                            </a>
+                          </div>
+                        );
+                      } else if (fileMatch) {
+                        const filename = fileMatch[1];
+                        const caption = fileMatch[2].trim();
+                        const isImage = /\.(jpe?g|png|gif|webp)$/i.test(filename);
+                        
+                        bubbleContent = (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {isImage ? (
+                              <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                🖼️ {filename}
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: isGuest ? 'var(--bg-color, #f1f5f9)' : 'rgba(255,255,255,0.15)', borderRadius: '8px', border: '1px solid rgba(0,0,0,0.05)' }}>
+                                <FileText size={24} />
+                                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                                  <span style={{ fontSize: '0.9em', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{filename}</span>
+                                  <span style={{ fontSize: '0.75em', opacity: 0.8 }}>Document Attachment</span>
+                                </div>
+                              </div>
+                            )}
+                            {caption && <div>{caption}</div>}
+                          </div>
+                        );
+                      } else {
+                        bubbleContent = <div>{contentText}</div>;
+                      }
+
+                      return (
+                        <div key={msg.Id || msg.id || index} className={`premium-bubble ${isGuest ? 'incoming' : 'outgoing'}`}>
+                          {bubbleContent}
+                          <div className="premium-bubble-time" style={{ color: isGuest ? 'var(--text-secondary)' : 'rgba(255,255,255,0.8)' }}>
+                            {parseDateSafe(msg.SentAt || msg.sentAt).toLocaleString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
                         </div>
-                      </div>
-                    );
+                      );
                   })}
                   <div ref={messagesEndRef} />
                 </div>
@@ -2922,22 +3127,80 @@ export default function App() {
                   </div>
                 )}
 
+                {/* File Attachment Preview Bar */}
+                {selectedFile && (
+                  <div style={{ margin: '8px 24px', padding: '16px', backgroundColor: '#f8fafc', border: '1px solid var(--border-color)', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontWeight: 500 }}>
+                        <FileText size={20} style={{ color: 'var(--primary)' }} />
+                        <span>{selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)</span>
+                      </div>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ padding: '4px 8px', color: '#ef4444', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', display: 'flex', alignItems: 'center', borderRadius: '6px' }}
+                        onClick={() => { setSelectedFile(null); setFileCaption(''); }}
+                        title="Remove Attachment"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <input 
+                        type="text" 
+                        className="premium-chat-input" 
+                        style={{ margin: 0, padding: '10px 16px', fontSize: '0.9em' }}
+                        placeholder="Add a caption to this file..." 
+                        value={fileCaption} 
+                        onChange={e => setFileCaption(e.target.value)}
+                      />
+                      <button 
+                        className="btn btn-primary" 
+                        style={{ padding: '10px 20px', borderRadius: '99px', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
+                        onClick={handleSendFile}
+                        disabled={isUploadingFile}
+                      >
+                        {isUploadingFile ? 'Sending...' : 'Send File'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Reply Footer Input Area */}
                 <div className="premium-chat-input-area">
                   <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    style={{ display: 'none' }} 
+                    onChange={e => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        setSelectedFile(e.target.files[0]);
+                      }
+                    }} 
+                  />
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ padding: '12px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '48px', height: '48px', flexShrink: 0 }}
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Attach File"
+                    disabled={isSendingReply || isUploadingFile}
+                  >
+                    <Upload size={20} />
+                  </button>
+                  <input 
                     type="text" 
                     className="premium-chat-input" 
-                    placeholder="Type a message..." 
+                    placeholder={selectedFile ? "File selected. Send it using the button above." : "Type a message..."}
                     value={replyText} 
                     onChange={e => setReplyText(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === 'Enter') handleSendReplyMessage();
                     }}
+                    disabled={selectedFile !== null}
                   />
                   <button 
                     className="premium-send-btn" 
                     onClick={handleSendReplyMessage} 
-                    disabled={isSendingReply || !replyText.trim()}
+                    disabled={isSendingReply || !replyText.trim() || selectedFile !== null}
                   >
                     <Send size={20} />
                   </button>
@@ -3134,18 +3397,38 @@ export default function App() {
     return <PreferenceCenter contactId={parseInt(prefContactId)} />;
   }
 
+  const totalUnread = (conversations || []).reduce((sum, c) => sum + (c.UnreadCount || c.unreadCount || 0), 0);
+
   return (
     <div className="app-container" style={{ display: 'flex' }}>
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
         <div className="sidebar-header">
-          <img src="/logo.png" alt="HotelAuto Logo" style={{ width: '100%', maxHeight: '60px', objectFit: 'contain' }} />
+          <img
+            src="/logo.png"
+            alt="Scalifts"
+            className="sidebar-logo"
+          />
         </div>
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 0' }}>
           <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
             <LayoutDashboard size={20} /> Dashboard
           </div>
           <div className={`nav-item ${activeTab === 'inbox' ? 'active' : ''}`} onClick={() => setActiveTab('inbox')}>
-            <MessagesSquare size={20} /> Two-Way Inbox
+            <MessagesSquare size={20} /> 
+            <span style={{ flex: 1 }}>Two-Way Inbox</span>
+            {totalUnread > 0 && (
+              <span style={{ 
+                backgroundColor: 'var(--danger)', 
+                color: '#ffffff', 
+                borderRadius: '12px', 
+                padding: '2px 8px', 
+                fontSize: '12px', 
+                fontWeight: 'bold',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+              }}>
+                {totalUnread}
+              </span>
+            )}
           </div>
           <div className={`nav-item ${activeTab === 'contacts' ? 'active' : ''}`} onClick={() => setActiveTab('contacts')}>
             <Users size={20} /> Contacts
