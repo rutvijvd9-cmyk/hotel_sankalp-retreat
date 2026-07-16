@@ -105,32 +105,7 @@ public sealed class OutboxProcessor : BackgroundService
                     await _outboxRepository.UpdateStatusAsync(
                         messageToProcess.Id, "Sent", messageToProcess.RetryCount, DateTimeOffset.UtcNow, externalId, null, ct);
                     
-                    // Log to ConversationReplies so it shows up in Two-Way Inbox UI
-                    try 
-                    {
-                        using var conn = await _dbFactory.OpenAsync();
-                        string contentText = $"[Automated Template: {template.Name}]";
-                        if (!string.IsNullOrEmpty(messageToProcess.ParametersJson) && messageToProcess.ParametersJson != "{}") 
-                        {
-                            contentText += $"\n{messageToProcess.ParametersJson}";
-                        }
-                        
-                        // Check if Dapper extension is available, else use standard command
-                        var cmd = conn.CreateCommand();
-                        cmd.CommandText = "INSERT INTO ConversationReplies (Id, PhoneNumber, Sender, Content, SentAt) VALUES (@Id, @Phone, 'Agent', @Content, @SentAt)";
-                        
-                        var pId = cmd.CreateParameter(); pId.ParameterName = "@Id"; pId.Value = Guid.NewGuid().ToString(); cmd.Parameters.Add(pId);
-                        var cleanPhone = new string((messageToProcess.ToPhoneNumber ?? "").Where(char.IsDigit).ToArray());
-                        var pPhone = cmd.CreateParameter(); pPhone.ParameterName = "@Phone"; pPhone.Value = cleanPhone; cmd.Parameters.Add(pPhone);
-                        var pContent = cmd.CreateParameter(); pContent.ParameterName = "@Content"; pContent.Value = contentText; cmd.Parameters.Add(pContent);
-                        var pSentAt = cmd.CreateParameter(); pSentAt.ParameterName = "@SentAt"; pSentAt.Value = DateTimeOffset.UtcNow.ToString("O"); cmd.Parameters.Add(pSentAt);
-                        
-                        await cmd.ExecuteNonQueryAsync(ct);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to log OutboxMessage {Id} to ConversationReplies", messageToProcess.Id);
-                    }
+
 
                     _logger.LogInformation("OutboxMessage {Id} → Sent via {Channel}", messageToProcess.Id, channelType);
                 }

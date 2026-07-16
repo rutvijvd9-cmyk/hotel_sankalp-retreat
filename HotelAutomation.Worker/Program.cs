@@ -44,7 +44,6 @@ builder.Services.AddSingleton<IOutboxRepository, OutboxRepository>();
 builder.Services.AddSingleton<LinkShortenerService>();
 builder.Services.AddSingleton<EventLogRepository>();
 builder.Services.AddSingleton<JobRepository>();
-builder.Services.AddSingleton<InboxRepository>();
 builder.Services.AddSingleton<CategoryRepository>();
 builder.Services.AddSingleton<ContactRepository>();
 builder.Services.AddSingleton<CsvImportService>();
@@ -914,282 +913,7 @@ app.MapPost("/api/test-event", (string? phone, ManualPmsConnector pms) =>
     return Results.Ok(new { message = "Test event fired successfully" });
 });
 
-app.MapGet("/api/inbox", async (InboxRepository repo) => 
-{
-    return await repo.GetRecentMessagesAsync();
-});
 
-// ── Two-Way Conversation Inbox Endpoints (Part B) ──
-
-app.MapGet("/api/conversations", async (SqliteConnectionFactory dbFactory) =>
-{
-    using var conn = await dbFactory.OpenAsync();
-    // Query active conversation threads based on numbers seen in InboxMessages or UnsubscribedContacts/OutboxMessages
-    var threads = await conn.QueryAsync(@"
-        SELECT DISTINCT 
-            i.FromPhoneNumber as PhoneNumber, 
-            COALESCE(c.FirstName, (SELECT SenderName FROM InboxMessages WHERE FromPhoneNumber = i.FromPhoneNumber AND SenderName IS NOT NULL AND SenderName != '' ORDER BY ReceivedAt DESC LIMIT 1)) as FirstName, 
-            c.LastName,
-            (SELECT 
-                CASE MessageType
-                    WHEN 'image' THEN '📷 Image'
-                    WHEN 'audio' THEN '🎵 Audio'
-                    WHEN 'video' THEN '🎥 Video'
-                    WHEN 'document' THEN '📄 Document'
-                    ELSE Content
-                END
-             FROM InboxMessages 
-             WHERE FromPhoneNumber = i.FromPhoneNumber 
-             ORDER BY ReceivedAt DESC LIMIT 1) as LastMessageText,
-            (SELECT ReceivedAt FROM InboxMessages WHERE FromPhoneNumber = i.FromPhoneNumber ORDER BY ReceivedAt DESC LIMIT 1) as LastMessageAt,
-            (SELECT COUNT(*) FROM InboxMessages WHERE FromPhoneNumber = i.FromPhoneNumber AND IsRead = 0) as UnreadCount
-        FROM InboxMessages i
-        LEFT JOIN Contacts c ON i.FromPhoneNumber = c.PhoneNumber
-        ORDER BY LastMessageAt DESC;
-    ");
-    return Results.Ok(threads);
-});
-
-app.MapGet("/api/conversations/{phoneNumber}/messages", async (string phoneNumber, SqliteConnectionFactory dbFactory) =>
-{
-    using var conn = await dbFactory.OpenAsync();
-    
-    // Mark incoming messages as read for this conversation
-    await conn.ExecuteAsync("UPDATE InboxMessages SET IsRead = 1 WHERE FromPhoneNumber = @Phone", new { Phone = phoneNumber });
-
-    // Fetch chronological thread combining guest messages and agent replies
-    var messages = await conn.QueryAsync(@"
-        SELECT * FROM (
-            SELECT 
-                Id,
-                FromPhoneNumber as PhoneNumber,
-                'Guest' as Sender,
-                Content,
-                ReceivedAt as SentAt,
-                MessageType,
-                MediaUrl
-            FROM InboxMessages
-            WHERE FromPhoneNumber = @Phone
-            
-            UNION ALL
-            
-            SELECT 
-                Id,
-                PhoneNumber,
-                Sender,
-                Content,
-                SentAt,
-                'text' as MessageType,
-                NULL as MediaUrl
-            FROM ConversationReplies
-            WHERE PhoneNumber = @Phone
-        )
-        ORDER BY REPLACE(SentAt, 'T', ' ') ASC;
-    ", new { Phone = phoneNumber });
-
-    return Results.Ok(messages);
-});
-
-app.MapPost("/api/conversations/{phoneNumber}/reply", async (string phoneNumber, [Microsoft.AspNetCore.Mvc.FromBody] WebhookPayload body, SqliteConnectionFactory dbFactory, WhatsAppApiClient apiClient, Microsoft.Extensions.Logging.ILogger<Program> logger) =>
-{
-    if (string.IsNullOrWhiteSpace(body.Body))
-    {
-        return Results.BadRequest(new { message = "Reply content cannot be empty." });
-    }
-
-    using var conn = await dbFactory.OpenAsync();
-
-    // Verify 24-hour service window from Meta. Check guest's last message time
-    var lastReceived = await conn.QueryFirstOrDefaultAsync<string>(
-        "SELECT ReceivedAt FROM InboxMessages WHERE FromPhoneNumber = @Phone ORDER BY ReceivedAt DESC LIMIT 1",
-        new { Phone = phoneNumber }
-    );
-
-    if (string.IsNullOrEmpty(lastReceived))
-    {
-        return Results.BadRequest(new { message = "Cannot initiate a conversation without prior incoming WhatsApp message from the recipient." });
-    }
-
-    if (DateTimeOffset.TryParse(lastReceived, out var lastReceivedTime))
-    {
-        var age = DateTimeOffset.UtcNow - lastReceivedTime;
-        if (age.TotalHours > 24)
-        {
-            return Results.BadRequest(new { message = "The 24-hour customer service window has expired. You must use an approved Meta Message Template to resume contact." });
-        }
-    }
-
-    // Build free-form text payload for WhatsApp Cloud API
-    var payload = new
-    {
-        messaging_product = "whatsapp",
-        recipient_type = "individual",
-        to = phoneNumber,
-        type = "text",
-        text = new
-        {
-            preview_url = false,
-            body = body.Body
-        }
-    };
-
-    var (success, errorBody) = await apiClient.PostAsync(payload);
-    if (!success)
-    {
-        logger.LogError("Failed to send free-form message reply to {Phone}. Meta returned: {Error}", phoneNumber, errorBody);
-        return Results.BadRequest(new { message = $"Meta API Rejected Reply: {errorBody ?? "Unknown Error"}" });
-    }
-
-    // Parse external message ID if present
-    string? externalId = null;
-    try
-    {
-        using var doc = System.Text.Json.JsonDocument.Parse(errorBody ?? "{}");
-        if (doc.RootElement.TryGetProperty("messages", out var messagesArray) &&
-            messagesArray.GetArrayLength() > 0 &&
-            messagesArray[0].TryGetProperty("id", out var idProp))
-        {
-            externalId = idProp.GetString();
-        }
-    }
-    catch { }
-
-    // Save reply history to ConversationReplies
-    var replyId = externalId ?? Guid.NewGuid().ToString();
-    await conn.ExecuteAsync(@"
-        INSERT INTO ConversationReplies (Id, PhoneNumber, Sender, Content, SentAt)
-        VALUES (@Id, @Phone, 'Agent', @Content, @SentAt);",
-        new
-        {
-            Id = replyId,
-            Phone = phoneNumber,
-            Content = body.Body,
-            SentAt = DateTimeOffset.UtcNow.ToString("O")
-        });
-
-    return Results.Ok(new { message = "Reply sent successfully!", id = replyId });
-});
-
-app.MapDelete("/api/conversations/{phoneNumber}", async (string phoneNumber, SqliteConnectionFactory dbFactory) =>
-{
-    using var conn = await dbFactory.OpenAsync();
-    await conn.ExecuteAsync("DELETE FROM InboxMessages WHERE FromPhoneNumber = @Phone", new { Phone = phoneNumber });
-    await conn.ExecuteAsync("DELETE FROM ConversationReplies WHERE PhoneNumber = @Phone", new { Phone = phoneNumber });
-    return Results.Ok(new { message = "Conversation deleted successfully." });
-});
-
-app.MapPost("/api/conversations/{phoneNumber}/reply-file", async (
-    string phoneNumber,
-    IFormFile file,
-    [Microsoft.AspNetCore.Mvc.FromForm] string? caption,
-    SqliteConnectionFactory dbFactory,
-    WhatsAppApiClient apiClient,
-    ILogger<Program> logger) =>
-{
-    if (file == null || file.Length == 0)
-    {
-        return Results.BadRequest(new { message = "File attachment cannot be empty." });
-    }
-
-    using var conn = await dbFactory.OpenAsync();
-
-    // Verify 24-hour service window from Meta. Check guest's last message time
-    var lastReceived = await conn.QueryFirstOrDefaultAsync<string>(
-        "SELECT ReceivedAt FROM InboxMessages WHERE FromPhoneNumber = @Phone ORDER BY ReceivedAt DESC LIMIT 1",
-        new { Phone = phoneNumber }
-    );
-
-    if (string.IsNullOrEmpty(lastReceived))
-    {
-        return Results.BadRequest(new { message = "Cannot initiate a conversation without prior incoming WhatsApp message from the recipient." });
-    }
-
-    if (DateTimeOffset.TryParse(lastReceived, out var lastReceivedTime))
-    {
-        var age = DateTimeOffset.UtcNow - lastReceivedTime;
-        if (age.TotalHours > 24)
-        {
-            return Results.BadRequest(new { message = "The 24-hour customer service window has expired. You must use an approved Meta Message Template to resume contact." });
-        }
-    }
-
-    // Read file bytes
-    using var ms = new MemoryStream();
-    await file.CopyToAsync(ms);
-    var fileBytes = ms.ToArray();
-
-    // Upload media to Meta
-    var (uploadSuccess, mediaId, uploadError) = await apiClient.UploadMediaAsync(fileBytes, file.FileName, file.ContentType);
-    if (!uploadSuccess || string.IsNullOrEmpty(mediaId))
-    {
-        logger.LogError("Failed to upload media to Meta: {Error}", uploadError);
-        return Results.BadRequest(new { message = $"Failed to upload media to Meta: {uploadError ?? "Unknown error"}" });
-    }
-
-    // Construct WhatsApp payload depending on file type
-    object payload;
-    bool isImage = file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
-
-    if (isImage)
-    {
-        payload = new
-        {
-            messaging_product = "whatsapp",
-            recipient_type = "individual",
-            to = phoneNumber,
-            type = "image",
-            image = new { id = mediaId, caption = caption }
-        };
-    }
-    else
-    {
-        payload = new
-        {
-            messaging_product = "whatsapp",
-            recipient_type = "individual",
-            to = phoneNumber,
-            type = "document",
-            document = new { id = mediaId, filename = file.FileName, caption = caption }
-        };
-    }
-
-    var (success, errorBody) = await apiClient.PostAsync(payload);
-    if (!success)
-    {
-        logger.LogError("Failed to send media reply to {Phone}. Meta returned: {Error}", phoneNumber, errorBody);
-        return Results.BadRequest(new { message = $"Meta API Rejected Reply: {errorBody ?? "Unknown Error"}" });
-    }
-
-    // Parse external message ID if present
-    string? externalId = null;
-    try
-    {
-        using var doc = System.Text.Json.JsonDocument.Parse(errorBody ?? "{}");
-        if (doc.RootElement.TryGetProperty("messages", out var messagesArray) &&
-            messagesArray.GetArrayLength() > 0 &&
-            messagesArray[0].TryGetProperty("id", out var idProp))
-        {
-            externalId = idProp.GetString();
-        }
-    }
-    catch { }
-
-    var replyId = externalId ?? Guid.NewGuid().ToString();
-    var content = $"[File: {file.FileName}] {caption ?? ""}".Trim();
-
-    await conn.ExecuteAsync(@"
-        INSERT INTO ConversationReplies (Id, PhoneNumber, Sender, Content, SentAt)
-        VALUES (@Id, @Phone, 'Agent', @Content, @SentAt);",
-        new
-        {
-            Id = replyId,
-            Phone = phoneNumber,
-            Content = content,
-            SentAt = DateTimeOffset.UtcNow.ToString("O")
-        });
-
-    return Results.Ok(new { message = "File sent successfully!", id = replyId });
-}).DisableAntiforgery();
 
 // ── Analytics Overview Endpoints (Part B) ──
 
@@ -1218,13 +942,7 @@ app.MapGet("/api/analytics/overview", async (string? startDate, string? endDate,
     var read = await conn.ExecuteScalarAsync<int>($"SELECT COUNT(*) FROM OutboxMessages WHERE Status = 'Read' {(string.IsNullOrEmpty(dateFilter) ? "" : "AND CreatedAt >= @start AND CreatedAt <= @end")}", parameters);
     var clicked = await conn.ExecuteScalarAsync<int>($"SELECT COUNT(DISTINCT o.Id) FROM OutboxMessages o INNER JOIN ShortenedLinks s ON o.Id = s.OutboxMessageId WHERE s.ClickedCount > 0 {(string.IsNullOrEmpty(dateFilter) ? "" : "AND o.CreatedAt >= @start AND o.CreatedAt <= @end")}", parameters);
     
-    // Fallback logic for inbox messages (ReceivedAt)
-    string inboxDateFilter = "";
-    if (!string.IsNullOrEmpty(startDate) && !string.IsNullOrEmpty(endDate))
-    {
-        inboxDateFilter = "WHERE ReceivedAt >= @start AND ReceivedAt <= @end";
-    }
-    var totalInbox = await conn.ExecuteScalarAsync<int>($"SELECT COUNT(*) FROM InboxMessages {inboxDateFilter}", parameters);
+    var totalInbox = 0;
 
     return Results.Ok(new
     {
@@ -1347,7 +1065,7 @@ app.MapGet("/api/webhooks/whatsapp", (HttpContext ctx, Microsoft.Extensions.Opti
     return Results.BadRequest("Verification failed");
 });
 
-app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository inboxRepo, JobRepository jobRepo, SqliteConnectionFactory dbFactory, UnsubscribedContactRepository unsubRepo, HotelAutomation.Connectors.WhatsApp.WhatsAppApiClient whatsappClient, Microsoft.Extensions.Logging.ILogger<Program> logger) => 
+app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, JobRepository jobRepo, SqliteConnectionFactory dbFactory, UnsubscribedContactRepository unsubRepo, HotelAutomation.Connectors.WhatsApp.WhatsAppApiClient whatsappClient, Microsoft.Extensions.Logging.ILogger<Program> logger) => 
 {
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
@@ -1454,17 +1172,7 @@ app.MapPost("/api/webhooks/whatsapp", async (HttpContext ctx, InboxRepository in
                             }
                         }
                         
-                        var inboxMsg = new HotelAutomation.Core.Models.InboxMessage
-                        {
-                            FromPhoneNumber = from ?? "unknown",
-                            SenderName = senderName,
-                            Content = text,
-                            MessageType = msgType,
-                            MediaUrl = mediaUrl,
-                            IsRead = false,
-                            ReceivedAt = DateTimeOffset.UtcNow
-                        };
-                        await inboxRepo.AddAsync(inboxMsg);
+
                         await jobRepo.CancelJobsForPhoneNumberAsync(from ?? "");
                         if (!string.IsNullOrEmpty(from) && !string.IsNullOrEmpty(text) && text.Trim().Equals("STOP", StringComparison.OrdinalIgnoreCase))
                         {
@@ -1973,8 +1681,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
         cmd.CommandText = initScript;
         cmd.ExecuteNonQuery();
 
-        try { Dapper.SqlMapper.Execute(conn, "ALTER TABLE InboxMessages ADD COLUMN MessageType TEXT NOT NULL DEFAULT 'text'"); } catch { }
-        try { Dapper.SqlMapper.Execute(conn, "ALTER TABLE InboxMessages ADD COLUMN MediaUrl TEXT NULL"); } catch { }
+
         
         // Open browser automatically
         var url = app.Urls.FirstOrDefault() ?? "http://localhost:5000";

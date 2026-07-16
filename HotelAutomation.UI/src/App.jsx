@@ -73,14 +73,16 @@ export default function App() {
   const params = new URLSearchParams(window.location.search);
   const prefContactId = params.get('preferences_for');
 
-  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('hotelAuto_activeTab') || 'dashboard');
+  const [activeTab, setActiveTab] = useState(() => {
+    const tab = localStorage.getItem('hotelAuto_activeTab');
+    return tab === 'inbox' ? 'dashboard' : (tab || 'dashboard');
+  });
   
   useEffect(() => {
     localStorage.setItem('hotelAuto_activeTab', activeTab);
   }, [activeTab]);
-  const [stats, setStats] = useState({ templates: 0, rules: 0, outbox: 0, inbox: 0 });
+  const [stats, setStats] = useState({ templates: 0, rules: 0, outbox: 0 });
   const [outbox, setOutbox] = useState([]);
-  const [inbox, setInbox] = useState([]);
   const [categories, setCategories] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [smartLists, setSmartLists] = useState([]);
@@ -138,56 +140,18 @@ export default function App() {
   const [editingRule, setEditingRule] = useState(null);
   const [optOutsList, setOptOutsList] = useState([]);
 
-  // Part B State Variables
-  const [conversations, setConversations] = useState([]);
-  const [selectedConversation, setSelectedConversation] = useState(null);
-  const [chatMessages, setChatMessages] = useState([]);
-  const [showNewConversationModal, setShowNewConversationModal] = useState(false);
-  const [newConversationPhone, setNewConversationPhone] = useState('');
-  const [newConversationName, setNewConversationName] = useState('');
-  const [replyText, setReplyText] = useState('');
-  const [isSendingReply, setIsSendingReply] = useState(false);
   const [analyticsData, setAnalyticsData] = useState({ TotalTriggered: 0, Sent: 0, Delivered: 0, Read: 0, Failed: 0, Pending: 0, IncomingReplies: 0, Clicked: 0 });
   const [deliveryTrends, setDeliveryTrends] = useState([]);
   const [analyticsPeriod, setAnalyticsPeriod] = useState('all');
   const [analyticsRulesPage, setAnalyticsRulesPage] = useState(1);
   const [analyticsBroadcastsPage, setAnalyticsBroadcastsPage] = useState(1);
-  const [errorReplyMessage, setErrorReplyMessage] = useState('');
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [fileCaption, setFileCaption] = useState('');
-  const [isUploadingFile, setIsUploadingFile] = useState(false);
-  const [isDeletingConversation, setIsDeletingConversation] = useState(false);
-
-  // Scroll handler ref for chat thread
-  const messagesEndRef = React.useRef(null);
-  const fileInputRef = React.useRef(null);
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  const prevMessagesLengthRef = React.useRef(0);
-  const prevConversationRef = React.useRef(null);
-
-  useEffect(() => {
-    const isNewConversation = prevConversationRef.current !== selectedConversation;
-    const isNewMessage = chatMessages.length > prevMessagesLengthRef.current;
-    
-    if (chatMessages.length > 0 && (isNewConversation || isNewMessage)) {
-      scrollToBottom();
-    }
-    
-    prevMessagesLengthRef.current = chatMessages.length;
-    prevConversationRef.current = selectedConversation;
-  }, [chatMessages, selectedConversation]);
-
   useEffect(() => {
     fetchData();
-    const pollInterval = activeTab === 'inbox' ? 1000 : 5000;
     const interval = setInterval(() => {
       fetchData();
-    }, pollInterval);
+    }, 5000);
     return () => clearInterval(interval);
-  }, [activeTab, currentPage, pageSize, selectedCategory, selectedSmartList, bPage, analyticsPeriod, selectedConversation]);
+  }, [activeTab, currentPage, pageSize, selectedCategory, selectedSmartList, bPage, analyticsPeriod]);
 
   const fetchData = async () => {
     try {
@@ -251,12 +215,6 @@ export default function App() {
         }
       }
       
-      const inboxRes = await fetch(`${API_BASE}/inbox`).catch(() => null);
-      if (inboxRes && inboxRes.ok) {
-        const inboxData = await inboxRes.json();
-        setInbox(inboxData);
-        setStats(s => ({ ...s, inbox: inboxData.length }));
-      }
 
       const catRes = await fetch(`${API_BASE}/categories`).catch(() => null);
       if (catRes && catRes.ok) setCategories(await catRes.json());
@@ -282,20 +240,6 @@ export default function App() {
         setDynamicHeaders(await colRes.json());
       }
 
-      // Fetch active conversations list
-      const convRes = await fetch(`${API_BASE}/conversations`).catch(() => null);
-      if (convRes && convRes.ok) {
-        const convData = await convRes.json();
-        setConversations(convData);
-        
-        // Keep active conversation messages in sync
-        if (activeTab === 'inbox' && selectedConversation) {
-          const msgRes = await fetch(`${API_BASE}/conversations/${encodeURIComponent(selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}/messages`).catch(() => null);
-          if (msgRes && msgRes.ok) {
-            setChatMessages(await msgRes.json());
-          }
-        }
-      }
 
       // Fetch advanced analytics aggregates
       if (activeTab === 'analytics') {
@@ -400,8 +344,6 @@ export default function App() {
 
       let outboxThisWeek = 0;
       let outboxLastWeek = 0;
-      let inboxThisWeek = 0;
-      let inboxLastWeek = 0;
       const chartData = [];
 
       for (let i = 6; i >= 0; i--) {
@@ -421,12 +363,6 @@ export default function App() {
         }
       });
 
-      (Array.isArray(inbox) ? inbox : []).forEach(msg => {
-        const daysAgo = getDaysAgo(msg.ReceivedAt || msg.receivedAt || msg.CreatedAt || msg.createdAt);
-        if (daysAgo <= 6) inboxThisWeek++;
-        else if (daysAgo > 6 && daysAgo <= 13) inboxLastWeek++;
-      });
-
       const calcTrend = (current, previous) => {
         if (previous === 0 && current > 0) return { val: 100, type: 'up' };
         if (previous === 0 && current === 0) return { val: 0, type: 'neutral' };
@@ -435,7 +371,6 @@ export default function App() {
       };
 
       const outTrend = calcTrend(outboxThisWeek, outboxLastWeek);
-      const inTrend = calcTrend(inboxThisWeek, inboxLastWeek);
 
       return (
         <div className="premium-dashboard-container">
@@ -474,23 +409,6 @@ export default function App() {
               </div>
             </div>
 
-            <div className="premium-card">
-              <div className="premium-card-header">
-                <div>
-                  <div className="premium-metric-value">{typeof stats.inbox === 'object' ? 0 : stats.inbox}</div>
-                  <div className="premium-metric-label">Inbox Replies</div>
-                </div>
-                <div className="premium-icon-box green">
-                  <MessagesSquare size={24} />
-                </div>
-              </div>
-              <div className={`premium-trend ${inTrend.type}`}>
-                {inTrend.type === 'up' && <TrendingUp size={16} />}
-                {inTrend.type === 'down' && <TrendingUp size={16} style={{transform: 'rotate(180deg)'}} />}
-                {inTrend.type === 'neutral' && <Activity size={16} />}
-                <span>{inTrend.type === 'neutral' ? 'No change' : `${inTrend.type === 'up' ? '+' : '-'}${inTrend.val}% this week`}</span>
-              </div>
-            </div>
           </div>
 
           <div className="premium-card" style={{ height: '400px' }}>
@@ -514,7 +432,7 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '24px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
             <div className="premium-card">
               <div className="premium-section-title">
                 <Send size={20} style={{ color: 'var(--primary)' }} />
@@ -542,33 +460,6 @@ export default function App() {
                             {msg.Status || msg.status}
                           </span>
                         </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
-            <div className="premium-card">
-              <div className="premium-section-title">
-                <MessagesSquare size={20} style={{ color: 'var(--primary)' }} />
-                Recent Inbox Replies
-              </div>
-              {inbox.length === 0 ? (
-                <div className="empty-state">No replies received yet.</div>
-              ) : (
-                <table className="premium-table">
-                  <thead>
-                    <tr>
-                      <th>From</th>
-                      <th>Message</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(Array.isArray(inbox) ? inbox : []).slice(0, 5).map(msg => (
-                      <tr key={msg.Id || msg.id}>
-                        <td style={{ fontFamily: 'monospace', fontWeight: 500 }}>{msg.FromPhoneNumber || msg.fromPhoneNumber}</td>
-                        <td style={{ color: 'var(--text-secondary)' }}>{msg.Content || msg.content}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -3010,458 +2901,7 @@ export default function App() {
                   </div>
                 </div>
               </>
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    if (activeTab === 'inbox') {
-      const handleSelectConversation = async (conv) => {
-        setSelectedConversation(conv);
-        setErrorReplyMessage('');
-        try {
-          const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conv.PhoneNumber || conv.phoneNumber)}/messages`);
-          if (res.ok) setChatMessages(await res.json());
-        } catch(e){}
-      };
-
-      const handleSendReplyMessage = async () => {
-        if (!replyText.trim() || !selectedConversation) return;
-        setIsSendingReply(true);
-        setErrorReplyMessage('');
-        const phone = selectedConversation.PhoneNumber || selectedConversation.phoneNumber;
-        try {
-          const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}/reply`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ body: replyText })
-          });
-          const data = await res.json();
-          if (res.ok) {
-            setReplyText('');
-            // reload messages
-            const msgRes = await fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}/messages`);
-            if (msgRes.ok) setChatMessages(await msgRes.json());
-            fetchData();
-          } else {
-            setErrorReplyMessage(data.message || 'Failed to send reply.');
-          }
-        } catch(err) {
-          setErrorReplyMessage('Failed to connect to backend.');
-        } finally {
-          setIsSendingReply(false);
-        }
-      };
-
-      const handleDeleteConversation = async (phone) => {
-        if (!window.confirm("Are you sure you want to delete this conversation? This will permanently remove all message history from the database.")) return;
-        setIsDeletingConversation(true);
-        setErrorReplyMessage('');
-        try {
-          const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}`, {
-            method: 'DELETE'
-          });
-          if (res.ok) {
-            setSelectedConversation(null);
-            setChatMessages([]);
-            fetchData();
-          } else {
-            const data = await res.json();
-            setErrorReplyMessage(data.message || 'Failed to delete conversation.');
-          }
-        } catch (err) {
-          setErrorReplyMessage('Failed to connect to backend.');
-        } finally {
-          setIsDeletingConversation(false);
-        }
-      };
-
-      const handleSendFile = async () => {
-        if (!selectedFile || !selectedConversation) return;
-        setIsUploadingFile(true);
-        setErrorReplyMessage('');
-        const phone = selectedConversation.PhoneNumber || selectedConversation.phoneNumber;
-        
-        const formData = new FormData();
-        formData.append('file', selectedFile);
-        if (fileCaption.trim()) {
-          formData.append('caption', fileCaption.trim());
-        }
-
-        try {
-          const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}/reply-file`, {
-            method: 'POST',
-            body: formData
-          });
-          const data = await res.json();
-          if (res.ok) {
-            setSelectedFile(null);
-            setFileCaption('');
-            const msgRes = await fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}/messages`);
-            if (msgRes.ok) setChatMessages(await msgRes.json());
-            fetchData();
-          } else {
-            setErrorReplyMessage(data.message || 'Failed to send file.');
-          }
-        } catch (err) {
-          setErrorReplyMessage('Failed to connect to backend.');
-        } finally {
-          setIsUploadingFile(false);
-        }
-      };
-
-      return (
-        <>
-        <div className="premium-inbox-container" style={{ display: 'grid', gridTemplateColumns: '340px 1fr', height: 'calc(100vh - 128px)' }}>
-          {/* Active Conversations Left Sidebar */}
-          <div className="premium-chat-sidebar" style={{ display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border-color)', overflow: 'hidden' }}>
-            <div className="premium-chat-sidebar-header">
-              <div style={{ fontWeight: 600, fontSize: '1.05em', color: 'var(--text-primary)' }}>Inbox</div>
-              <button 
-                className="btn btn-primary" 
-                style={{ padding: '6px 12px', borderRadius: '8px' }}
-                onClick={() => setShowNewConversationModal(true)}
-              >
-                <Plus size={16} /> <span style={{ marginLeft: '4px' }}>New</span>
-              </button>
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto' }}>
-              {(conversations || []).length === 0 ? (
-                <div style={{ padding: '32px 24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                  <MessagesSquare size={32} style={{ margin: '0 auto 12px', opacity: 0.5 }} />
-                  <div style={{ fontSize: '0.9em' }}>No conversations yet.</div>
-                </div>
-              ) : (
-                (conversations || []).map(conv => {
-                  const phone = conv.PhoneNumber || conv.phoneNumber;
-                  const name = (conv.FirstName || conv.firstName) 
-                    ? `${conv.FirstName || conv.firstName} ${conv.LastName && conv.LastName !== 'undefined' ? conv.LastName : (conv.lastName && conv.lastName !== 'undefined' ? conv.lastName : '')}`.trim() 
-                    : phone;
-                  const isSelected = selectedConversation && (selectedConversation.PhoneNumber || selectedConversation.phoneNumber) === phone;
-                  const hasUnread = (conv.UnreadCount || conv.unreadCount || 0) > 0;
-                  return (
-                    <div 
-                      key={phone} 
-                      className={`premium-conv-item ${isSelected ? 'active' : ''}`}
-                      onClick={() => handleSelectConversation(conv)}
-                    >
-                      <div className="premium-avatar">
-                        {(conv.FirstName || conv.firstName || 'U').charAt(0).toUpperCase()}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
-                          <span style={{ fontWeight: hasUnread ? 700 : 600, fontSize: '0.95em', color: isSelected ? 'var(--primary)' : 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {name}
-                          </span>
-                          {hasUnread && <span style={{ backgroundColor: 'var(--primary)', color: 'white', fontSize: '0.7em', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>New</span>}
-                        </div>
-                        <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {conv.LastMessageText || conv.lastMessageText || 'No messages'}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          {/* Conversation Chat Bubbles View */}
-          <div className="premium-chat-main" style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-            {selectedConversation ? (
-              <>
-                {/* Chat Top bar */}
-                <div className="premium-chat-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <div className="premium-avatar">
-                      {(selectedConversation.FirstName || selectedConversation.firstName || 'U').charAt(0).toUpperCase()}
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <div style={{ fontWeight: 600, fontSize: '1.05em', color: 'var(--text-primary)' }}>
-                        {(selectedConversation.FirstName || selectedConversation.firstName)
-                          ? `${selectedConversation.FirstName || selectedConversation.firstName} ${selectedConversation.LastName && selectedConversation.LastName !== 'undefined' ? selectedConversation.LastName : (selectedConversation.lastName && selectedConversation.lastName !== 'undefined' ? selectedConversation.lastName : '')}`.trim()
-                          : (selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}
-                      </div>
-                      <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
-                        {selectedConversation.PhoneNumber || selectedConversation.phoneNumber} • WhatsApp
-                      </div>
-                    </div>
-                  </div>
-                  <button 
-                    className="btn btn-secondary" 
-                    style={{ padding: '8px', color: '#ef4444', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '8px' }}
-                    onClick={() => handleDeleteConversation(selectedConversation.PhoneNumber || selectedConversation.phoneNumber)}
-                    title="Delete Conversation"
-                    disabled={isDeletingConversation}
-                  >
-                    <Trash2 size={16} /> <span style={{ fontSize: '0.85em', fontWeight: 600 }}>Delete Chat</span>
-                  </button>
-                </div>
-
-                {/* Messages scroll section */}
-                <div className="premium-chat-messages" style={{ overflowX: 'hidden' }}>
-                  {chatMessages.map((msg, index) => {
-                      const isGuest = msg.Sender === 'Guest' || msg.sender === 'Guest';
-                      const contentText = msg.Content || msg.content || '';
-                      const fileRegex = /^\[File:\s*([^\]]+)\](.*)$/;
-                      const fileMatch = contentText.match(fileRegex);
-                      
-                      const msgType = msg.MessageType || msg.messageType || 'text';
-                      const mediaUrl = msg.MediaUrl || msg.mediaUrl;
-                      
-                      let bubbleContent;
-                      if (msgType === 'image' && mediaUrl) {
-                        bubbleContent = (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <a href={mediaUrl} target="_blank" rel="noopener noreferrer">
-                              <img src={mediaUrl} alt="Incoming Image" style={{ maxWidth: '100%', borderRadius: '8px', maxHeight: '300px', objectFit: 'contain' }} />
-                            </a>
-                            {contentText && <div>{contentText}</div>}
-                          </div>
-                        );
-                      } else if (msgType === 'audio' && mediaUrl) {
-                        bubbleContent = (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <audio controls src={mediaUrl} style={{ maxWidth: '240px', height: '40px' }} />
-                          </div>
-                        );
-                      } else if (msgType === 'video' && mediaUrl) {
-                        bubbleContent = (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <video controls src={mediaUrl} style={{ maxWidth: '100%', borderRadius: '8px', maxHeight: '300px' }} />
-                            {contentText && <div>{contentText}</div>}
-                          </div>
-                        );
-                      } else if (msgType === 'document' && mediaUrl) {
-                        bubbleContent = (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <a href={mediaUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: isGuest ? 'var(--bg-color, #f1f5f9)' : 'rgba(255,255,255,0.15)', borderRadius: '8px', border: '1px solid rgba(0,0,0,0.05)' }}>
-                                <FileText size={24} />
-                                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                                  <span style={{ fontSize: '0.9em', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contentText || 'Document'}</span>
-                                </div>
-                              </div>
-                            </a>
-                          </div>
-                        );
-                      } else if (fileMatch) {
-                        const filename = fileMatch[1];
-                        const caption = fileMatch[2].trim();
-                        const isImage = /\.(jpe?g|png|gif|webp)$/i.test(filename);
-                        
-                        bubbleContent = (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            {isImage ? (
-                              <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                🖼️ {filename}
-                              </div>
-                            ) : (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: isGuest ? 'var(--bg-color, #f1f5f9)' : 'rgba(255,255,255,0.15)', borderRadius: '8px', border: '1px solid rgba(0,0,0,0.05)' }}>
-                                <FileText size={24} />
-                                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                                  <span style={{ fontSize: '0.9em', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{filename}</span>
-                                  <span style={{ fontSize: '0.75em', opacity: 0.8 }}>Document Attachment</span>
-                                </div>
-                              </div>
-                            )}
-                            {caption && <div>{caption}</div>}
-                          </div>
-                        );
-                      } else {
-                        bubbleContent = <div>{contentText}</div>;
-                      }
-
-                      return (
-                        <div key={msg.Id || msg.id || index} className={`premium-bubble ${isGuest ? 'incoming' : 'outgoing'}`}>
-                          {bubbleContent}
-                          <div className="premium-bubble-time" style={{ color: isGuest ? 'var(--text-secondary)' : 'rgba(255,255,255,0.8)' }}>
-                            {parseDateSafe(msg.SentAt || msg.sentAt).toLocaleString([], { hour: '2-digit', minute: '2-digit' })}
-                          </div>
-                        </div>
-                      );
-                  })}
-                  <div ref={messagesEndRef} />
-                </div>
-
-                {/* Meta Window and Error alerts */}
-                {errorReplyMessage && (
-                  <div style={{ margin: '8px 24px', padding: '12px', backgroundColor: '#fef2f2', border: '1px solid #fee2e2', borderRadius: '8px', fontSize: '0.9em', color: '#ef4444' }}>
-                    <AlertCircle size={16} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle' }} />
-                    <strong>Warning:</strong> {errorReplyMessage}
-                  </div>
-                )}
-
-                {/* File Attachment Preview Bar */}
-                {selectedFile && (
-                  <div style={{ margin: '8px 24px', padding: '16px', backgroundColor: '#f8fafc', border: '1px solid var(--border-color)', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontWeight: 500 }}>
-                        <FileText size={20} style={{ color: 'var(--primary)' }} />
-                        <span>{selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)</span>
-                      </div>
-                      <button 
-                        className="btn btn-secondary" 
-                        style={{ padding: '4px 8px', color: '#ef4444', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', display: 'flex', alignItems: 'center', borderRadius: '6px' }}
-                        onClick={() => { setSelectedFile(null); setFileCaption(''); }}
-                        title="Remove Attachment"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                      <input 
-                        type="text" 
-                        className="premium-chat-input" 
-                        style={{ margin: 0, padding: '10px 16px', fontSize: '0.9em' }}
-                        placeholder="Add a caption to this file..." 
-                        value={fileCaption} 
-                        onChange={e => setFileCaption(e.target.value)}
-                      />
-                      <button 
-                        className="btn btn-primary" 
-                        style={{ padding: '10px 20px', borderRadius: '99px', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
-                        onClick={handleSendFile}
-                        disabled={isUploadingFile}
-                      >
-                        {isUploadingFile ? 'Sending...' : 'Send File'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Reply Footer Input Area */}
-                <div className="premium-chat-input-area">
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    style={{ display: 'none' }} 
-                    onChange={e => {
-                      if (e.target.files && e.target.files.length > 0) {
-                        setSelectedFile(e.target.files[0]);
-                      }
-                    }} 
-                  />
-                  <button 
-                    className="btn btn-secondary" 
-                    style={{ padding: '12px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '48px', height: '48px', flexShrink: 0 }}
-                    onClick={() => fileInputRef.current?.click()}
-                    title="Attach File"
-                    disabled={isSendingReply || isUploadingFile}
-                  >
-                    <Upload size={20} />
-                  </button>
-                  <input 
-                    type="text" 
-                    className="premium-chat-input" 
-                    placeholder={selectedFile ? "File selected. Send it using the button above." : "Type a message..."}
-                    value={replyText} 
-                    onChange={e => setReplyText(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') handleSendReplyMessage();
-                    }}
-                    disabled={selectedFile !== null}
-                  />
-                  <button 
-                    className="premium-send-btn" 
-                    onClick={handleSendReplyMessage} 
-                    disabled={isSendingReply || !replyText.trim() || selectedFile !== null}
-                  >
-                    <Send size={20} />
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', color: 'var(--text-secondary)' }}>
-                <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'linear-gradient(135deg, rgba(59,130,246,0.1) 0%, rgba(37,99,235,0.05) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
-                  <MessagesSquare size={40} style={{ color: 'var(--primary)' }} />
-                </div>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>Select a conversation</h3>
-                <p style={{ fontSize: '0.95em', maxWidth: '300px', textAlign: 'center' }}>Choose a conversation from the sidebar to view the thread and reply to guests.</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* New Conversation Modal */}
-        {showNewConversationModal && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
-            <div className="premium-analytics-modal" style={{ width: '100%', maxWidth: '420px', padding: '32px', animation: 'fadeIn 0.2s ease-out' }}>
-              <h3 className="card-title" style={{ marginBottom: '20px', fontSize: '1.25rem' }}>Start New Conversation</h3>
-              
-              <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-color)', padding: '16px', borderRadius: '8px', marginBottom: '24px', border: '1px solid var(--border-color)', lineHeight: '1.5' }}>
-                <strong style={{ color: 'var(--text-primary)' }}>Note:</strong> WhatsApp allows free-form messages only if the recipient has messaged you in the last 24 hours. Otherwise, your message will be rejected by Meta. For new contacts, please use an approved template via Broadcasts.
-              </div>
-              
-              <div className="form-group" style={{ marginBottom: '20px' }}>
-                <label>Phone Number (with country code)</label>
-                <input 
-                  type="text" 
-                  className="form-control" 
-                  placeholder="e.g. 1234567890" 
-                  value={newConversationPhone} 
-                  onChange={e => setNewConversationPhone(e.target.value)} 
-                />
-              </div>
-
-              <div className="form-group" style={{ marginBottom: '32px' }}>
-                <label>First Name (Optional)</label>
-                <input 
-                  type="text" 
-                  className="form-control" 
-                  placeholder="e.g. John" 
-                  value={newConversationName} 
-                  onChange={e => setNewConversationName(e.target.value)} 
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && newConversationPhone.trim()) {
-                      const mockConv = { PhoneNumber: newConversationPhone.trim(), FirstName: newConversationName.trim() || 'Guest' };
-                      const existingConv = (conversations || []).find(c => (c.PhoneNumber || c.phoneNumber) === mockConv.PhoneNumber);
-                      if (!existingConv) setConversations([mockConv, ...(conversations || [])]);
-                      setSelectedConversation(existingConv || mockConv);
-                      setChatMessages([]);
-                      setShowNewConversationModal(false);
-                      setNewConversationPhone('');
-                      setNewConversationName('');
-                    }
-                  }}
-                />
-              </div>
-              
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                <button 
-                  className="btn btn-secondary" 
-                  onClick={() => {
-                    setShowNewConversationModal(false);
-                    setNewConversationPhone('');
-                    setNewConversationName('');
-                  }}
-                >
-                  Cancel
-                </button>
-                <button 
-                  className="btn btn-primary" 
-                  disabled={!newConversationPhone.trim()}
-                  onClick={() => {
-                    const mockConv = {
-                      PhoneNumber: newConversationPhone.trim(),
-                      FirstName: newConversationName.trim() || 'Guest'
-                    };
-                    const existingConv = (conversations || []).find(c => (c.PhoneNumber || c.phoneNumber) === mockConv.PhoneNumber);
-                    if (!existingConv) {
-                      setConversations([mockConv, ...(conversations || [])]);
-                    }
-                    setSelectedConversation(existingConv || mockConv);
-                    setChatMessages([]);
-                    setShowNewConversationModal(false);
-                    setNewConversationPhone('');
-                    setNewConversationName('');
-                  }}
-                >
-                  Start Chat
-                </button>
-              </div>
-            </div>
+            )}>
           </div>
         )}
         </>
@@ -3493,9 +2933,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* Delivery trends progress visualization */}
-          <div style={{ display: 'flex', gap: '24px', marginBottom: '32px' }}>
-            <div className="card" style={{ flex: 1.5 }}>
+          <div style={{ marginBottom: '32px' }}>
+            <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h3 className="card-title" style={{ margin: 0 }}>Delivery Trends (Last 7 Days)</h3>
                 <a 
@@ -3530,19 +2969,6 @@ export default function App() {
                 )}
               </div>
             </div>
-            
-            {/* Inbox widget snippet */}
-            <div className="card" style={{ flex: 1 }}>
-              <h3 className="card-title">Replies Ratio</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100%', padding: '20px 0', gap: '12px' }}>
-                <div style={{ fontSize: '48px', fontWeight: 'bold', color: 'var(--primary)' }}>
-                  {analyticsData.IncomingReplies}
-                </div>
-                <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                  Total incoming text responses received from guests in the Two-way Inbox.
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       );
@@ -3563,7 +2989,7 @@ export default function App() {
     return <PreferenceCenter contactId={parseInt(prefContactId)} />;
   }
 
-  const totalUnread = (conversations || []).reduce((sum, c) => sum + (c.UnreadCount || c.unreadCount || 0), 0);
+
 
   return (
     <div className="app-container" style={{ display: 'flex' }}>
@@ -3578,23 +3004,6 @@ export default function App() {
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 0' }}>
           <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
             <LayoutDashboard size={20} /> Dashboard
-          </div>
-          <div className={`nav-item ${activeTab === 'inbox' ? 'active' : ''}`} onClick={() => setActiveTab('inbox')}>
-            <MessagesSquare size={20} /> 
-            <span style={{ flex: 1 }}>Two-Way Inbox</span>
-            {totalUnread > 0 && (
-              <span style={{ 
-                backgroundColor: 'var(--danger)', 
-                color: '#ffffff', 
-                borderRadius: '12px', 
-                padding: '2px 8px', 
-                fontSize: '12px', 
-                fontWeight: 'bold',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-              }}>
-                {totalUnread}
-              </span>
-            )}
           </div>
           <div className={`nav-item ${activeTab === 'contacts' ? 'active' : ''}`} onClick={() => setActiveTab('contacts')}>
             <Users size={20} /> Contacts
