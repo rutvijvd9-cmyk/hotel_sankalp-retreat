@@ -61,7 +61,7 @@ namespace HotelAutomation.Worker
 
                 try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
+                    await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
                 }
                 catch (OperationCanceledException)
                 {
