@@ -26,10 +26,12 @@ When an event occurs in your system, send a JSON payload containing the followin
 | `guestName` | String | **Yes** | The full name of the guest. |
 | `phoneNumber` | String | **Yes** | The guest's phone number including the country code (e.g., `+919876543210`). |
 | `roomNumber` | String | **Yes** | The room number assigned to the guest. |
-| `amount` | Decimal | No | The total bill amount (useful for Check-Out events to send the final bill). |
+| `amount` | Number | No | The total bill amount (useful for Check-Out events to send the final bill). |
 | `timestamp` | String | **Yes** | ISO 8601 formatted date and time when the event occurred (e.g., `2026-07-15T14:30:00Z`). |
 | `pdfBase64` | String | No | Base64-encoded PDF bill/invoice string. Allows direct delivery of generated PDF bills to guest's WhatsApp in offline modes. |
 | `billPdfBase64` | String | No | Alternate name for `pdfBase64` (alias). |
+
+*Note: Any additional fields sent in the payload (like `Bill No`, `Discount`, etc.) will be automatically stored as optional pass-through data in the guest profile.*
 
 ---
 
@@ -107,6 +109,7 @@ curl -X POST http://localhost:8000/api/webhooks/pms-events \
     "phoneNumber": "+918460998080",
     "roomNumber": "1006",
     "amount": 2300.00,
+    "timestamp": "2026-07-16T15:45:00Z",
     "Registration Number": "981",
     "Bill No": "ROOM/975",
     "Arrival Date": "13/07/2026",
@@ -230,6 +233,7 @@ curl -X POST http://localhost:8000/api/webhooks/pms-events \
     "phoneNumber": "+918460998080",
     "roomNumber": "1006",
     "amount": 2300.00,
+    "timestamp": "2026-07-16T15:53:00Z",
     "pdfBase64": "JVBERi0xLjEKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvUmVzb3VyY2VzIDQgMCBSIC9NZWRpYUJveCBbMCAwIDYxMiA3OTJdIC9Db250ZW50cyA1IDAgUiA+PgplbmRvYmoKNCAwIG9iago8PCAvRm9udCA8PCAvRjEgPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+ID4+ID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggNzggPj4Kc3RyZWFtCkJUIC9GMSAxNiBUZiA1MCA3MDAgVGQgKEhlbGxvIFJ1dHZpaiwgdGhpcyBpcyBhIHZhbGlkIHRlc3QgUERGIGludm9pY2UhKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZgowMDAwMDAwMDA5IDAwMDAwIG4KMDAwMDAwMDA1OCAwMDAwMCBuCjAwMDAwMDAxMTUgMDAwMDAgbgowMDAwMDAwMjE5IDAwMDAwIG4KMDAwMDAwMDMxMSAwMDAwMCBuCnRyYWlsZXIKPDwgL1Jvb3QgMSAwIFIgL1NpemUgNiA+PgpzdGFydHhyZWYKNDM5CiUlRU9G",
     "Registration Number": "981",
     "Bill No": "ROOM/975",
@@ -319,15 +323,34 @@ Our server will decode the Base64 stream, upload the raw file directly to Meta's
 
 Our server will respond with standard HTTP status codes:
 
-- `200 OK`: The event was successfully received and queued for processing.
+- `202 Accepted`: The event was successfully received and queued for processing asynchronously.
 - `400 Bad Request`: The JSON payload was invalid or missing required fields.
 - `401 Unauthorized`: The authorization token is missing or incorrect.
 - `500 Internal Server Error`: An unexpected error occurred on our end.
 
-**Example Success Response:**
+**Example Success Response (202):**
 ```json
 {
   "status": "success",
-  "message": "Event CheckIn for room 101 processed successfully."
+  "message": "Event PMS_CHECKIN for room 1006 processed successfully."
 }
+```
+
+**Example Error Response (400):**
+```json
+{
+  "status": "error",
+  "message": "Missing required fields (eventType, guestName, phoneNumber)"
+}
+```
+
+---
+
+## 6. REST Best-Practice Recommendations (Optional)
+
+To ensure the highest reliability when integrating with our API, we recommend the following:
+- **HTTPS Only:** Always send webhooks over a secure HTTPS connection.
+- **Idempotency:** Consider sending a unique transaction or event ID if applicable, to safely retry on timeouts.
+- **Retries:** Implement exponential backoff for failed requests (e.g. 500-level errors), but do not retry 400 or 401 responses automatically without correction.
+- **Async Handling:** Since our API returns `202 Accepted`, your system should not wait for the actual WhatsApp message to be delivered before unblocking your local checkout process.
 ```

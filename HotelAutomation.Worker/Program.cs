@@ -2226,12 +2226,12 @@ app.MapPost("/api/webhooks/pms-events", async (
         if (pmsSource is ManualPmsConnector manualConnector)
         {
             manualConnector.RaiseTestEvent(pmsEvent);
-            return Results.Ok(new { status = "success", message = $"Event {eventType} for room {roomNumber} processed successfully." });
+            return Results.Json(new { status = "success", message = $"Event {eventType} for room {roomNumber} processed successfully." }, statusCode: 202);
         }
         else
         {
             logger.LogWarning("Webhook received, but current IPmsEventSource is not ManualPmsConnector.");
-            return Results.Ok(new { status = "warning", message = "Event received but not processed (active connector does not support direct injection)." });
+            return Results.Json(new { status = "warning", message = "Event received but not processed (active connector does not support direct injection)." }, statusCode: 202);
         }
     }
     catch (Exception ex)
