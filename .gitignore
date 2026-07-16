@@ -33,3 +33,12 @@ HotelAutomation.Worker/wwwroot/
 
 # Mac
 .DS_Store
+node_modules/
+package-lock.json
+*.zip
+test_*.ps1
+test_*.sh
+test_*.js
+container.html
+.dotnet/
+scratch/

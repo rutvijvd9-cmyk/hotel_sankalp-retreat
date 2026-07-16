@@ -231,22 +231,91 @@ public sealed class ContactRepository
     {
         await using var conn = await _factory.OpenAsync(ct);
         var results = await conn.QueryAsync<string>("SELECT DISTINCT key FROM Contacts, json_each(CustomFieldsJson)");
-        return results.AsList();
+        var list = results.ToList();
+
+        var predefined = new List<string>
+        {
+            "Registration Number",
+            "Bill No",
+            "Arrival Date",
+            "Departure date",
+            "Arrival Time",
+            "Departure Time",
+            "Company Name",
+            "Group",
+            "City Name",
+            "State Name",
+            "Prefix",
+            "Nationality",
+            "Room No",
+            "Room Type",
+            "Person",
+            "Extra Person",
+            "Expected Stay days",
+            "Expected Departure Date",
+            "AP",
+            "MAP",
+            "EP",
+            "CP",
+            "Discount",
+            "Room Tariff",
+            "Final Tariff",
+            "Total",
+            "Carry Date",
+            "Carry registraction No",
+            "Carry Amount",
+            "Deposit",
+            "Reservation Remark",
+            "Room Change",
+            "Other Remark",
+            "days",
+            "CGST",
+            "SGST",
+            "Round off",
+            "Mode of Payment/Bill To",
+            "Room Total",
+            "C/F. Amount",
+            "Deposit(-)",
+            "Roon Service",
+            "Laundary",
+            "Misc Service",
+            "Final Amount",
+            "B/F Registration No",
+            "C/F Registration No"
+        };
+
+        foreach (var col in predefined)
+        {
+            if (!list.Contains(col, StringComparer.OrdinalIgnoreCase))
+            {
+                list.Add(col);
+            }
+        }
+
+        return list;
     }
 
     public async Task<IReadOnlyList<string>> GetDateColumnsAsync(CancellationToken ct = default)
     {
         await using var conn = await _factory.OpenAsync(ct);
-        // SQLite: Find keys whose values look like dates (YYYY-MM-DD or DD-MM-YYYY)
         var results = await conn.QueryAsync<string>(@"
             SELECT DISTINCT key 
             FROM Contacts, json_each(CustomFieldsJson) 
             WHERE value LIKE '____-__-__' 
                OR value LIKE '__-__-____' 
-               OR value LIKE '____/__/__' 
+               OR value LIKE '____/%/%' 
                OR value LIKE '__/__/____'
         ");
-        return results.AsList();
+        var list = results.ToList();
+        var datePredefined = new[] { "Arrival Date", "Departure date", "Expected Departure Date", "Carry Date" };
+        foreach (var col in datePredefined)
+        {
+            if (!list.Contains(col, StringComparer.OrdinalIgnoreCase))
+            {
+                list.Add(col);
+            }
+        }
+        return list;
     }
 
     public async Task<int> DeleteCustomFieldColumnAsync(string columnName, CancellationToken ct = default)

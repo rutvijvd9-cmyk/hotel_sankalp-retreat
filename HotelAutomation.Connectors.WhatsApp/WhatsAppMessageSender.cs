@@ -136,42 +136,106 @@ public sealed class WhatsAppMessageSender : IMessageChannel
         {
             try
             {
-                // Generate PDF using dummy ScheduledJob constructed from Outbox message
-                var guestName = eventDict.TryGetValue("Name", out var name) && !string.IsNullOrWhiteSpace(name) ? name : 
-                                (eventDict.TryGetValue("FirstName", out var fn) ? fn : "Guest");
-                var job = new ScheduledJob 
-                { 
-                    ParametersJson = message.ParametersJson,
-                    GuestName = guestName
-                };
-                
-                var pdfBytes = await _pdfGenerator.GenerateInvoicePdfAsync(job, ct);
-                
-                // Upload to Meta
-                var (uploadSuccess, mediaId, uploadError) = await _apiClient.UploadMediaAsync(pdfBytes, $"Invoice_{DateTime.Now:yyyyMMdd}.pdf", "application/pdf", ct);
-                
-                if (!uploadSuccess || string.IsNullOrEmpty(mediaId))
-                {
-                    _logger.LogError("Failed to upload PDF invoice for OutboxMessage {Id}: {Error}", message.Id, uploadError);
-                    return (false, null, $"Failed to upload PDF to Meta: {uploadError}");
-                }
+                // Check if a specific PDF Base64 string is provided in the event parameters
+                string? base64Str = null;
+                if (eventDict.TryGetValue("pdfBase64", out var b1) && !string.IsNullOrWhiteSpace(b1)) base64Str = b1;
+                else if (eventDict.TryGetValue("billPdfBase64", out var b2) && !string.IsNullOrWhiteSpace(b2)) base64Str = b2;
 
-                components.Add(new
+                // Check if a specific PDF URL is provided in the event parameters
+                string? pdfUrl = null;
+                if (eventDict.TryGetValue("billPdfUrl", out var url1) && !string.IsNullOrWhiteSpace(url1)) pdfUrl = url1;
+                else if (eventDict.TryGetValue("pdfUrl", out var url2) && !string.IsNullOrWhiteSpace(url2)) pdfUrl = url2;
+                else if (eventDict.TryGetValue("InvoicePdfUrl", out var url3) && !string.IsNullOrWhiteSpace(url3)) pdfUrl = url3;
+                else if (eventDict.TryGetValue("document", out var url4) && !string.IsNullOrWhiteSpace(url4)) pdfUrl = url4;
+
+                if (!string.IsNullOrWhiteSpace(base64Str))
                 {
-                    type = "header",
-                    parameters = new[]
+                    // Decode Base64 string and upload directly to Meta
+                    var pdfBytes = Convert.FromBase64String(base64Str);
+                    var (uploadSuccess, mediaId, uploadError) = await _apiClient.UploadMediaAsync(pdfBytes, $"Invoice_{DateTime.Now:yyyyMMdd}.pdf", "application/pdf", ct);
+                    
+                    if (!uploadSuccess || string.IsNullOrEmpty(mediaId))
                     {
-                        new
+                        _logger.LogError("Failed to upload Base64 PDF invoice for OutboxMessage {Id}: {Error}", message.Id, uploadError);
+                        return (false, null, $"Failed to upload Base64 PDF to Meta: {uploadError}");
+                    }
+
+                    components.Add(new
+                    {
+                        type = "header",
+                        parameters = new[]
                         {
-                            type = "document",
-                            document = new
+                            new
                             {
-                                id = mediaId,
-                                filename = $"Invoice_{DateTime.Now:yyyyMMdd}.pdf"
+                                type = "document",
+                                document = new
+                                {
+                                    id = mediaId,
+                                    filename = $"Invoice_{DateTime.Now:yyyyMMdd}.pdf"
+                                }
                             }
                         }
+                    });
+                }
+                else if (pdfUrl != null && (pdfUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || pdfUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+                {
+                    // Use the provided PDF URL directly!
+                    components.Add(new
+                    {
+                        type = "header",
+                        parameters = new[]
+                        {
+                            new
+                            {
+                                type = "document",
+                                document = new
+                                {
+                                    link = pdfUrl,
+                                    filename = $"Invoice_{DateTime.Now:yyyyMMdd}.pdf"
+                                }
+                            }
+                        }
+                    });
+                }
+                else
+                {
+                    // Generate PDF using dummy ScheduledJob constructed from Outbox message
+                    var guestName = eventDict.TryGetValue("Name", out var name) && !string.IsNullOrWhiteSpace(name) ? name : 
+                                    (eventDict.TryGetValue("FirstName", out var fn) ? fn : "Guest");
+                    var job = new ScheduledJob 
+                    { 
+                        ParametersJson = message.ParametersJson,
+                        GuestName = guestName
+                    };
+                    
+                    var pdfBytes = await _pdfGenerator.GenerateInvoicePdfAsync(job, ct);
+                    
+                    // Upload to Meta
+                    var (uploadSuccess, mediaId, uploadError) = await _apiClient.UploadMediaAsync(pdfBytes, $"Invoice_{DateTime.Now:yyyyMMdd}.pdf", "application/pdf", ct);
+                    
+                    if (!uploadSuccess || string.IsNullOrEmpty(mediaId))
+                    {
+                        _logger.LogError("Failed to upload PDF invoice for OutboxMessage {Id}: {Error}", message.Id, uploadError);
+                        return (false, null, $"Failed to upload PDF to Meta: {uploadError}");
                     }
-                });
+
+                    components.Add(new
+                    {
+                        type = "header",
+                        parameters = new[]
+                        {
+                            new
+                            {
+                                type = "document",
+                                document = new
+                                {
+                                    id = mediaId,
+                                    filename = $"Invoice_{DateTime.Now:yyyyMMdd}.pdf"
+                                }
+                            }
+                        }
+                    });
+                }
             }
             catch (Exception ex)
             {

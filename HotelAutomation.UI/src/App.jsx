@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Papa from 'papaparse';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download, TrendingUp, Activity, Calendar, UserPlus } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download, TrendingUp, Activity, Calendar, UserPlus, Eye } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import AutomationBuilder from './components/AutomationBuilder';
 import PreferenceCenter from './components/PreferenceCenter';
@@ -10,6 +10,56 @@ import ManualCheckIn from './components/ManualCheckIn';
 import ManualCheckOut from './components/ManualCheckOut';
 
 const API_BASE = '/api';
+
+const PERMANENT_CUSTOM_FIELDS = [
+  'Registration Number',
+  'Bill No',
+  'Arrival Date',
+  'Departure date',
+  'Arrival Time',
+  'Departure Time',
+  'Company Name',
+  'Group',
+  'City Name',
+  'State Name',
+  'Prefix',
+  'Nationality',
+  'Room No',
+  'Room Type',
+  'Person',
+  'Extra Person',
+  'Expected Stay days',
+  'Expected Departure Date',
+  'AP',
+  'MAP',
+  'EP',
+  'CP',
+  'Discount',
+  'Room Tariff',
+  'Final Tariff',
+  'Total',
+  'Carry Date',
+  'Carry registraction No',
+  'Carry Amount',
+  'Deposit',
+  'Reservation Remark',
+  'Room Change',
+  'Other Remark',
+  'days',
+  'CGST',
+  'SGST',
+  'Round off',
+  'Mode of Payment/Bill To',
+  'Room Total',
+  'C/F. Amount',
+  'Deposit(-)',
+  'Roon Service',
+  'Laundary',
+  'Misc Service',
+  'Final Amount',
+  'B/F Registration No',
+  'C/F Registration No'
+];
 
 const parseDateSafe = (dateStr) => {
   if (!dateStr) return new Date();
@@ -46,6 +96,7 @@ export default function App() {
   const [editContactData, setEditContactData] = useState({ PhoneNumber: '', FirstName: '', LastName: '', CustomFieldsJson: '{}', CheckInCount: 0, AverageStayDays: 0, IsVip: false });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [hiddenColumns, setHiddenColumns] = useState([]);
+  const [showDisplayColumnsModal, setShowDisplayColumnsModal] = useState(false);
   const [logs, setLogs] = useState([]);
   const [templatesList, setTemplatesList] = useState([]);
   const [totalTemplates, setTotalTemplates] = useState(0);
@@ -669,6 +720,7 @@ export default function App() {
 
       const handleEditContactClick = (c) => {
         const defaultFields = {};
+        PERMANENT_CUSTOM_FIELDS.forEach(f => defaultFields[f] = '');
         (Array.isArray(dynamicHeaders) ? dynamicHeaders : []).forEach(h => defaultFields[h] = '');
         let existing = {};
         try { existing = JSON.parse(c.CustomFieldsJson || c.customFieldsJson || '{}'); } catch(e){}
@@ -689,6 +741,7 @@ export default function App() {
 
       const handleAddContactClick = () => {
         const defaultFields = {};
+        PERMANENT_CUSTOM_FIELDS.forEach(f => defaultFields[f] = '');
         (Array.isArray(dynamicHeaders) ? dynamicHeaders : []).forEach(h => defaultFields[h] = '');
 
         setEditingContactId(null);
@@ -768,6 +821,9 @@ export default function App() {
               <Plus size={16} /> New Smart List
             </button>
             <div style={{ flex: 1 }}></div>
+            <button className="btn btn-secondary" onClick={() => setShowDisplayColumnsModal(true)}>
+              <Eye size={16} /> Columns
+            </button>
             <button className="btn btn-secondary" onClick={() => setShowColumnModal(true)}>
               <Settings size={16} /> Manage Columns
             </button>
@@ -806,6 +862,85 @@ export default function App() {
                 )}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
                   <button className="btn btn-primary" onClick={() => setShowColumnModal(false)}>Close</button>
+                </div>
+              </div>
+            </div>
+          ), document.body)}
+
+          {showDisplayColumnsModal && createPortal((
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+              <div className="premium-analytics-modal" style={{ width: '450px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', animation: 'fadeIn 0.2s ease-out' }}>
+                <h3 className="card-title" style={{ marginBottom: '12px' }}>Display Columns</h3>
+                <p style={{ fontSize: '0.85em', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                  Choose which columns you want to show or hide in the contacts directory.
+                </p>
+                
+                <div style={{ flex: 1, overflowY: 'auto', paddingRight: '4px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.9em', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>Standard Fields</div>
+                  {['Phone', 'First Name', 'Last Name', 'Added Date', 'Updated Date', 'Updates'].map(col => {
+                    const isVisible = !hiddenColumns.includes(col);
+                    return (
+                      <label key={col} style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.95em', userSelect: 'none' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={isVisible} 
+                          onChange={() => {
+                            if (isVisible) {
+                              setHiddenColumns([...hiddenColumns, col]);
+                            } else {
+                              setHiddenColumns(hiddenColumns.filter(c => c !== col));
+                            }
+                          }}
+                          style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                        />
+                        <span>{col}</span>
+                      </label>
+                    );
+                  })}
+
+                  <div style={{ fontWeight: 600, fontSize: '0.9em', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', marginTop: '10px' }}>Custom Fields</div>
+                  {dynamicHeaders.length === 0 ? (
+                    <div style={{ fontSize: '0.9em', color: 'var(--text-secondary)', fontStyle: 'italic', paddingLeft: '4px' }}>No custom fields found.</div>
+                  ) : (
+                    dynamicHeaders.map(col => {
+                      const isVisible = !hiddenColumns.includes(col);
+                      return (
+                        <label key={col} style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.95em', userSelect: 'none' }}>
+                          <input 
+                            type="checkbox" 
+                            checked={isVisible} 
+                            onChange={() => {
+                              if (isVisible) {
+                                setHiddenColumns([...hiddenColumns, col]);
+                              } else {
+                                setHiddenColumns(hiddenColumns.filter(c => c !== col));
+                              }
+                            }}
+                            style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                          />
+                          <span>{col}</span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.85em', fontWeight: 600, color: 'var(--text-secondary)', width: '100%' }}>Presets:</span>
+                    <button className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.8em', minWidth: 'auto' }} onClick={() => setHiddenColumns([])}>
+                      Default (All)
+                    </button>
+                    <button className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.8em', minWidth: 'auto' }} onClick={() => setHiddenColumns(['Added Date', 'Updated Date', 'Updates', ...dynamicHeaders])}>
+                      Minimal
+                    </button>
+                    <button className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.8em', minWidth: 'auto' }} onClick={() => setHiddenColumns(['Phone', 'First Name', 'Last Name', 'Added Date', 'Updated Date', 'Updates', ...dynamicHeaders])}>
+                      Clear All
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button className="btn btn-primary" onClick={() => setShowDisplayColumnsModal(false)}>Close</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -879,13 +1014,17 @@ export default function App() {
                   <table className="premium-table" style={{ margin: '0 24px', width: 'calc(100% - 48px)' }}>
                     <thead>
                       <tr>
-                        <th>Phone</th>
-                        <th>First Name</th>
-                        <th>Last Name</th>
-                        {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => <th key={h}>{h}</th>)}
-                        <th>Added Date</th>
-                        <th>Updated Date</th>
-                        <th>Updates</th>
+                        {!hiddenColumns.includes('Phone') && <th>Phone</th>}
+                        {!hiddenColumns.includes('Prefix') && <th>Prefix</th>}
+                        {!hiddenColumns.includes('First Name') && <th>First Name</th>}
+                        {!hiddenColumns.includes('Last Name') && <th>Last Name</th>}
+                        {(Array.isArray(dynamicHeaders) ? dynamicHeaders : [])
+                          .filter(h => h !== 'Prefix')
+                          .filter(h => !hiddenColumns.includes(h))
+                          .map(h => <th key={h}>{h}</th>)}
+                        {!hiddenColumns.includes('Added Date') && <th>Added Date</th>}
+                        {!hiddenColumns.includes('Updated Date') && <th>Updated Date</th>}
+                        {!hiddenColumns.includes('Updates') && <th>Updates</th>}
                         <th>Actions</th>
                       </tr>
                     </thead>
@@ -895,15 +1034,21 @@ export default function App() {
                         try { fields = JSON.parse(c.CustomFieldsJson || c.customFieldsJson || '{}'); } catch(e){}
                         return (
                           <tr key={c.Id || c.id}>
-                            <td style={{ fontFamily: 'monospace', fontWeight: 500 }}>{c.PhoneNumber || c.phoneNumber}</td>
-                            <td>{c.FirstName || c.firstName}</td>
-                            <td>{c.LastName || c.lastName}</td>
-                            {(Array.isArray(dynamicHeaders) ? dynamicHeaders : []).map(h => <td key={h}>{fields[h] || '-'}</td>)}
-                            <td>{new Date(c.CreatedAt || c.createdAt).toLocaleDateString()}</td>
-                            <td>{c.UpdatedAt || c.updatedAt ? new Date(c.UpdatedAt || c.updatedAt).toLocaleDateString() : '-'}</td>
-                            <td>
-                              <span className="badge badge-success">{c.UpdateCount || c.updateCount || 0}</span>
-                            </td>
+                            {!hiddenColumns.includes('Phone') && <td style={{ fontFamily: 'monospace', fontWeight: 500 }}>{c.PhoneNumber || c.phoneNumber}</td>}
+                            {!hiddenColumns.includes('Prefix') && <td>{fields['Prefix'] || '-'}</td>}
+                            {!hiddenColumns.includes('First Name') && <td>{c.FirstName || c.firstName}</td>}
+                            {!hiddenColumns.includes('Last Name') && <td>{c.LastName || c.lastName}</td>}
+                            {(Array.isArray(dynamicHeaders) ? dynamicHeaders : [])
+                              .filter(h => h !== 'Prefix')
+                              .filter(h => !hiddenColumns.includes(h))
+                              .map(h => <td key={h}>{fields[h] || '-'}</td>)}
+                            {!hiddenColumns.includes('Added Date') && <td>{new Date(c.CreatedAt || c.createdAt).toLocaleDateString()}</td>}
+                            {!hiddenColumns.includes('Updated Date') && <td>{c.UpdatedAt || c.updatedAt ? new Date(c.UpdatedAt || c.updatedAt).toLocaleDateString() : '-'}</td>}
+                            {!hiddenColumns.includes('Updates') && (
+                              <td>
+                                <span className="badge badge-success">{c.UpdateCount || c.updateCount || 0}</span>
+                              </td>
+                            )}
                             <td>
                               <div className="premium-action-buttons">
                                 <button className="premium-icon-btn edit" onClick={() => handleEditContactClick(c)} title="Edit">
@@ -960,123 +1105,144 @@ export default function App() {
           
           {showEditContactModal && createPortal((
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
-              <div className="premium-analytics-modal" style={{ width: '500px', animation: 'fadeIn 0.2s ease-out' }}>
-                <h3 className="card-title" style={{ marginBottom: '16px' }}>{editingContactId ? 'Edit Contact' : 'Add Contact'}</h3>
-                
-                <div className="form-group" style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Phone Number</label>
-                  <input type="text" value={editContactData.PhoneNumber} onChange={e => setEditContactData({...editContactData, PhoneNumber: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-                </div>
-                
-                <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>First Name</label>
-                    <input type="text" value={editContactData.FirstName} onChange={e => setEditContactData({...editContactData, FirstName: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Last Name</label>
-                    <input type="text" value={editContactData.LastName} onChange={e => setEditContactData({...editContactData, LastName: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-                  </div>
-                </div>
+              {(() => {
+                let fields = {};
+                try { fields = JSON.parse(editContactData.CustomFieldsJson || '{}'); } catch(e) {}
 
-                <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', alignItems: 'center' }}>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Check-in Count</label>
-                    <input type="number" min="0" value={editContactData.CheckInCount} onChange={e => setEditContactData({...editContactData, CheckInCount: parseInt(e.target.value) || 0})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Avg Stay (Days)</label>
-                    <input type="number" min="0" step="0.1" value={editContactData.AverageStayDays} onChange={e => setEditContactData({...editContactData, AverageStayDays: parseFloat(e.target.value) || 0})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-                  </div>
-                  <div className="form-group" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>VIP</label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                      <span style={{ fontSize: '14px', color: editContactData.IsVip ? '#64748b' : '#334155' }}>No</span>
-                      <label style={{ position: 'relative', display: 'inline-block', width: '40px', height: '24px' }}>
-                        <input type="checkbox" checked={editContactData.IsVip} onChange={e => setEditContactData({...editContactData, IsVip: e.target.checked})} style={{ opacity: 0, width: 0, height: 0 }} />
-                        <span style={{ position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: editContactData.IsVip ? '#10b981' : '#ccc', transition: '.4s', borderRadius: '34px' }}>
-                          <span style={{ position: 'absolute', content: '""', height: '16px', width: '16px', left: editContactData.IsVip ? '20px' : '4px', bottom: '4px', backgroundColor: 'white', transition: '.4s', borderRadius: '50%' }}></span>
-                        </span>
-                      </label>
-                      <span style={{ fontSize: '14px', color: editContactData.IsVip ? '#10b981' : '#64748b', fontWeight: editContactData.IsVip ? 'bold' : 'normal' }}>Yes</span>
+                const handlePermanentFieldChange = (key, val) => {
+                  const updatedFields = { ...fields, [key]: val };
+                  setEditContactData({ ...editContactData, CustomFieldsJson: JSON.stringify(updatedFields) });
+                };
+
+                const dynamicKeys = Object.keys(fields).filter(k => !PERMANENT_CUSTOM_FIELDS.includes(k));
+
+                return (
+                  <div className="premium-analytics-modal" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column', animation: 'fadeIn 0.2s ease-out', padding: 0, overflow: 'hidden' }}>
+                    <div style={{ padding: '24px 24px 0 24px', flexShrink: 0 }}>
+                      <h3 className="card-title" style={{ marginBottom: '16px' }}>{editingContactId ? 'Edit Contact' : 'Add Contact'}</h3>
+                    </div>
+                    
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '0 24px', minHeight: 0 }}>
+                      <div className="form-group" style={{ marginBottom: '16px' }}>
+                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Phone Number</label>
+                        <input type="text" value={editContactData.PhoneNumber} onChange={e => setEditContactData({...editContactData, PhoneNumber: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                      </div>
+                      
+                      <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>First Name</label>
+                          <input type="text" value={editContactData.FirstName} onChange={e => setEditContactData({...editContactData, FirstName: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Last Name</label>
+                          <input type="text" value={editContactData.LastName} onChange={e => setEditContactData({...editContactData, LastName: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', alignItems: 'center' }}>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Check-in Count</label>
+                          <input type="number" min="0" value={editContactData.CheckInCount} onChange={e => setEditContactData({...editContactData, CheckInCount: parseInt(e.target.value) || 0})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Avg Stay (Days)</label>
+                          <input type="number" min="0" step="0.1" value={editContactData.AverageStayDays} onChange={e => setEditContactData({...editContactData, AverageStayDays: parseFloat(e.target.value) || 0})} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>VIP</label>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                            <span style={{ fontSize: '14px', color: editContactData.IsVip ? '#64748b' : '#334155' }}>No</span>
+                            <label style={{ position: 'relative', display: 'inline-block', width: '40px', height: '24px' }}>
+                              <input type="checkbox" checked={editContactData.IsVip} onChange={e => setEditContactData({...editContactData, IsVip: e.target.checked})} style={{ opacity: 0, width: 0, height: 0 }} />
+                              <span style={{ position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: editContactData.IsVip ? '#10b981' : '#ccc', transition: '.4s', borderRadius: '34px' }}>
+                                <span style={{ position: 'absolute', content: '""', height: '16px', width: '16px', left: editContactData.IsVip ? '20px' : '4px', bottom: '4px', backgroundColor: 'white', transition: '.4s', borderRadius: '50%' }}></span>
+                              </span>
+                            </label>
+                            <span style={{ fontSize: '14px', color: editContactData.IsVip ? '#10b981' : '#64748b', fontWeight: editContactData.IsVip ? 'bold' : 'normal' }}>Yes</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {PERMANENT_CUSTOM_FIELDS.map(f => (
+                        <div className="form-group" key={f} style={{ marginBottom: '16px' }}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>{f}</label>
+                          <input 
+                            type="text" 
+                            value={fields[f] || ''} 
+                            onChange={e => handlePermanentFieldChange(f, e.target.value)} 
+                            style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} 
+                          />
+                        </div>
+                      ))}
+
+                      <div className="form-group" style={{ marginBottom: '16px', marginTop: '24px', borderTop: '1px solid #eee', paddingTop: '16px' }}>
+                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Custom Fields</label>
+                        <div>
+                          {dynamicKeys.map((k, i) => (
+                            <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                              <input 
+                                type="text" 
+                                value={k} 
+                                onChange={e => {
+                                  const newKey = e.target.value;
+                                  const newFields = {};
+                                  Object.keys(fields).forEach(oldKey => {
+                                    if (oldKey === k) newFields[newKey] = fields[oldKey];
+                                    else newFields[oldKey] = fields[oldKey];
+                                  });
+                                  setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
+                                }}
+                                style={{ width: '40%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                              />
+                              <input 
+                                type="text" 
+                                value={fields[k]} 
+                                onChange={e => {
+                                  const newFields = { ...fields, [k]: e.target.value };
+                                  setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
+                                }}
+                                style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                              />
+                              <button 
+                                className="btn btn-secondary"
+                                style={{ color: '#ef4444', padding: '8px' }}
+                                onClick={() => {
+                                  const newFields = { ...fields };
+                                  delete newFields[k];
+                                  setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
+                                }}
+                              >
+                                <XCircle size={16} />
+                              </button>
+                            </div>
+                          ))}
+                          <button 
+                            className="btn btn-secondary" 
+                            style={{ marginTop: '8px', padding: '4px 8px', fontSize: '0.9em' }}
+                            onClick={() => {
+                              let newKey = 'new_field';
+                              let counter = 1;
+                              while(newKey in fields) {
+                                  newKey = 'new_field_' + counter;
+                                  counter++;
+                              }
+                              const newFields = { ...fields, [newKey]: '' };
+                              setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
+                            }}
+                          >
+                            <Plus size={14} style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Add Field
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ padding: '16px 24px 24px 24px', display: 'flex', justifyContent: 'flex-end', gap: '12px', flexShrink: 0 }}>
+                      <button className="btn btn-secondary" onClick={() => setShowEditContactModal(false)}>Cancel</button>
+                      <button className="btn btn-primary" onClick={handleSaveContact}>Save</button>
                     </div>
                   </div>
-                </div>
-
-                <div className="form-group" style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Custom Fields</label>
-                  {(() => {
-                    let fields = {};
-                    try { fields = JSON.parse(editContactData.CustomFieldsJson || '{}'); } catch(e) {}
-                    const keys = Object.keys(fields);
-                    
-                    return (
-                      <div>
-                        {keys.map((k, i) => (
-                          <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                            <input 
-                              type="text" 
-                              value={k} 
-                              onChange={e => {
-                                const newKey = e.target.value;
-                                const newFields = {};
-                                // preserve order
-                                keys.forEach(oldKey => {
-                                  if (oldKey === k) newFields[newKey] = fields[oldKey];
-                                  else newFields[oldKey] = fields[oldKey];
-                                });
-                                setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
-                              }}
-                              style={{ width: '40%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
-                            />
-                            <input 
-                              type="text" 
-                              value={fields[k]} 
-                              onChange={e => {
-                                const newFields = { ...fields, [k]: e.target.value };
-                                setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
-                              }}
-                              style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
-                            />
-                            <button 
-                              className="btn btn-secondary"
-                              style={{ color: '#ef4444', padding: '8px' }}
-                              onClick={() => {
-                                const newFields = { ...fields };
-                                delete newFields[k];
-                                setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
-                              }}
-                            >
-                              <XCircle size={16} />
-                            </button>
-                          </div>
-                        ))}
-                        <button 
-                          className="btn btn-secondary" 
-                          style={{ marginTop: '8px', padding: '4px 8px', fontSize: '0.9em' }}
-                          onClick={() => {
-                            let newKey = 'new_field';
-                            let counter = 1;
-                            while(newKey in fields) {
-                                newKey = 'new_field_' + counter;
-                                counter++;
-                            }
-                            const newFields = { ...fields, [newKey]: '' };
-                            setEditContactData({...editContactData, CustomFieldsJson: JSON.stringify(newFields)});
-                          }}
-                        >
-                          <Plus size={14} style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Add Field
-                        </button>
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                  <button className="btn btn-secondary" onClick={() => setShowEditContactModal(false)}>Cancel</button>
-                  <button className="btn btn-primary" onClick={handleSaveContact}>Save</button>
-                </div>
-              </div>
+                );
+              })()}
             </div>
           ), document.body)}
 

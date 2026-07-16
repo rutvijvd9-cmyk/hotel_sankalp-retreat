@@ -2177,6 +2177,70 @@ app.MapDelete("/api/integrations/pms-mappings/{id}", async (int id, PmsMappingRe
     return Results.Ok();
 });
 
+app.MapPost("/api/webhooks/pms-events", async (
+    HttpContext ctx,
+    [Microsoft.AspNetCore.Mvc.FromBody] System.Text.Json.JsonElement body,
+    IPmsEventSource pmsSource,
+    Microsoft.Extensions.Logging.ILogger<Program> logger) =>
+{
+    // 1. Check Authorization Token
+    if (!ctx.Request.Headers.TryGetValue("Authorization", out var authHeader) || 
+        !string.Equals(authHeader.ToString(), "Bearer sankalp_retreat_pms_secret_2026", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        // 2. Parse Payload
+        var rawEventType = body.TryGetProperty("eventType", out var etProp) ? etProp.GetString() : null;
+        var guestName = body.TryGetProperty("guestName", out var gnProp) ? gnProp.GetString() : null;
+        var phoneNumber = body.TryGetProperty("phoneNumber", out var pnProp) ? pnProp.GetString() : null;
+        var roomNumber = body.TryGetProperty("roomNumber", out var rnProp) ? rnProp.GetString() : null;
+        var amount = body.TryGetProperty("amount", out var amtProp) && amtProp.TryGetDecimal(out var d) ? d : 0m;
+        
+        if (string.IsNullOrWhiteSpace(rawEventType) || string.IsNullOrWhiteSpace(guestName) || string.IsNullOrWhiteSpace(phoneNumber))
+        {
+            return Results.BadRequest(new { status = "error", message = "Missing required fields (eventType, guestName, phoneNumber)" });
+        }
+
+        // Map API Event Types ("CheckIn"/"CheckOut") to DB conventions ("PMS_CHECKIN"/"PMS_CHECKOUT")
+        var eventType = rawEventType.ToLower() switch
+        {
+            "checkin" => "PMS_CHECKIN",
+            "checkout" => "PMS_CHECKOUT",
+            _ => rawEventType
+        };
+
+        var pmsEvent = new HotelAutomation.Core.Models.PmsEvent
+        {
+            EventType = eventType ?? "",
+            GuestName = guestName ?? "",
+            PhoneNumber = phoneNumber ?? "",
+            RoomNumber = roomNumber ?? "",
+            Amount = amount,
+            RawPayload = body.GetRawText() ?? ""
+        };
+
+        // 3. Inject event if using ManualPmsConnector (standard for webhook handling in this architecture)
+        if (pmsSource is ManualPmsConnector manualConnector)
+        {
+            manualConnector.RaiseTestEvent(pmsEvent);
+            return Results.Ok(new { status = "success", message = $"Event {eventType} for room {roomNumber} processed successfully." });
+        }
+        else
+        {
+            logger.LogWarning("Webhook received, but current IPmsEventSource is not ManualPmsConnector.");
+            return Results.Ok(new { status = "warning", message = "Event received but not processed (active connector does not support direct injection)." });
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Error processing PMS Webhook");
+        return Results.StatusCode(500);
+    }
+});
+
 app.Run();
 
 public class WebhookPayload { public string From { get; set; } = ""; public string Body { get; set; } = ""; }
