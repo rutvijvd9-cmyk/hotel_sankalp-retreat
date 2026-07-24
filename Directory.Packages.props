@@ -39,6 +39,14 @@
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.9" />
     <PackageVersion Include="Dapper" Version="2.1.79" />
     <PackageVersion Include="QuestPDF" Version="2026.7.0" />
+    <!-- ── PDF reading (virtual printer / print-to-PDF bridge) ─────────── -->
+    <!-- PdfPig 1.7.0-custom-5 is the latest available build on NuGet. -->
+    <!-- Sub-packages are pinned to the same version to satisfy strict NuGet audit. -->
+    <PackageVersion Include="UglyToad.PdfPig" Version="1.7.0-custom-5" />
+    <PackageVersion Include="UglyToad.PdfPig.Core" Version="1.7.0-custom-5" />
+    <PackageVersion Include="UglyToad.PdfPig.Fonts" Version="1.7.0-custom-5" />
+    <PackageVersion Include="UglyToad.PdfPig.Tokenization" Version="1.7.0-custom-5" />
+    <PackageVersion Include="UglyToad.PdfPig.Tokens" Version="1.7.0-custom-5" />
   </ItemGroup>
   <!--
     Suppression of GHSA-2m69-gcr7-jv3q — documented above.

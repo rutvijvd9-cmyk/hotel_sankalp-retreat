@@ -19,6 +19,7 @@ public sealed class HotelWorker : BackgroundService
     private readonly UnsubscribedContactRepository _unsubRepo;
     private readonly ILogger<HotelWorker> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
+    private static readonly SemaphoreSlim _dedupLock = new(1, 1);
 
     public HotelWorker(
         IPmsEventSource pmsSource,
@@ -74,6 +75,49 @@ public sealed class HotelWorker : BackgroundService
 
             var (matchedTemplate, matchedRule) = match.Value;
 
+            // ── If/Else Branching: evaluate FieldCondition and override template if needed ──
+            if (!string.IsNullOrWhiteSpace(matchedRule.ConditionsJson)
+                && matchedRule.YesTemplateId.HasValue
+                && matchedRule.NoTemplateId.HasValue)
+            {
+                try
+                {
+                    var cond = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(matchedRule.ConditionsJson);
+                    if (cond != null && cond.TryGetValue("Type", out var typeEl) && typeEl.GetString() == "FieldCondition")
+                    {
+                        var field    = cond.TryGetValue("Field",           out var fEl)   ? fEl.GetString()   ?? "" : "";
+                        var op       = cond.TryGetValue("Operator",        out var oEl)   ? oEl.GetString()   ?? "" : "";
+                        var value    = cond.TryGetValue("Value",           out var vEl)   ? vEl.GetString()   ?? "" : "";
+                        var cfName   = cond.TryGetValue("CustomFieldName", out var cfEl)  ? cfEl.GetString()  ?? "" : "";
+
+                        // Load contact to check field values
+                        var cleanPhoneForCond = new string((pmsEvent.PhoneNumber ?? "").Where(char.IsDigit).ToArray());
+                        using var condScope = _scopeFactory.CreateScope();
+                        var condContactRepo = condScope.ServiceProvider.GetRequiredService<HotelAutomation.Data.Repositories.ContactRepository>();
+                        var condContact = await condContactRepo.GetByPhoneNumberAsync(cleanPhoneForCond);
+
+                        bool conditionMet = false;
+                        if (condContact != null)
+                        {
+                            conditionMet = EvaluateFieldCondition(field, op, value, cfName, condContact);
+                        }
+
+                        var branchTemplateId = conditionMet ? matchedRule.YesTemplateId.Value : matchedRule.NoTemplateId.Value;
+                        var allTemplatesForBranch = await _templateRepository.GetAllAsync();
+                        var branchTemplate = allTemplatesForBranch.FirstOrDefault(t => t.Id == branchTemplateId);
+                        if (branchTemplate != null)
+                        {
+                            matchedTemplate = branchTemplate;
+                            _logger.LogInformation("If/Else branch: condition={Result}, using template {TemplateId}", conditionMet ? "YES" : "NO", branchTemplateId);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "FieldCondition evaluation failed; falling back to default template.");
+                }
+            }
+
             // Stop Marketing messages if the user is unsubscribed from the category
             // We need to look up the CategoryId based on matchedTemplate.Category
             // And then look up the ContactId based on pmsEvent.PhoneNumber
@@ -85,7 +129,7 @@ public sealed class HotelWorker : BackgroundService
                 var categoryRepo = _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<CategoryRepository>();
                 var consentRepo = _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<ContactConsentRepository>();
                 
-                var contact = await contactRepo.GetByPhoneNumberAsync(pmsEvent.PhoneNumber);
+                var contact = await contactRepo.GetByPhoneNumberAsync(pmsEvent.PhoneNumber ?? string.Empty);
                 if (contact != null)
                 {
                     var categories = await categoryRepo.GetAllAsync();
@@ -164,7 +208,26 @@ public sealed class HotelWorker : BackgroundService
             };
 
 
-            await _jobRepository.AddAsync(job);
+            // ── Deduplication: prevent duplicate WhatsApp messages from double-clicks / retries ──
+            // If the same phone + rule already has a job created in the last 5 minutes, skip.
+            await _dedupLock.WaitAsync();
+            try
+            {
+                var isDuplicate = await _jobRepository.HasRecentJobAsync(cleanPhone, matchedRule.Id, windowMinutes: 5);
+                if (isDuplicate)
+                {
+                    _logger.LogWarning(
+                        "Duplicate job skipped for {Phone} on rule {RuleId} — already triggered within the 5-minute dedup window.",
+                        cleanPhone, matchedRule.Id);
+                    return;
+                }
+
+                await _jobRepository.AddAsync(job);
+            }
+            finally
+            {
+                _dedupLock.Release();
+            }
             
             await _eventLog.LogAsync(pmsEvent, null); // We don't have OutboxMessageId yet
 
@@ -249,5 +312,98 @@ public sealed class HotelWorker : BackgroundService
         {
             _logger.LogError(ex, "Error handling PmsEvent {EventType}", pmsEvent.EventType);
         }
+    }
+
+    /// <summary>
+    /// Evaluates a single FieldCondition against a contact record.
+    /// Returns true if the condition passes (→ YES branch), false otherwise (→ NO branch).
+    /// </summary>
+    private static bool EvaluateFieldCondition(
+        string field, string op, string value, string customFieldName,
+        HotelAutomation.Core.Models.Contact contact)
+    {
+        // Boolean shortcuts
+        if (op == "is_true")
+        {
+            return field switch
+            {
+                "is_vip" => contact.IsVip,
+                _        => false
+            };
+        }
+        if (op == "is_false")
+        {
+            return field switch
+            {
+                "is_vip" => !contact.IsVip,
+                _        => true
+            };
+        }
+
+        // Numeric fields
+        if (field == "checkin_count")
+        {
+            if (!double.TryParse(value, out var threshold)) return false;
+            return op switch
+            {
+                "eq"  => contact.CheckInCount == (int)threshold,
+                "gt"  => contact.CheckInCount >  (int)threshold,
+                "lt"  => contact.CheckInCount <  (int)threshold,
+                "gte" => contact.CheckInCount >= (int)threshold,
+                "lte" => contact.CheckInCount <= (int)threshold,
+                _     => false
+            };
+        }
+
+        if (field == "avg_stay_days")
+        {
+            if (!double.TryParse(value, out var threshold)) return false;
+            return op switch
+            {
+                "eq"  => Math.Abs(contact.AverageStayDays - threshold) < 0.01,
+                "gt"  => contact.AverageStayDays >  threshold,
+                "lt"  => contact.AverageStayDays <  threshold,
+                "gte" => contact.AverageStayDays >= threshold,
+                "lte" => contact.AverageStayDays <= threshold,
+                _     => false
+            };
+        }
+
+        // String fields from core contact properties
+        string? contactValue = field switch
+        {
+            "country"        => GetCustomField(contact, "Country"),
+            "city"           => GetCustomField(contact, "City"),
+            "language"       => GetCustomField(contact, "Language"),
+            "booking_status" => GetCustomField(contact, "BookingStatus"),
+            "custom_field"   => GetCustomField(contact, customFieldName),
+            _                => null
+        };
+
+        if (contactValue == null) return false;
+
+        return op switch
+        {
+            "eq"       => string.Equals(contactValue, value, StringComparison.OrdinalIgnoreCase),
+            "neq"      => !string.Equals(contactValue, value, StringComparison.OrdinalIgnoreCase),
+            "contains" => contactValue.Contains(value, StringComparison.OrdinalIgnoreCase),
+            "exists"   => !string.IsNullOrWhiteSpace(contactValue),
+            _          => false
+        };
+    }
+
+    private static string? GetCustomField(HotelAutomation.Core.Models.Contact contact, string key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(contact.CustomFieldsJson))
+            return null;
+        try
+        {
+            var dict = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(contact.CustomFieldsJson);
+            if (dict == null) return null;
+            var match = dict.FirstOrDefault(kv => string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase));
+            if (match.Key == null) return null;
+            return match.Value.ValueKind == System.Text.Json.JsonValueKind.Null ? null : match.Value.ToString();
+        }
+        catch { return null; }
     }
 }

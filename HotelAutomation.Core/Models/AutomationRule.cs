@@ -12,4 +12,6 @@ public sealed record AutomationRule
     public string? AudienceFilter { get; init; }            // JSON for targeting specific segments
     public int DelayMinutes { get; init; } = 0;             // Support for Drip Campaigns
     public string? TemplateWeightsJson { get; init; }       // For A/B Testing
+    public int? YesTemplateId { get; init; }                // If/Else: template when condition is TRUE
+    public int? NoTemplateId { get; init; }                 // If/Else: template when condition is FALSE
 }

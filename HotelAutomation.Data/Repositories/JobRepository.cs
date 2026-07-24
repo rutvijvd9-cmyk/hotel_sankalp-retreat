@@ -30,7 +30,7 @@ namespace HotelAutomation.Data.Repositories
                 job.ParametersJson,
                 TriggerTime = job.TriggerTime.ToString("o"),
                 job.Status,
-                job.CreatedAt,
+                CreatedAt = job.CreatedAt.ToString("o"),
                 job.RuleId
             });
         }
@@ -57,6 +57,25 @@ namespace HotelAutomation.Data.Repositories
             using var connection = await _dbFactory.OpenAsync();
             const string sql = "UPDATE ScheduledJobs SET Status = 'Cancelled' WHERE PhoneNumber = @PhoneNumber AND Status = 'Pending'";
             await connection.ExecuteAsync(sql, new { PhoneNumber = phoneNumber });
+        }
+
+        /// <summary>
+        /// Returns true if a job for the same phone + rule already exists within the dedup window.
+        /// Used to prevent duplicate WhatsApp messages from accidental double-triggers.
+        /// </summary>
+        public async Task<bool> HasRecentJobAsync(string phoneNumber, int ruleId, int windowMinutes)
+        {
+            using var connection = await _dbFactory.OpenAsync();
+            const string sql = @"
+                SELECT COUNT(*) FROM ScheduledJobs
+                WHERE PhoneNumber = @PhoneNumber
+                  AND RuleId      = @RuleId
+                  AND Status     != 'Cancelled'
+                  AND CreatedAt  >= @Cutoff";
+
+            var cutoff = DateTimeOffset.UtcNow.AddMinutes(-windowMinutes).ToString("o");
+            var count = await connection.ExecuteScalarAsync<int>(sql, new { PhoneNumber = phoneNumber, RuleId = ruleId, Cutoff = cutoff });
+            return count > 0;
         }
     }
 }

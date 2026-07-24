@@ -355,5 +355,22 @@ public sealed class SqliteConnectionFactory
             await migCmd.ExecuteNonQueryAsync(ct);
         }
         catch { }
+
+        // If/Else branching columns on AutomationRules
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE AutomationRules ADD COLUMN YesTemplateId INTEGER NULL;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "ALTER TABLE AutomationRules ADD COLUMN NoTemplateId INTEGER NULL;";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
     }
 }

@@ -76,6 +76,20 @@ if (pmsType == "Database")
             builder.Configuration.GetConnectionString("Sqlite")!
         ));
 }
+else if (pmsType == "Pdf")
+{
+    // ── Virtual Printer / PDF Print Bridge connector ────────────────────────
+    // Watches a folder for PDF files produced by the virtual printer,
+    // extracts guest data (name, phone, room, amount, tax) and fires PmsEvents.
+    var pdfBridgeOptions = new HotelAutomation.Connectors.Pms.PdfBridgeOptions();
+    builder.Configuration.GetSection(HotelAutomation.Connectors.Pms.PdfBridgeOptions.SectionName)
+        .Bind(pdfBridgeOptions);
+    builder.Services.AddSingleton(pdfBridgeOptions);
+    builder.Services.AddSingleton<HotelAutomation.Connectors.Pms.PdfDataExtractor>();
+    builder.Services.AddSingleton<HotelAutomation.Connectors.Pms.PdfPmsConnector>();
+    builder.Services.AddSingleton<IPmsEventSource>(
+        sp => sp.GetRequiredService<HotelAutomation.Connectors.Pms.PdfPmsConnector>());
+}
 else
 {
     builder.Services.AddSingleton<ManualPmsConnector>();
@@ -85,6 +99,14 @@ else
 // ── PDF Generation ─────────────────────────────────────────────────────────────
 QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 builder.Services.AddSingleton<IPdfGenerator, HotelAutomation.Worker.Services.InvoicePdfGenerator>();
+
+// ── Virtual Printer Installer (Phase 2) ────────────────────────────────
+// Runs at startup on Windows. Installs 'Hotel Sankalp Printer' automatically.
+// Safely skipped on macOS/Linux (dev machines). Requires PmsConnectorType = "Pdf".
+if (pmsType == "Pdf")
+{
+    builder.Services.AddHostedService<HotelAutomation.Worker.Services.VirtualPrinterInstaller>();
+}
 
 // ── Hosted Services (Background Engine) ───────────────────────────────────────
 builder.Services.AddHostedService<HotelWorker>();
@@ -728,11 +750,11 @@ app.MapPost("/api/campaigns/{id}/enroll", async (int id, int smartListId, ICampa
 app.MapPost("/api/rules", async (HotelAutomation.Core.Models.AutomationRule rule, SqliteConnectionFactory factory) => 
 {
     using var conn = await factory.OpenAsync();
-    var sql = @"INSERT INTO AutomationRules (Name, Description, TriggerEventType, TemplateId, IsEnabled, ConditionsJson, AudienceFilter, DelayMinutes) 
-                VALUES (@Name, @Description, @TriggerEventType, @TemplateId, @IsEnabled, @ConditionsJson, @AudienceFilter, @DelayMinutes);
+    var sql = @"INSERT INTO AutomationRules (Name, Description, TriggerEventType, TemplateId, IsEnabled, ConditionsJson, AudienceFilter, DelayMinutes, YesTemplateId, NoTemplateId) 
+                VALUES (@Name, @Description, @TriggerEventType, @TemplateId, @IsEnabled, @ConditionsJson, @AudienceFilter, @DelayMinutes, @YesTemplateId, @NoTemplateId);
                 SELECT last_insert_rowid();";
     var id = await conn.ExecuteScalarAsync<int>(sql, rule);
-    return Results.Ok(new { id, rule.Name, rule.Description, rule.TriggerEventType, rule.TemplateId, rule.IsEnabled, rule.ConditionsJson, rule.AudienceFilter, rule.DelayMinutes });
+    return Results.Ok(new { id, rule.Name, rule.Description, rule.TriggerEventType, rule.TemplateId, rule.IsEnabled, rule.ConditionsJson, rule.AudienceFilter, rule.DelayMinutes, rule.YesTemplateId, rule.NoTemplateId });
 });
 
 app.MapPut("/api/rules/{id}", async (int id, HotelAutomation.Core.Models.AutomationRule rule, SqliteConnectionFactory factory) => 
@@ -746,9 +768,11 @@ app.MapPut("/api/rules/{id}", async (int id, HotelAutomation.Core.Models.Automat
                     IsEnabled = @IsEnabled, 
                     ConditionsJson = @ConditionsJson, 
                     AudienceFilter = @AudienceFilter,
-                    DelayMinutes = @DelayMinutes 
+                    DelayMinutes = @DelayMinutes,
+                    YesTemplateId = @YesTemplateId,
+                    NoTemplateId = @NoTemplateId
                 WHERE Id = @Id";
-    var rows = await conn.ExecuteAsync(sql, new { rule.Name, rule.Description, rule.TriggerEventType, rule.TemplateId, rule.IsEnabled, rule.ConditionsJson, rule.AudienceFilter, rule.DelayMinutes, Id = id });
+    var rows = await conn.ExecuteAsync(sql, new { rule.Name, rule.Description, rule.TriggerEventType, rule.TemplateId, rule.IsEnabled, rule.ConditionsJson, rule.AudienceFilter, rule.DelayMinutes, rule.YesTemplateId, rule.NoTemplateId, Id = id });
     return rows > 0 ? Results.Ok(new { id }) : Results.NotFound();
 });
 
@@ -1946,6 +1970,47 @@ app.MapPost("/api/webhooks/pms-events", async (
         logger.LogError(ex, "Error processing PMS Webhook");
         return Results.StatusCode(500);
     }
+});
+
+// ── PDF Bridge API Endpoints ─────────────────────────────────────────────────
+
+// GET /api/pdf-bridge/status
+// Returns statistics about the PDF print bridge (last file, count, errors).
+app.MapGet("/api/pdf-bridge/status", (IPmsEventSource pmsSource, IConfiguration config) =>
+{
+    var pdfOpts = new HotelAutomation.Connectors.Pms.PdfBridgeOptions();
+    config.GetSection(HotelAutomation.Connectors.Pms.PdfBridgeOptions.SectionName).Bind(pdfOpts);
+
+    if (pmsSource is HotelAutomation.Connectors.Pms.PdfPmsConnector pdfConnector)
+    {
+        return Results.Ok(new
+        {
+            active           = true,
+            printerName      = pdfOpts.VirtualPrinterName,
+            printerOutputFile = pdfOpts.PrinterOutputFile,
+            watchFolder      = pdfOpts.WatchFolder,
+            filesProcessed   = pdfConnector.FilesProcessed,
+            filesFailed      = pdfConnector.FilesFailedExtraction,
+            lastFile         = pdfConnector.LastProcessedFile,
+            lastProcessedAt  = pdfConnector.LastProcessedAt,
+            lastError        = pdfConnector.LastError
+        });
+    }
+    return Results.Ok(new { active = false, message = "PDF Bridge connector is not active. Set PmsConnectorType=Pdf in appsettings.json." });
+});
+
+// POST /api/pdf-bridge/scan
+// Manually trigger a scan of all existing PDFs in the watch folder.
+// Useful for processing files that were placed in the folder while the app was offline.
+app.MapPost("/api/pdf-bridge/scan", (IPmsEventSource pmsSource, ILogger<Program> logger) =>
+{
+    if (pmsSource is HotelAutomation.Connectors.Pms.PdfPmsConnector pdfConnector)
+    {
+        logger.LogInformation("PDF Bridge: manual scan triggered via API.");
+        pdfConnector.ScanNow();
+        return Results.Ok(new { status = "success", message = "Scan triggered. Check logs for results." });
+    }
+    return Results.BadRequest(new { status = "error", message = "PDF Bridge connector is not active." });
 });
 
 app.Run();

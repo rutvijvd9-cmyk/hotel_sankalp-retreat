@@ -12,6 +12,8 @@
     <PackageReference Include="Dapper" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <!-- PDF reading for virtual printer bridge -->
+    <PackageReference Include="UglyToad.PdfPig" />
   </ItemGroup>
 
   <ItemGroup>

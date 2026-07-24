@@ -4,6 +4,43 @@ import {
   Trash2, ChevronDown, ChevronUp, Save, CheckCircle2
 } from 'lucide-react';
 
+// ─── Condition Fields ─────────────────────────────────────────────────────────
+const CONDITION_FIELDS = [
+  { value: 'is_vip',         label: 'Is VIP',            type: 'boolean' },
+  { value: 'checkin_count',  label: 'Check-in Count',    type: 'number'  },
+  { value: 'avg_stay_days',  label: 'Average Stay Days', type: 'number'  },
+  { value: 'country',        label: 'Country',           type: 'string'  },
+  { value: 'city',           label: 'City',              type: 'string'  },
+  { value: 'language',       label: 'Language Code',     type: 'string'  },
+  { value: 'booking_status', label: 'Booking Status',    type: 'string'  },
+  { value: 'custom_field',   label: 'Custom Field',      type: 'custom'  },
+];
+
+const OPERATORS_BY_TYPE = {
+  boolean: [
+    { value: 'is_true',  label: 'is true'  },
+    { value: 'is_false', label: 'is false' },
+  ],
+  number: [
+    { value: 'eq',  label: 'equals'                  },
+    { value: 'gt',  label: 'greater than'            },
+    { value: 'lt',  label: 'less than'               },
+    { value: 'gte', label: 'greater than or equal'   },
+    { value: 'lte', label: 'less than or equal'      },
+  ],
+  string: [
+    { value: 'eq',       label: 'equals'       },
+    { value: 'neq',      label: 'not equals'   },
+    { value: 'contains', label: 'contains'     },
+  ],
+  custom: [
+    { value: 'eq',       label: 'equals'           },
+    { value: 'neq',      label: 'not equals'       },
+    { value: 'contains', label: 'contains'         },
+    { value: 'exists',   label: 'exists (any value)' },
+  ],
+};
+
 const STEP_TYPES = {
   TRIGGER: {
     label: 'Trigger',
@@ -359,24 +396,95 @@ function StepCard({ step, onUpdate, onDelete, canDelete = true, allTriggerOption
             </div>
           )}
           
-          {step.stepType === 'CONDITION' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 500 }}>Field condition</label>
-              <p style={{ fontSize: '0.7rem', color: '#64748b', margin: 0 }}>This allows splitting the journey based on contact parameters.</p>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <select style={{ flex: 1, padding: '6px 8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.82rem' }}
-                    value={step.conditionField || 'status'}
-                    onChange={e => onUpdate(step.id, { conditionField: e.target.value })}>
-                    <option value="status">Booking Status</option>
-                    <option value="vip">Is VIP</option>
-                </select>
-                <input style={{ flex: 1, padding: '6px 8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.82rem' }}
-                    placeholder="Value..."
-                    value={step.conditionValue || ''}
-                    onChange={e => onUpdate(step.id, { conditionValue: e.target.value })} />
+          {step.stepType === 'CONDITION' && (() => {
+            const fieldDef = CONDITION_FIELDS.find(f => f.value === (step.conditionField || 'is_vip')) || CONDITION_FIELDS[0];
+            const operators = OPERATORS_BY_TYPE[fieldDef.type] || OPERATORS_BY_TYPE.string;
+            const showValue = !['is_true', 'is_false', 'exists'].includes(step.conditionOperator || operators[0].value);
+            const showCustomName = fieldDef.value === 'custom_field';
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '0.75rem', fontWeight: 600, color: '#334155' }}>Field condition</label>
+                  <p style={{ fontSize: '0.7rem', color: '#64748b', margin: '2px 0 8px' }}>Split the journey based on contact data.</p>
+
+                  {/* Field picker */}
+                  <select
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.82rem', marginBottom: '6px', background: 'var(--card-bg,#fff)', color: 'var(--text-heading,#1e293b)' }}
+                    value={step.conditionField || 'is_vip'}
+                    onChange={e => {
+                      const newField = e.target.value;
+                      const newDef = CONDITION_FIELDS.find(f => f.value === newField) || CONDITION_FIELDS[0];
+                      const firstOp = (OPERATORS_BY_TYPE[newDef.type] || OPERATORS_BY_TYPE.string)[0].value;
+                      onUpdate(step.id, { conditionField: newField, conditionOperator: firstOp, conditionValue: '' });
+                    }}
+                  >
+                    {CONDITION_FIELDS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                  </select>
+
+                  {/* Custom field name input */}
+                  {showCustomName && (
+                    <input
+                      type="text"
+                      placeholder="Custom field name (e.g. City, Language...)"
+                      style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.82rem', marginBottom: '6px' }}
+                      value={step.conditionCustomFieldName || ''}
+                      onChange={e => onUpdate(step.id, { conditionCustomFieldName: e.target.value })}
+                    />
+                  )}
+
+                  {/* Operator + Value row */}
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <select
+                      style={{ flex: showValue ? '0 0 auto' : 1, padding: '6px 8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.82rem', background: 'var(--card-bg,#fff)', color: 'var(--text-heading,#1e293b)' }}
+                      value={step.conditionOperator || operators[0].value}
+                      onChange={e => onUpdate(step.id, { conditionOperator: e.target.value })}
+                    >
+                      {operators.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                    {showValue && (
+                      <input
+                        type={fieldDef.type === 'number' ? 'number' : 'text'}
+                        placeholder="Value..."
+                        style={{ flex: 1, padding: '6px 8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.82rem' }}
+                        value={step.conditionValue || ''}
+                        onChange={e => onUpdate(step.id, { conditionValue: e.target.value })}
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* YES Branch */}
+                <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '10px' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#15803d', marginBottom: '6px' }}>✅ YES — condition matches → send this template</div>
+                  <select
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #86efac', fontSize: '0.82rem', background: '#fff' }}
+                    value={step.yesTemplateId || ''}
+                    onChange={e => onUpdate(step.id, { yesTemplateId: e.target.value })}
+                  >
+                    <option value="">-- Select YES Template --</option>
+                    {step.templatesList?.map(t => (
+                      <option key={t.Id || t.id} value={t.Id || t.id}>{t.Name || t.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* NO Branch */}
+                <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '10px' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#b91c1c', marginBottom: '6px' }}>❌ NO — condition doesn't match → send this template</div>
+                  <select
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #fca5a5', fontSize: '0.82rem', background: '#fff' }}
+                    value={step.noTemplateId || ''}
+                    onChange={e => onUpdate(step.id, { noTemplateId: e.target.value })}
+                  >
+                    <option value="">-- Select NO Template --</option>
+                    {step.templatesList?.map(t => (
+                      <option key={t.Id || t.id} value={t.Id || t.id}>{t.Name || t.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {step.stepType === 'STOP' && (
             <p style={{ fontSize: '0.75rem', color: '#64748b', margin: 0 }}>Contacts reaching this step will exit the workflow.</p>
@@ -531,10 +639,25 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
   const saveRule = async () => {
     const triggerStep = steps.find(s => s.stepType === 'TRIGGER');
     const actionStep = steps.find(s => s.stepType === 'WHATSAPP');
+    const conditionStep = steps.find(s => s.stepType === 'CONDITION');
     
-    if (!triggerStep || !actionStep || !actionStep.templateId) {
-      alert("You need at least a Trigger and a Send WhatsApp step with a selected template.");
+    if (!triggerStep) {
+      alert("You need at least a Trigger step.");
       return;
+    }
+
+    // If there's a condition step, validate it has both branch templates
+    if (conditionStep) {
+      if (!conditionStep.yesTemplateId || !conditionStep.noTemplateId) {
+        alert("The Condition step requires both a YES template and a NO template to be selected.");
+        return;
+      }
+    } else {
+      // No condition step: need a regular WhatsApp step
+      if (!actionStep || !actionStep.templateId) {
+        alert("You need at least a Trigger and a Send WhatsApp step with a selected template.");
+        return;
+      }
     }
 
     let triggerType = triggerStep.triggerValue || 'PMS_CHECKIN';
@@ -560,6 +683,23 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
       });
     }
 
+    // If/Else: override ConditionsJson with FieldCondition data from the condition step
+    let yesTemplateId = null;
+    let noTemplateId = null;
+    if (conditionStep) {
+      conditionsJson = JSON.stringify({
+        Type: 'FieldCondition',
+        Field:           conditionStep.conditionField           || 'is_vip',
+        Operator:        conditionStep.conditionOperator        || 'is_true',
+        Value:           conditionStep.conditionValue           || '',
+        CustomFieldName: conditionStep.conditionCustomFieldName || '',
+        YesTemplateId:   parseInt(conditionStep.yesTemplateId),
+        NoTemplateId:    parseInt(conditionStep.noTemplateId),
+      });
+      yesTemplateId = parseInt(conditionStep.yesTemplateId);
+      noTemplateId  = parseInt(conditionStep.noTemplateId);
+    }
+
     let audienceFilterJson = null;
     if (triggerStep.audienceFilter === 'Custom') {
       audienceFilterJson = JSON.stringify({
@@ -574,10 +714,12 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
       Name: ruleName,
       Description: ruleDescription,
       TriggerEventType: triggerType,
-      TemplateId: parseInt(actionStep.templateId),
+      TemplateId: conditionStep ? yesTemplateId : parseInt(actionStep.templateId),
       IsEnabled: false,
       ConditionsJson: conditionsJson,
-      AudienceFilter: audienceFilterJson
+      AudienceFilter: audienceFilterJson,
+      YesTemplateId: yesTemplateId,
+      NoTemplateId: noTemplateId,
     };
     
     try {
