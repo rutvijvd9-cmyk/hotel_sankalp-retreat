@@ -3320,7 +3320,7 @@ export default function App() {
           {userSubTab === 'list' ? (
             <div className="premium-card" style={{ padding: 0, overflow: 'hidden' }}>
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '950px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '1250px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.02)' }}>
                     <th style={{ padding: '16px 24px', fontWeight: 600 }}>Username</th>
@@ -3328,7 +3328,7 @@ export default function App() {
                     <th style={{ padding: '16px 24px', fontWeight: 600 }}>Signature / Stamp</th>
                     <th style={{ padding: '16px 24px', fontWeight: 600 }}>Created At</th>
                     <th style={{ padding: '16px 24px', fontWeight: 600 }}>Status</th>
-                    {(user?.role === 'Owner' || user?.role === 'Developer') && <th style={{ padding: '16px 24px', fontWeight: 600 }}>Action</th>}
+                    {(user?.role === 'Owner' || user?.role === 'Developer') && <th style={{ padding: '16px 24px', fontWeight: 600, minWidth: '380px', whiteSpace: 'nowrap' }}>Action</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -3438,7 +3438,7 @@ export default function App() {
                       </td>
                       {/* Actions column for Owner or Developer */}
                       {(user?.role === 'Owner' || user?.role === 'Developer') && (
-                        <td style={{ padding: '16px 24px' }}>
+                        <td style={{ padding: '16px 24px', minWidth: '380px', whiteSpace: 'nowrap' }}>
                           {username !== user?.username ? (
                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                               <button
