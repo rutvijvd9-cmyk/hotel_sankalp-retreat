@@ -1,3 +1,7 @@
+using Windows.Graphics.Imaging;
+using Windows.Storage.Streams;
+using Windows.Media.Ocr;
+
 namespace HotelAutomation.Connectors.Pms;
 
 using System.Text;
@@ -134,6 +138,26 @@ public sealed class PdfDataExtractor
 
         _logger.LogDebug("PDF text extracted ({Chars} chars) from: {Path}", fullText.Length, pdfPath);
 
+        // Fallback to OCR if no phone number was found (meaning it's likely scanned or image-only)
+        var phoneMatches = PhoneRegex.Match(fullText);
+        if (string.IsNullOrWhiteSpace(fullText) || !phoneMatches.Success)
+        {
+            _logger.LogInformation("PDF text layer is empty or missing phone number. Running OCR fallback on PDF images...");
+            try
+            {
+                var ocrText = OcrPdfImagesAsync(pdfPath).GetAwaiter().GetResult();
+                if (!string.IsNullOrWhiteSpace(ocrText))
+                {
+                    fullText = ocrText;
+                    _logger.LogInformation("OCR fallback successful. Extracted {Chars} characters.", fullText.Length);
+                }
+            }
+            catch (Exception ocrEx)
+            {
+                _logger.LogWarning(ocrEx, "OCR fallback failed for '{File}'", Path.GetFileName(pdfPath));
+            }
+        }
+
         // ── Extract all fields ─────────────────────────────────────────────────
         var guestName    = ExtractString(fullText, GuestNameRegex)?.Trim();
         var rawPhone     = ExtractString(fullText, PhoneRegex);
@@ -251,5 +275,56 @@ public sealed class PdfDataExtractor
         if (raw.Length == 11 && raw.StartsWith('0')) return "+91" + raw[1..];
         if (raw.Length >= 12) return "+" + raw;
         return raw;
+    }
+
+    private static async Task<string> OcrPdfImagesAsync(string pdfPath)
+    {
+        var sb = new StringBuilder();
+        var ocrEngine = OcrEngine.TryCreateFromUserProfileLanguages();
+        if (ocrEngine == null)
+        {
+            throw new InvalidOperationException("Windows Media OcrEngine could not be initialized.");
+        }
+
+        using var document = PdfDocument.Open(pdfPath);
+        foreach (var page in document.GetPages())
+        {
+            foreach (var image in page.GetImages())
+            {
+                byte[] bytes;
+                if (image.TryGetPng(out var pngBytes))
+                {
+                    bytes = pngBytes;
+                }
+                else
+                {
+                    image.TryGetBytes(out var rawBytesList);
+                    bytes = rawBytesList?.ToArray() ?? image.RawBytes.ToArray();
+                }
+
+                if (bytes == null || bytes.Length == 0) continue;
+
+                using var stream = new InMemoryRandomAccessStream();
+                using (var writer = new DataWriter(stream.GetOutputStreamAt(0)))
+                {
+                    writer.WriteBytes(bytes);
+                    await writer.StoreAsync();
+                    await writer.FlushAsync();
+                }
+
+                var decoder = await BitmapDecoder.CreateAsync(stream);
+                using var softwareBitmap = await decoder.GetSoftwareBitmapAsync(
+                    BitmapPixelFormat.Bgra8,
+                    BitmapAlphaMode.Premultiplied);
+
+                var result = await ocrEngine.RecognizeAsync(softwareBitmap);
+                if (result != null && !string.IsNullOrWhiteSpace(result.Text))
+                {
+                    sb.AppendLine(result.Text);
+                }
+            }
+        }
+
+        return sb.ToString();
     }
 }
