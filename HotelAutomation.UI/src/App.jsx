@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Papa from 'papaparse';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download, TrendingUp, Activity, Calendar, UserPlus, Eye } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download, TrendingUp, Activity, Calendar, UserPlus, Eye, LogOut, Lock, Shield, UserCheck, ShieldAlert } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import AutomationBuilder from './components/AutomationBuilder';
 import PreferenceCenter from './components/PreferenceCenter';
@@ -73,6 +73,47 @@ export default function App() {
   const params = new URLSearchParams(window.location.search);
   const prefContactId = params.get('preferences_for');
 
+  // Auth States
+  const [user, setUser] = useState(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  // User management states
+  const [usersList, setUsersList] = useState([]);
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  const [newUserUsername, setNewUserUsername] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState('Employer');
+  const [createUserError, setCreateUserError] = useState('');
+  const [userSubTab, setUserSubTab] = useState('list'); // 'list' or 'permissions'
+
+  const [permissions, setPermissions] = useState([]);
+
+  const fetchPermissions = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/permissions`);
+      if (res.ok) {
+        setPermissions(await res.json());
+      }
+    } catch (e) {}
+  };
+
+  const hasAccess = (moduleKey) => {
+    if (!user) return false;
+    if (user.role === 'Owner' || user.role === 'Developer') return true;
+    const match = permissions.find(p => p.role.toLowerCase() === user.role.toLowerCase() && p.module.toLowerCase() === moduleKey.toLowerCase());
+    return match ? match.isEnabled : true;
+  };
+
+  // Reset password states
+  const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
+  const [resetPasswordUserId, setResetPasswordUserId] = useState(null);
+  const [resetPasswordUsername, setResetPasswordUsername] = useState('');
+  const [newPasswordForUser, setNewPasswordForUser] = useState('');
+  const [resetPasswordError, setResetPasswordError] = useState('');
+
   const [activeTab, setActiveTab] = useState(() => {
     const tab = localStorage.getItem('hotelAuto_activeTab');
     return tab === 'inbox' ? 'dashboard' : (tab || 'dashboard');
@@ -81,6 +122,222 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('hotelAuto_activeTab', activeTab);
   }, [activeTab]);
+
+  // Auth Handlers
+  const checkAuth = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`);
+      if (res.ok) {
+        const uData = await res.json();
+        setUser(uData);
+        fetchPermissions();
+      } else {
+        setUser(null);
+      }
+    } catch (e) {
+      setUser(null);
+    } finally {
+      setIsCheckingAuth(false);
+    }
+  };
+
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      fetchPermissions();
+    }
+  }, [user]);
+
+  const handleApiError = (res) => {
+    if (res && res.status === 401) {
+      setUser(null);
+    }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Username: loginUsername, Password: loginPassword })
+      });
+      if (res.ok) {
+        setUser(await res.json());
+        // Fetch initial data right away
+        fetchData();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Invalid credentials' }));
+        setLoginError(err.error || 'Invalid credentials');
+      }
+    } catch (e) {
+      setLoginError('Connection to backend failed');
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+    } catch (e) {}
+    setUser(null);
+    setActiveTab('dashboard');
+  };
+
+  const fetchUsers = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/users`);
+      if (res.ok) {
+        setUsersList(await res.json());
+      } else {
+        handleApiError(res);
+      }
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    if (user && activeTab === 'users') {
+      fetchUsers();
+    }
+  }, [activeTab, user]);
+
+  const handleToggleUserStatus = async (id, isActive) => {
+    try {
+      const res = await fetch(`${API_BASE}/users/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ IsActive: isActive })
+      });
+      if (res.ok) {
+        fetchUsers();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Action failed' }));
+        alert(err.error || 'Action failed');
+      }
+    } catch (e) {}
+  };
+
+  const handleUpdateUserRole = async (id, newRole) => {
+    try {
+      const res = await fetch(`${API_BASE}/users/${id}/role`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Role: newRole })
+      });
+      if (res.ok) {
+        fetchUsers();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Action failed' }));
+        alert(err.error || 'Action failed');
+      }
+    } catch (e) {}
+  };
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    setCreateUserError('');
+    try {
+      const res = await fetch(`${API_BASE}/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Username: newUserUsername, Password: newUserPassword, Role: newUserRole })
+      });
+      if (res.ok) {
+        setShowCreateUserModal(false);
+        setNewUserUsername('');
+        setNewUserPassword('');
+        setNewUserRole('Employer');
+        fetchUsers();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to create user' }));
+        setCreateUserError(err.error || 'Failed to create user');
+      }
+    } catch (e) {
+      setCreateUserError('Request failed');
+    }
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setResetPasswordError('');
+    try {
+      const res = await fetch(`${API_BASE}/users/${resetPasswordUserId}/reset-password`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Password: newPasswordForUser })
+      });
+      if (res.ok) {
+        setShowResetPasswordModal(false);
+        setNewPasswordForUser('');
+        alert('Password reset successfully.');
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Action failed' }));
+        setResetPasswordError(err.error || 'Action failed');
+      }
+    } catch (e) {
+      setResetPasswordError('Request failed');
+    }
+  };
+
+  const handleDeleteUser = async (id, username) => {
+    if (!confirm(`Are you sure you want to permanently delete the user account "${username}"?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/users/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        fetchUsers();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Action failed' }));
+        alert(err.error || 'Action failed');
+      }
+    } catch (e) {}
+  };
+
+  const handleImpersonateUser = async (id) => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/impersonate/${id}`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data);
+        setActiveTab('dashboard'); // Redirect to dashboard to check modules
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Action failed' }));
+        alert(err.error || 'Action failed');
+      }
+    } catch (e) {}
+  };
+
+  const handleStopImpersonating = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/stop-impersonating`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data);
+        fetchPermissions();
+        setActiveTab('users'); // Go back to User Accounts management
+      }
+    } catch (e) {}
+  };
+
+  const handleTogglePermission = async (role, moduleKey, isEnabled) => {
+    try {
+      const res = await fetch(`${API_BASE}/permissions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Role: role, Module: moduleKey, IsEnabled: isEnabled })
+      });
+      if (res.ok) {
+        fetchPermissions();
+      }
+    } catch (e) {}
+  };
+
   const [stats, setStats] = useState({ templates: 0, rules: 0, outbox: 0 });
   const [outbox, setOutbox] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -2981,14 +3238,325 @@ export default function App() {
       return <ManualCheckOut />;
     }
 
+    if (activeTab === 'users') {
+      const modulesConfig = [
+        { key: 'dashboard', name: 'Dashboard' },
+        { key: 'contacts', name: 'Contacts Directory' },
+        { key: 'templates', name: 'Message Templates' },
+        { key: 'broadcasts', name: 'Broadcasts' },
+        { key: 'rules', name: 'Automation & Rules' },
+        { key: 'analytics', name: 'Analytics & Reports' },
+        { key: 'optouts', name: 'Opt-Outs List' },
+        { key: 'manual-checkin', name: 'Manual Check-In' },
+        { key: 'manual-checkout', name: 'Manual Check-Out' }
+      ];
+      const targetRoles = ['Manager', 'Employer'];
+
+      return (
+        <div style={{ padding: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+            <h2 style={{ margin: 0, fontWeight: 700, color: 'var(--text-primary)' }}>User Accounts & Access Control</h2>
+            {(user?.role === 'Owner' || user?.role === 'Developer') && userSubTab === 'list' && (
+              <button className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => setShowCreateUserModal(true)}>
+                <UserPlus size={18} /> Add User Account
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: '16px', borderBottom: '1px solid var(--border-color)', marginBottom: '24px' }}>
+            <button 
+              onClick={() => setUserSubTab('list')}
+              style={{
+                padding: '10px 16px',
+                border: 'none',
+                background: 'none',
+                fontSize: '15px',
+                fontWeight: 600,
+                color: userSubTab === 'list' ? 'var(--primary)' : 'var(--text-secondary)',
+                borderBottom: userSubTab === 'list' ? '2px solid var(--primary)' : '2px solid transparent',
+                cursor: 'pointer'
+              }}
+            >
+              User Accounts List
+            </button>
+            <button 
+              onClick={() => setUserSubTab('permissions')}
+              style={{
+                padding: '10px 16px',
+                border: 'none',
+                background: 'none',
+                fontSize: '15px',
+                fontWeight: 600,
+                color: userSubTab === 'permissions' ? 'var(--primary)' : 'var(--text-secondary)',
+                borderBottom: userSubTab === 'permissions' ? '2px solid var(--primary)' : '2px solid transparent',
+                cursor: 'pointer'
+              }}
+            >
+              Role Permissions Access
+            </button>
+          </div>
+
+          {userSubTab === 'list' ? (
+            <div className="premium-card" style={{ padding: 0, overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.02)' }}>
+                    <th style={{ padding: '16px 24px', fontWeight: 600 }}>Username</th>
+                    <th style={{ padding: '16px 24px', fontWeight: 600 }}>Role</th>
+                    <th style={{ padding: '16px 24px', fontWeight: 600 }}>Created At</th>
+                    <th style={{ padding: '16px 24px', fontWeight: 600 }}>Status</th>
+                    {(user?.role === 'Owner' || user?.role === 'Developer') && <th style={{ padding: '16px 24px', fontWeight: 600 }}>Action</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                {usersList.map(u => {
+                  const id = u.id ?? u.Id;
+                  const username = u.username ?? u.Username;
+                  const role = u.role ?? u.Role;
+                  const isActive = u.isActive ?? u.IsActive;
+                  const createdAt = u.createdAt ?? u.CreatedAt;
+
+                  return (
+                    <tr key={id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <td style={{ padding: '16px 24px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: 'var(--primary)', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', fontWeight: 600 }}>
+                            {(username || '').charAt(0).toUpperCase()}
+                          </div>
+                          <strong>{username}</strong>
+                        </div>
+                      </td>
+                      <td style={{ padding: '16px 24px' }}>
+                        {(user?.role === 'Owner' || user?.role === 'Developer') && username !== user?.username ? (
+                          <select
+                            value={role}
+                            onChange={(e) => handleUpdateUserRole(id, e.target.value)}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: '6px',
+                              border: '1px solid var(--border-color)',
+                              backgroundColor: 'var(--surface-color)',
+                              color: 'var(--text-primary)',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <option value="Owner">Owner</option>
+                            <option value="Developer">Developer</option>
+                            <option value="Manager">Manager</option>
+                            <option value="Employer">Employer</option>
+                          </select>
+                        ) : (
+                          <span style={{ 
+                            padding: '4px 10px', 
+                            borderRadius: '12px', 
+                            fontSize: '12px', 
+                            fontWeight: 600,
+                            backgroundColor: role === 'Owner' ? 'rgba(59, 130, 246, 0.15)' : role === 'Developer' ? 'rgba(16, 185, 129, 0.15)' : role === 'Manager' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(100, 116, 139, 0.15)',
+                            color: role === 'Owner' ? '#2563eb' : role === 'Developer' ? '#059669' : role === 'Manager' ? '#d97706' : '#475569'
+                          }}>
+                            {role}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '16px 24px', color: 'var(--text-secondary)' }}>
+                        {createdAt ? new Date(createdAt).toLocaleDateString() : ''}
+                      </td>
+                      <td style={{ padding: '16px 24px' }}>
+                        <span style={{ 
+                          display: 'inline-flex', 
+                          alignItems: 'center', 
+                          gap: '6px',
+                          color: isActive ? 'var(--success)' : 'var(--danger)', 
+                          fontWeight: 600 
+                        }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isActive ? 'var(--success)' : 'var(--danger)' }}></span>
+                          {isActive ? 'Active' : 'Disabled'}
+                        </span>
+                      </td>
+                      {/* Actions column for Owner or Developer */}
+                      {(user?.role === 'Owner' || user?.role === 'Developer') && (
+                        <td style={{ padding: '16px 24px' }}>
+                          {username !== user?.username ? (
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <button
+                                className="btn btn-secondary"
+                                style={{ 
+                                  padding: '6px 12px', 
+                                  fontSize: '13px', 
+                                  borderColor: isActive ? 'var(--danger)' : 'var(--primary)',
+                                  color: isActive ? 'var(--danger)' : 'var(--primary)'
+                                }}
+                                onClick={() => handleToggleUserStatus(id, !isActive)}
+                              >
+                                {isActive ? 'Disable' : 'Enable'}
+                              </button>
+                              <button
+                                className="btn btn-secondary"
+                                style={{ padding: '6px 12px', fontSize: '13px' }}
+                                onClick={() => {
+                                  setResetPasswordUserId(id);
+                                  setResetPasswordUsername(username);
+                                  setShowResetPasswordModal(true);
+                                }}
+                              >
+                                Reset PW
+                              </button>
+                              <button
+                                className="btn btn-secondary"
+                                style={{ padding: '6px 12px', fontSize: '13px', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }}
+                                onClick={() => handleDeleteUser(id, username)}
+                              >
+                                Delete
+                              </button>
+                              {isActive && (
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ padding: '6px 12px', fontSize: '13px', color: 'var(--primary)', borderColor: 'rgba(59,130,246,0.2)' }}
+                                  onClick={() => handleImpersonateUser(id)}
+                                >
+                                  Impersonate
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '13px', fontStyle: 'italic' }}>Active User</span>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          ) : (
+            <div className="premium-card" style={{ padding: '24px' }}>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
+                Toggle which sections/modules are visible in the sidebar menu for Manager and Employer roles. (Owners and Developers always have 100% access).
+              </p>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.02)' }}>
+                    <th style={{ padding: '16px 24px', fontWeight: 600 }}>Module / Page</th>
+                    {targetRoles.map(role => (
+                      <th key={role} style={{ padding: '16px 24px', fontWeight: 600, textAlign: 'center' }}>
+                        {role} Access
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {modulesConfig.map(mod => (
+                    <tr key={mod.key} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <td style={{ padding: '16px 24px', fontWeight: 600 }}>{mod.name}</td>
+                      {targetRoles.map(role => {
+                        const match = permissions.find(p => p.role.toLowerCase() === role.toLowerCase() && p.module.toLowerCase() === mod.key.toLowerCase());
+                        const isChecked = match ? match.isEnabled : true;
+                        return (
+                          <td key={role} style={{ padding: '16px 24px', textAlign: 'center' }}>
+                            <input 
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => handleTogglePermission(role, mod.key, e.target.checked)}
+                              style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                            />
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     return null;
   };
+
+  // Add global fetch interceptor to catch any 401 Unauthorized errors in background polling
+  useEffect(() => {
+    const originalFetch = window.fetch;
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      if (response.status === 401) {
+        setUser(null);
+      }
+      return response;
+    };
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, []);
+
+  if (isCheckingAuth) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'var(--bg-color)', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ width: '48px', height: '48px', borderRadius: '50%', border: '4px solid var(--border-color)', borderTopColor: 'var(--primary)', animation: 'spin 1s linear infinite' }}></div>
+        <p style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>Verifying secure session...</p>
+      </div>
+    );
+  }
+
+  // Render Login page if not authenticated
+  if (!user) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'var(--bg-color)', padding: '20px' }}>
+        <div className="premium-card" style={{ width: '100%', maxWidth: '420px', padding: '40px 32px', boxShadow: 'var(--shadow-lg)', border: '1px solid var(--border-color)' }}>
+          <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+            <img src="/logo.png" alt="Sankalp Retreat" style={{ maxHeight: '60px', marginBottom: '16px' }} />
+            <h2 style={{ fontSize: '24px', fontWeight: 700, margin: '0 0 8px 0', color: 'var(--text-primary)' }}>Welcome Back</h2>
+            <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '14px' }}>Sign in to manage WhatsApp Hotel Automation</p>
+          </div>
+
+          {loginError && (
+            <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)', padding: '12px 16px', borderRadius: '6px', fontSize: '14px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+              <ShieldAlert size={18} />
+              <span>{loginError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleLogin}>
+            <div className="form-group" style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Username</label>
+              <input 
+                type="text" 
+                value={loginUsername} 
+                onChange={e => setLoginUsername(e.target.value)} 
+                required 
+                placeholder="Enter username"
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }} 
+              />
+            </div>
+
+            <div className="form-group" style={{ marginBottom: '28px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Password</label>
+              <input 
+                type="password" 
+                value={loginPassword} 
+                onChange={e => setLoginPassword(e.target.value)} 
+                required 
+                placeholder="Enter password"
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }} 
+              />
+            </div>
+
+            <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px', borderRadius: '6px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
+              <Lock size={18} /> Sign In
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   if (prefContactId) {
     return <PreferenceCenter contactId={parseInt(prefContactId)} />;
   }
-
-
 
   return (
     <div className="app-container" style={{ display: 'flex' }}>
@@ -2996,57 +3564,216 @@ export default function App() {
         <div className="sidebar-header">
           <img
             src="/logo.png"
-            alt="Scalifts"
+            alt="Sankalp Retreat"
             className="sidebar-logo"
+            style={{ maxHeight: '48px', objectFit: 'contain' }}
           />
         </div>
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 0' }}>
-          <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
-            <LayoutDashboard size={20} /> Dashboard
-          </div>
-          <div className={`nav-item ${activeTab === 'contacts' ? 'active' : ''}`} onClick={() => setActiveTab('contacts')}>
-            <Users size={20} /> Contacts
-          </div>
-          <div className={`nav-item ${activeTab === 'templates' ? 'active' : ''}`} onClick={() => setActiveTab('templates')}>
-            <FileText size={20} /> Templates
-          </div>
-          <div className={`nav-item ${activeTab === 'broadcasts' ? 'active' : ''}`} onClick={() => setActiveTab('broadcasts')}>
-            <Megaphone size={20} /> Broadcasts
-          </div>
-          <div className={`nav-item ${activeTab === 'rules' ? 'active' : ''}`} onClick={() => setActiveTab('rules')}>
-            <Workflow size={20} /> Automation
-          </div>
-          <div className={`nav-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
-            <BarChart2 size={20} /> Analytics
-          </div>
-          <div className={`nav-item ${activeTab === 'optouts' ? 'active' : ''}`} onClick={() => setActiveTab('optouts')}>
-            <UserX size={20} /> Opt-Outs
-          </div>
+          {hasAccess('dashboard') && (
+            <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+              <LayoutDashboard size={20} /> Dashboard
+            </div>
+          )}
+          {hasAccess('contacts') && (
+            <div className={`nav-item ${activeTab === 'contacts' ? 'active' : ''}`} onClick={() => setActiveTab('contacts')}>
+              <Users size={20} /> Contacts
+            </div>
+          )}
+          {hasAccess('templates') && (
+            <div className={`nav-item ${activeTab === 'templates' ? 'active' : ''}`} onClick={() => setActiveTab('templates')}>
+              <FileText size={20} /> Templates
+            </div>
+          )}
+          {hasAccess('broadcasts') && (
+            <div className={`nav-item ${activeTab === 'broadcasts' ? 'active' : ''}`} onClick={() => setActiveTab('broadcasts')}>
+              <Megaphone size={20} /> Broadcasts
+            </div>
+          )}
+          
+          {/* Developer, Manager & Owner only tab */}
+          {hasAccess('rules') && (user.role === 'Owner' || user.role === 'Developer' || user.role === 'Manager') && (
+            <div className={`nav-item ${activeTab === 'rules' ? 'active' : ''}`} onClick={() => setActiveTab('rules')}>
+              <Workflow size={20} /> Automation
+            </div>
+          )}
+
+          {hasAccess('analytics') && (
+            <div className={`nav-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
+              <BarChart2 size={20} /> Analytics
+            </div>
+          )}
+          {hasAccess('optouts') && (
+            <div className={`nav-item ${activeTab === 'optouts' ? 'active' : ''}`} onClick={() => setActiveTab('optouts')}>
+              <UserX size={20} /> Opt-Outs
+            </div>
+          )}
+
+          {/* Owner & Developer user management tab */}
+          {(user.role === 'Owner' || user.role === 'Developer') && (
+            <div className={`nav-item ${activeTab === 'users' ? 'active' : ''}`} onClick={() => setActiveTab('users')}>
+              <UserCheck size={20} /> User Accounts
+            </div>
+          )}
 
           <div className="sidebar-divider" style={{ margin: '8px 16px', borderBottom: '1px solid var(--border)' }}></div>
-          <div className={`nav-item ${activeTab === 'manual-checkin' ? 'active' : ''}`} onClick={() => setActiveTab('manual-checkin')}>
-            <Hotel size={20} /> Manual Check-In
-          </div>
-          <div className={`nav-item ${activeTab === 'manual-checkout' ? 'active' : ''}`} onClick={() => setActiveTab('manual-checkout')}>
-            <CheckCircle2 size={20} /> Manual Check-Out
-          </div>
+          {hasAccess('manual-checkin') && (
+            <div className={`nav-item ${activeTab === 'manual-checkin' ? 'active' : ''}`} onClick={() => setActiveTab('manual-checkin')}>
+              <Hotel size={20} /> Manual Check-In
+            </div>
+          )}
+          {hasAccess('manual-checkout') && (
+            <div className={`nav-item ${activeTab === 'manual-checkout' ? 'active' : ''}`} onClick={() => setActiveTab('manual-checkout')}>
+              <CheckCircle2 size={20} /> Manual Check-Out
+            </div>
+          )}
         </nav>
       </aside>
 
       <main className="main-content" style={{ flex: 1, overflowX: 'hidden', transition: 'margin-left 0.3s ease' }}>
-        <header className="topbar">
+        <header className="topbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', padding: '0 24px', minHeight: '72px' }}>
           <div className="topbar-title" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <button className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => setSidebarOpen(!sidebarOpen)}>
               <Menu size={20} />
             </button>
-            {activeTab === 'rules' ? 'Automation' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+            <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>
+              {activeTab === 'rules' ? 'Automation' : activeTab === 'users' ? 'User Accounts' : activeTab.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+            </h2>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: '14px', fontWeight: 600 }}>{user.username}</span>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{user.role}</span>
+            </div>
+            {user.isImpersonating ? (
+              <button className="btn btn-primary" style={{ padding: '8px 14px', backgroundColor: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={handleStopImpersonating}>
+                Exit Impersonation
+              </button>
+            ) : (
+              <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={handleLogout}>
+                <LogOut size={16} /> Sign Out
+              </button>
+            )}
           </div>
         </header>
+
+        {user.isImpersonating && (
+          <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)', padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--danger)', fontWeight: 600, fontSize: '14px' }}>
+            <span>⚠️ Currently impersonating user: "{user.username}" ({user.role}). You are viewing the app exactly as they see it.</span>
+            <button className="btn btn-primary" style={{ padding: '4px 12px', fontSize: '12px', backgroundColor: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={handleStopImpersonating}>
+              Exit Impersonation
+            </button>
+          </div>
+        )}
 
         <div className="page-content">
           {renderContent()}
         </div>
       </main>
+
+      {/* Create User Modal (Owner Only) */}
+      {showCreateUserModal && createPortal((
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+          <div className="premium-analytics-modal" style={{ width: '100%', maxWidth: '440px', padding: '28px', borderRadius: '12px', backgroundColor: 'var(--surface-color)', border: '1px solid var(--border-color)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>Add New User</h3>
+              <button onClick={() => setShowCreateUserModal(false)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><XCircle size={20} /></button>
+            </div>
+
+            {createUserError && (
+              <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)', padding: '10px 14px', borderRadius: '6px', fontSize: '13px', marginBottom: '16px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                {createUserError}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateUser}>
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, fontSize: '14px' }}>Username</label>
+                <input 
+                  type="text" 
+                  value={newUserUsername} 
+                  onChange={e => setNewUserUsername(e.target.value)} 
+                  required 
+                  placeholder="e.g. receptionist"
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }} 
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, fontSize: '14px' }}>Password</label>
+                <input 
+                  type="password" 
+                  value={newUserPassword} 
+                  onChange={e => setNewUserPassword(e.target.value)} 
+                  required 
+                  placeholder="At least 6 characters"
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }} 
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, fontSize: '14px' }}>Access Role</label>
+                <select 
+                  value={newUserRole} 
+                  onChange={e => setNewUserRole(e.target.value)} 
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+                >
+                  <option value="Employer">Employer (Access given by Owner)</option>
+                  <option value="Manager">Manager (Access given by Owner)</option>
+                  <option value="Developer">Developer (100% System Access)</option>
+                  <option value="Owner">Owner (100% Access & User management)</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowCreateUserModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Create Account</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ), document.body)}
+
+      {/* Reset Password Modal (Owner Only) */}
+      {showResetPasswordModal && createPortal((
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+          <div className="premium-analytics-modal" style={{ width: '100%', maxWidth: '440px', padding: '28px', borderRadius: '12px', backgroundColor: 'var(--surface-color)', border: '1px solid var(--border-color)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>Reset Password</h3>
+              <button onClick={() => setShowResetPasswordModal(false)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}><XCircle size={20} /></button>
+            </div>
+
+            <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+              Resetting password for user: <strong>{resetPasswordUsername}</strong>
+            </p>
+
+            {resetPasswordError && (
+              <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)', padding: '10px 14px', borderRadius: '6px', fontSize: '13px', marginBottom: '16px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                {resetPasswordError}
+              </div>
+            )}
+
+            <form onSubmit={handleResetPassword}>
+              <div className="form-group" style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, fontSize: '14px' }}>New Password</label>
+                <input 
+                  type="password" 
+                  value={newPasswordForUser} 
+                  onChange={e => setNewPasswordForUser(e.target.value)} 
+                  required 
+                  placeholder="At least 6 characters"
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }} 
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowResetPasswordModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Reset Password</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ), document.body)}
     </div>
   );
 }

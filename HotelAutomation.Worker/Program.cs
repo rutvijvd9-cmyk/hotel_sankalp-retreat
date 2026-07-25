@@ -1,6 +1,7 @@
 using HotelAutomation.Connectors.Pms;
 using HotelAutomation.Connectors.WhatsApp;
 using HotelAutomation.Core.Interfaces;
+using HotelAutomation.Core.Models;
 using HotelAutomation.Data;
 using HotelAutomation.Data.Repositories;
 using HotelAutomation.Worker;
@@ -8,6 +9,7 @@ using HotelAutomation.Worker.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Authentication;
 using Dapper;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -54,6 +56,26 @@ builder.Services.AddSingleton<PmsMappingRepository>();
 builder.Services.AddSingleton<TemplateVariantRepository>();
 builder.Services.AddSingleton<HotelAutomation.Worker.Services.VariantSelector>();
 
+// ── Security & Authentication ──────────────────────────────────────────────────
+builder.Services.AddSingleton<HotelAutomation.Core.Security.PasswordHasher>();
+builder.Services.AddSingleton<UserRepository>();
+builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.Cookie.Name = "HotelAuth";
+        options.Events.OnRedirectToLogin = context =>
+        {
+            context.Response.StatusCode = Microsoft.AspNetCore.Http.StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        };
+        options.Events.OnRedirectToAccessDenied = context =>
+        {
+            context.Response.StatusCode = Microsoft.AspNetCore.Http.StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        };
+    });
+builder.Services.AddAuthorization();
+
 // ── WhatsApp Connector ────────────────────────────────────────────────────────
 builder.Services.Configure<WhatsAppOptions>(
     builder.Configuration.GetSection(WhatsAppOptions.SectionName));
@@ -90,9 +112,12 @@ else if (pmsType == "Pdf")
     builder.Services.AddSingleton<IPmsEventSource>(
         sp => sp.GetRequiredService<HotelAutomation.Connectors.Pms.PdfPmsConnector>());
 }
-else
+
+// Always register ManualPmsConnector as a service to prevent Minimal API parameter binding failures
+builder.Services.AddSingleton<ManualPmsConnector>();
+
+if (pmsType != "Database" && pmsType != "Pdf")
 {
-    builder.Services.AddSingleton<ManualPmsConnector>();
     builder.Services.AddSingleton<IPmsEventSource>(sp => sp.GetRequiredService<ManualPmsConnector>());
 }
 
@@ -119,6 +144,20 @@ builder.Services.AddHostedService<WebhookRelayPoller>();
 var app = builder.Build();
 app.UseCors();
 
+app.UseAuthentication();
+app.UseAuthorization();
+
+// ── Seed Default User ─────────────────────────────────────────────────────────
+using (var scope = app.Services.CreateScope())
+{
+    var userRepo = scope.ServiceProvider.GetRequiredService<UserRepository>();
+    var hasher = scope.ServiceProvider.GetRequiredService<HotelAutomation.Core.Security.PasswordHasher>();
+    var defaultHash = hasher.HashPassword("AdminPassword123");
+    var srkHash = hasher.HashPassword("Srk@1990");
+    // Seed default accounts
+    userRepo.SeedDefaultOwnerAsync(defaultHash, srkHash).GetAwaiter().GetResult();
+}
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -131,6 +170,321 @@ app.UseStaticFiles(new StaticFileOptions
 });
 
 // ── API Endpoints for UI ──────────────────────────────────────────────────────
+
+// Auth endpoints
+app.MapPost("/api/auth/login", async (LoginRequest req, UserRepository userRepo, HotelAutomation.Core.Security.PasswordHasher hasher, HttpContext context) =>
+{
+    var user = await userRepo.GetByUsernameAsync(req.Username);
+    if (user == null || !user.IsActive || !hasher.VerifyPassword(req.Password, user.PasswordHash))
+    {
+        return Results.Json(new { error = "Invalid username or password" }, statusCode: 400);
+    }
+
+    var claims = new List<System.Security.Claims.Claim>
+    {
+        new(System.Security.Claims.ClaimTypes.Name, user.Username),
+        new(System.Security.Claims.ClaimTypes.Role, user.Role),
+        new("UserId", user.Id.ToString())
+    };
+
+    var identity = new System.Security.Claims.ClaimsIdentity(claims, Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
+    var principal = new System.Security.Claims.ClaimsPrincipal(identity);
+
+    await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
+
+    return Results.Ok(new { username = user.Username, role = user.Role });
+});
+
+app.MapPost("/api/auth/logout", async (HttpContext context) =>
+{
+    await context.SignOutAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Ok(new { message = "Logged out successfully" });
+});
+
+app.MapGet("/api/auth/me", (HttpContext context) =>
+{
+    if (context.User.Identity?.IsAuthenticated == true)
+    {
+        var role = context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? "";
+        var isImpersonating = context.User.HasClaim(c => c.Type == "OriginalUsername");
+        return Results.Ok(new { username = context.User.Identity.Name, role, isImpersonating });
+    }
+    return Results.Unauthorized();
+});
+
+// Impersonate another user (Owner only)
+app.MapPost("/api/auth/impersonate/{id:int}", async (int id, UserRepository userRepo, HttpContext context) =>
+{
+    var isOwner = context.User.IsInRole("Owner") || 
+                  (context.User.HasClaim(c => c.Type == "OriginalRole") && 
+                   context.User.FindFirst("OriginalRole")?.Value == "Owner");
+
+    if (!isOwner)
+    {
+        return Results.Forbid();
+    }
+
+    var targetUser = await userRepo.GetByIdAsync(id);
+    if (targetUser == null || !targetUser.IsActive)
+    {
+        return Results.BadRequest(new { error = "Target user not found or inactive" });
+    }
+
+    var originalUsername = context.User.FindFirst("OriginalUsername")?.Value ?? context.User.Identity?.Name ?? "";
+    var originalRole = context.User.FindFirst("OriginalRole")?.Value ?? "Owner";
+
+    var claims = new List<System.Security.Claims.Claim>
+    {
+        new(System.Security.Claims.ClaimTypes.Name, targetUser.Username),
+        new(System.Security.Claims.ClaimTypes.Role, targetUser.Role),
+        new("UserId", targetUser.Id.ToString()),
+        new("OriginalUsername", originalUsername),
+        new("OriginalRole", originalRole)
+    };
+
+    var identity = new System.Security.Claims.ClaimsIdentity(claims, Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
+    var principal = new System.Security.Claims.ClaimsPrincipal(identity);
+
+    await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
+
+    return Results.Ok(new { username = targetUser.Username, role = targetUser.Role, isImpersonating = true });
+}).RequireAuthorization();
+
+// Stop impersonation and restore original Owner session
+app.MapPost("/api/auth/stop-impersonating", async (UserRepository userRepo, HttpContext context) =>
+{
+    if (!context.User.HasClaim(c => c.Type == "OriginalUsername"))
+    {
+        return Results.BadRequest(new { error = "Not currently impersonating a user" });
+    }
+
+    var originalUsername = context.User.FindFirst("OriginalUsername")?.Value;
+    var originalRole = context.User.FindFirst("OriginalRole")?.Value;
+
+    if (string.IsNullOrEmpty(originalUsername) || string.IsNullOrEmpty(originalRole))
+    {
+        return Results.BadRequest(new { error = "Original user details missing" });
+    }
+
+    var originalUser = await userRepo.GetByUsernameAsync(originalUsername);
+    if (originalUser == null || !originalUser.IsActive)
+    {
+        return Results.BadRequest(new { error = "Original Owner account is no longer active" });
+    }
+
+    var claims = new List<System.Security.Claims.Claim>
+    {
+        new(System.Security.Claims.ClaimTypes.Name, originalUser.Username),
+        new(System.Security.Claims.ClaimTypes.Role, originalUser.Role),
+        new("UserId", originalUser.Id.ToString())
+    };
+
+    var identity = new System.Security.Claims.ClaimsIdentity(claims, Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
+    var principal = new System.Security.Claims.ClaimsPrincipal(identity);
+
+    await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
+
+    return Results.Ok(new { username = originalUser.Username, role = originalUser.Role, isImpersonating = false });
+}).RequireAuthorization();
+
+// User Management (Owner & Developer can view users)
+app.MapGet("/api/users", async (UserRepository userRepo, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+    {
+        return Results.Forbid();
+    }
+    var users = await userRepo.GetAllAsync();
+    return Results.Ok(users.Select(u => new { u.Id, u.Username, u.Role, u.IsActive, u.CreatedAt }));
+}).RequireAuthorization();
+
+// Create User (Owner & Developer can create users)
+app.MapPost("/api/users", async (CreateUserRequest req, UserRepository userRepo, HotelAutomation.Core.Security.PasswordHasher hasher, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+    {
+        return Results.Forbid();
+    }
+
+    if (string.IsNullOrWhiteSpace(req.Username) || string.IsNullOrWhiteSpace(req.Password) || string.IsNullOrWhiteSpace(req.Role))
+    {
+        return Results.BadRequest(new { error = "All fields are required" });
+    }
+
+    var normalizedRole = req.Role.Trim();
+    if (normalizedRole != "Owner" && normalizedRole != "Developer" && normalizedRole != "Manager" && normalizedRole != "Employer")
+    {
+        return Results.BadRequest(new { error = "Invalid role" });
+    }
+
+    var existing = await userRepo.GetByUsernameAsync(req.Username);
+    if (existing != null)
+    {
+        return Results.BadRequest(new { error = "Username already exists" });
+    }
+
+    var newUser = new User
+    {
+        Username = req.Username.Trim(),
+        PasswordHash = hasher.HashPassword(req.Password),
+        Role = normalizedRole,
+        IsActive = true,
+        CreatedAt = DateTimeOffset.Now
+    };
+
+    await userRepo.AddAsync(newUser);
+    return Results.Ok(new { message = "User created successfully" });
+}).RequireAuthorization();
+
+// Toggle user status (Owner & Developer)
+app.MapPut("/api/users/{id:int}/status", async (int id, ToggleStatusRequest req, UserRepository userRepo, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+    {
+        return Results.Forbid();
+    }
+
+    var user = await userRepo.GetByIdAsync(id);
+    if (user == null)
+    {
+        return Results.NotFound();
+    }
+
+    // Cannot disable themselves
+    if (user.Username == context.User.Identity?.Name)
+    {
+        return Results.BadRequest(new { error = "Cannot disable your own account" });
+    }
+
+    user.IsActive = req.IsActive;
+    await userRepo.UpdateAsync(user);
+    return Results.Ok(new { message = "User status updated successfully" });
+}).RequireAuthorization();
+
+// Update user role (Owner & Developer: promote or demote)
+app.MapPut("/api/users/{id:int}/role", async (int id, UpdateRoleRequest req, UserRepository userRepo, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+    {
+        return Results.Forbid();
+    }
+
+    if (string.IsNullOrWhiteSpace(req.Role))
+    {
+        return Results.BadRequest(new { error = "Role is required" });
+    }
+
+    var normalizedRole = req.Role.Trim();
+    if (normalizedRole != "Owner" && normalizedRole != "Developer" && normalizedRole != "Manager" && normalizedRole != "Employer")
+    {
+        return Results.BadRequest(new { error = "Invalid role specified" });
+    }
+
+    var user = await userRepo.GetByIdAsync(id);
+    if (user == null)
+    {
+        return Results.NotFound();
+    }
+
+    // Protect from demoting themselves if they are the logged in user
+    if (user.Username == context.User.Identity?.Name && normalizedRole != user.Role)
+    {
+        return Results.BadRequest(new { error = "Cannot change your own role. Have another administrator update your role." });
+    }
+
+    user.Role = normalizedRole;
+    await userRepo.UpdateAsync(user);
+    return Results.Ok(new { message = $"User role updated to {normalizedRole} successfully" });
+}).RequireAuthorization();
+
+// Reset a user's password (Owner & Developer)
+app.MapPut("/api/users/{id:int}/reset-password", async (int id, ResetPasswordRequest req, UserRepository userRepo, HotelAutomation.Core.Security.PasswordHasher hasher, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+    {
+        return Results.Forbid();
+    }
+
+    if (string.IsNullOrWhiteSpace(req.Password))
+    {
+        return Results.BadRequest(new { error = "New password is required" });
+    }
+
+    var user = await userRepo.GetByIdAsync(id);
+    if (user == null)
+    {
+        return Results.NotFound();
+    }
+
+    user.PasswordHash = hasher.HashPassword(req.Password);
+    await userRepo.UpdateAsync(user);
+    return Results.Ok(new { message = "User password reset successfully" });
+}).RequireAuthorization();
+
+// Delete a user (Owner & Developer)
+app.MapDelete("/api/users/{id:int}", async (int id, UserRepository userRepo, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+    {
+        return Results.Forbid();
+    }
+
+    var user = await userRepo.GetByIdAsync(id);
+    if (user == null)
+    {
+        return Results.NotFound();
+    }
+
+    // Owner cannot delete themselves
+    if (user.Username == context.User.Identity?.Name)
+    {
+        return Results.BadRequest(new { error = "Cannot delete your own account" });
+    }
+
+    await userRepo.DeleteAsync(id);
+    return Results.Ok(new { message = "User deleted successfully" });
+}).RequireAuthorization();
+
+// Get all role permissions (for sidebar dynamic loading)
+app.MapGet("/api/permissions", async (UserRepository userRepo) =>
+{
+    var perms = await userRepo.GetPermissionsAsync();
+    return Results.Ok(perms.Select(p => new { role = p.Role, module = p.Module, isEnabled = p.IsEnabled == 1 }));
+}).RequireAuthorization();
+
+// Save role permissions (Owner & Developer only)
+app.MapPost("/api/permissions", async (SavePermissionRequest req, UserRepository userRepo, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+    {
+        return Results.Forbid();
+    }
+
+    await userRepo.SavePermissionAsync(req.Role, req.Module, req.IsEnabled);
+    return Results.Ok(new { message = "Permission saved successfully" });
+}).RequireAuthorization();
+
+
+
+// Change own password
+app.MapPut("/api/users/password", async (ChangePasswordRequest req, UserRepository userRepo, HotelAutomation.Core.Security.PasswordHasher hasher, HttpContext context) =>
+{
+    var username = context.User.Identity?.Name;
+    if (username == null) return Results.Unauthorized();
+
+    var user = await userRepo.GetByUsernameAsync(username);
+    if (user == null) return Results.NotFound();
+
+    if (!hasher.VerifyPassword(req.OldPassword, user.PasswordHash))
+    {
+        return Results.BadRequest(new { error = "Incorrect current password" });
+    }
+
+    user.PasswordHash = hasher.HashPassword(req.NewPassword);
+    await userRepo.UpdateAsync(user);
+    return Results.Ok(new { message = "Password updated successfully" });
+}).RequireAuthorization();
+
 app.MapGet("/api/templates", async (ITemplateRepository repo, WhatsAppApiClient whatsappClient, int page = 1, int limit = 50) => 
 {
     var (list, total) = await repo.GetAllPaginatedAsync(page, limit);
@@ -2029,3 +2383,11 @@ public record BroadcastRequest
     /// <summary>Optional JSON with extra template parameters to include in every message.</summary>
     public string? CustomParametersJson { get; init; }
 }
+
+public record LoginRequest(string Username, string Password);
+public record CreateUserRequest(string Username, string Password, string Role);
+public record ToggleStatusRequest(bool IsActive);
+public record ChangePasswordRequest(string OldPassword, string NewPassword);
+public record UpdateRoleRequest(string Role);
+public record ResetPasswordRequest(string Password);
+public record SavePermissionRequest(string Role, string Module, bool IsEnabled);

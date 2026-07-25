@@ -64,6 +64,11 @@ public sealed class PdfPmsConnector : IPmsEventSource
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        // Normalize paths for macOS/Linux dev environments while preserving Windows compatibility
+        _options.WatchFolder = NormalizePath(_options.WatchFolder);
+        _options.ArchiveFolder = NormalizePath(_options.ArchiveFolder);
+        _options.PrinterOutputFile = NormalizePath(_options.PrinterOutputFile);
+
         // ── Ensure folders exist ───────────────────────────────────────────────
         EnsureDirectory(_options.WatchFolder);
         if (_options.ArchiveProcessed) EnsureDirectory(_options.ArchiveFolder);
@@ -82,6 +87,10 @@ public sealed class PdfPmsConnector : IPmsEventSource
         // The virtual printer always writes to PrinterOutputFile (same file each time).
         // We watch the FOLDER containing that file for Changed events on that filename.
         var printerFileDir  = Path.GetDirectoryName(_options.PrinterOutputFile) ?? _options.WatchFolder;
+        if (string.IsNullOrWhiteSpace(printerFileDir))
+        {
+            printerFileDir = _options.WatchFolder;
+        }
         var printerFileName = Path.GetFileName(_options.PrinterOutputFile);
 
         EnsureDirectory(printerFileDir);
@@ -368,6 +377,25 @@ public sealed class PdfPmsConnector : IPmsEventSource
             Directory.CreateDirectory(path);
             _logger.LogInformation("PDF Bridge: created directory '{Path}'", path);
         }
+    }
+
+    private string NormalizePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return path;
+        if (Path.DirectorySeparatorChar == '/')
+        {
+            var normalized = path.Replace('\\', '/');
+            if (normalized.Length >= 2 && normalized[1] == ':')
+            {
+                normalized = normalized.Substring(2);
+            }
+            if (normalized.StartsWith("/"))
+            {
+                normalized = "." + normalized;
+            }
+            return normalized;
+        }
+        return path;
     }
 
     private void OnWatcherError(object sender, ErrorEventArgs e)

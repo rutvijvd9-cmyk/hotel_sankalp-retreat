@@ -142,3 +142,20 @@ CREATE TABLE IF NOT EXISTS TemplateVariants (
     Weight INTEGER NOT NULL DEFAULT 50,
     CreatedAt TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS Users (
+    Id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    Username     TEXT    NOT NULL UNIQUE,
+    PasswordHash TEXT    NOT NULL,
+    Role         TEXT    NOT NULL,
+    IsActive     INTEGER NOT NULL DEFAULT 1,
+    CreatedAt    TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS RolePermissions (
+    Role TEXT NOT NULL,
+    Module TEXT NOT NULL,
+    IsEnabled INTEGER NOT NULL,
+    PRIMARY KEY (Role, Module)
+);
+
