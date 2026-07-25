@@ -3319,7 +3319,8 @@ export default function App() {
 
           {userSubTab === 'list' ? (
             <div className="premium-card" style={{ padding: 0, overflow: 'hidden' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '950px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.02)' }}>
                     <th style={{ padding: '16px 24px', fontWeight: 600 }}>Username</th>
@@ -3491,12 +3492,14 @@ export default function App() {
               </tbody>
             </table>
           </div>
+        </div>
           ) : (
-            <div className="premium-card" style={{ padding: '24px' }}>
+            <div className="premium-card" style={{ padding: '24px', overflow: 'hidden' }}>
               <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
                 Toggle which sections/modules are visible in the sidebar menu for Manager and Employer roles. (Owners and Developers always have 100% access).
               </p>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '600px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.02)' }}>
                     <th style={{ padding: '16px 24px', fontWeight: 600 }}>Module / Page</th>
@@ -3530,6 +3533,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+          </div>
           )}
         </div>
       );
