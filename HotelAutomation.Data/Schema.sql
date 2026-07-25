@@ -149,7 +149,9 @@ CREATE TABLE IF NOT EXISTS Users (
     PasswordHash TEXT    NOT NULL,
     Role         TEXT    NOT NULL,
     IsActive     INTEGER NOT NULL DEFAULT 1,
-    CreatedAt    TEXT    NOT NULL
+    CreatedAt    TEXT    NOT NULL,
+    SignaturePath TEXT   NULL,
+    LastActiveAt TEXT    NULL
 );
 
 CREATE TABLE IF NOT EXISTS RolePermissions (

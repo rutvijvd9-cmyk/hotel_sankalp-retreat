@@ -14,6 +14,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <!-- PDF reading for virtual printer bridge -->
     <PackageReference Include="UglyToad.PdfPig" />
+    <PackageReference Include="PdfSharp" />
   </ItemGroup>
 
   <ItemGroup>

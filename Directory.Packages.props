@@ -47,6 +47,7 @@
     <PackageVersion Include="UglyToad.PdfPig.Fonts" Version="1.7.0-custom-5" />
     <PackageVersion Include="UglyToad.PdfPig.Tokenization" Version="1.7.0-custom-5" />
     <PackageVersion Include="UglyToad.PdfPig.Tokens" Version="1.7.0-custom-5" />
+    <PackageVersion Include="PdfSharp" Version="6.1.1" />
   </ItemGroup>
   <!--
     Suppression of GHSA-2m69-gcr7-jv3q — documented above.

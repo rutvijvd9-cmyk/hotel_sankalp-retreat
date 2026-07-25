@@ -338,6 +338,27 @@ export default function App() {
     } catch (e) {}
   };
 
+  const handleUploadSignature = async (userId, file) => {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await fetch(`${API_BASE}/users/${userId}/signature`, {
+        method: 'POST',
+        body: formData
+      });
+      if (res.ok) {
+        alert('Signature uploaded successfully!');
+        fetchUsers();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+        alert(err.error || 'Upload failed');
+      }
+    } catch (e) {
+      alert('Upload failed');
+    }
+  };
+
   const [stats, setStats] = useState({ templates: 0, rules: 0, outbox: 0 });
   const [outbox, setOutbox] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -3303,6 +3324,7 @@ export default function App() {
                   <tr style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.02)' }}>
                     <th style={{ padding: '16px 24px', fontWeight: 600 }}>Username</th>
                     <th style={{ padding: '16px 24px', fontWeight: 600 }}>Role</th>
+                    <th style={{ padding: '16px 24px', fontWeight: 600 }}>Signature / Stamp</th>
                     <th style={{ padding: '16px 24px', fontWeight: 600 }}>Created At</th>
                     <th style={{ padding: '16px 24px', fontWeight: 600 }}>Status</th>
                     {(user?.role === 'Owner' || user?.role === 'Developer') && <th style={{ padding: '16px 24px', fontWeight: 600 }}>Action</th>}
@@ -3358,6 +3380,44 @@ export default function App() {
                           }}>
                             {role}
                           </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '16px 24px' }}>
+                        {u.signaturePath || u.SignaturePath ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <img 
+                              src={`${API_BASE.replace('/api', '')}${u.signaturePath || u.SignaturePath}`} 
+                              alt="Signature" 
+                              style={{ height: '36px', maxHeight: '36px', width: 'auto', borderRadius: '4px', border: '1px solid var(--border-color)', padding: '2px', backgroundColor: 'white' }} 
+                            />
+                            {(user?.role === 'Owner' || user?.role === 'Developer') && (
+                              <label style={{ cursor: 'pointer', color: 'var(--primary)', fontSize: '12px', fontWeight: 600 }}>
+                                Change
+                                <input 
+                                  type="file" 
+                                  accept="image/*"
+                                  onChange={(e) => handleUploadSignature(id, e.target.files[0])}
+                                  style={{ display: 'none' }}
+                                />
+                              </label>
+                            )}
+                          </div>
+                        ) : (
+                          <div>
+                            {(user?.role === 'Owner' || user?.role === 'Developer') ? (
+                              <label className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <Upload size={14} /> Upload Stamp/Sig
+                                <input 
+                                  type="file" 
+                                  accept="image/*"
+                                  onChange={(e) => handleUploadSignature(id, e.target.files[0])}
+                                  style={{ display: 'none' }}
+                                />
+                              </label>
+                            ) : (
+                              <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>No signature</span>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td style={{ padding: '16px 24px', color: 'var(--text-secondary)' }}>

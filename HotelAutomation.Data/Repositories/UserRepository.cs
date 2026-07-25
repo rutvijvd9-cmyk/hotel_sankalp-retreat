@@ -73,6 +73,19 @@ public sealed class UserRepository
     public async Task SeedDefaultOwnerAsync(string defaultPasswordHash, string srkPasswordHash, CancellationToken ct = default)
     {
         await using var conn = await _factory.OpenAsync(ct);
+        
+        try
+        {
+            await conn.ExecuteAsync("ALTER TABLE Users ADD COLUMN SignaturePath TEXT NULL");
+        }
+        catch { }
+
+        try
+        {
+            await conn.ExecuteAsync("ALTER TABLE Users ADD COLUMN LastActiveAt TEXT NULL");
+        }
+        catch { }
+
         var count = await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users");
         if (count == 0)
         {
@@ -157,5 +170,28 @@ public sealed class UserRepository
             "INSERT INTO RolePermissions (Role, Module, IsEnabled) VALUES (@role, @module, @isEnabled) " +
             "ON CONFLICT(Role, Module) DO UPDATE SET IsEnabled = @isEnabled",
             new { role, module, isEnabled = isEnabled ? 1 : 0 });
+    }
+
+    public async Task<User?> GetLastActiveUserAsync(CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        return await conn.QuerySingleOrDefaultAsync<User>(
+            "SELECT * FROM Users WHERE IsActive = 1 ORDER BY LastActiveAt DESC LIMIT 1");
+    }
+
+    public async Task UpdateLastActiveAsync(string username, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        await conn.ExecuteAsync(
+            "UPDATE Users SET LastActiveAt = @LastActiveAt WHERE Username = @username",
+            new { LastActiveAt = DateTimeOffset.Now.ToString("O"), username });
+    }
+
+    public async Task UpdateSignaturePathAsync(int id, string? path, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        await conn.ExecuteAsync(
+            "UPDATE Users SET SignaturePath = @path WHERE Id = @id",
+            new { path, id });
     }
 }

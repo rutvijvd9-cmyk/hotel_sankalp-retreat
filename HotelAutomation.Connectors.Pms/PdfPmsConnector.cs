@@ -50,6 +50,8 @@ public sealed class PdfPmsConnector : IPmsEventSource
     public DateTimeOffset? LastProcessedAt { get; private set; }
     public string? LastError { get; private set; }
 
+    public Func<Task<string?>>? GetActiveUserSignaturePath { get; set; }
+
     public event EventHandler<PmsEvent>? EventReceived;
 
     public PdfPmsConnector(
@@ -191,6 +193,8 @@ public sealed class PdfPmsConnector : IPmsEventSource
     {
         try
         {
+            ApplySignatureIfAvailable(fullPath);
+
             var pmsEvent = _extractor.ExtractFromPdf(fullPath, _options.DefaultEventType);
 
             if (pmsEvent is null)
@@ -391,6 +395,51 @@ public sealed class PdfPmsConnector : IPmsEventSource
         {
             Directory.CreateDirectory(path);
             _logger.LogInformation("PDF Bridge: created directory '{Path}'", path);
+        }
+    }
+
+    private void ApplySignatureIfAvailable(string filePath)
+    {
+        if (GetActiveUserSignaturePath == null) return;
+
+        try
+        {
+            var relativePath = GetActiveUserSignaturePath().GetAwaiter().GetResult();
+            if (string.IsNullOrWhiteSpace(relativePath)) return;
+
+            var sigFullPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", relativePath.TrimStart('/'));
+            if (!File.Exists(sigFullPath))
+            {
+                _logger.LogWarning("PDF Bridge: Signature file '{Path}' not found on disk.", sigFullPath);
+                return;
+            }
+
+            _logger.LogInformation("PDF Bridge: Overlaying signature '{Path}' on PDF '{Pdf}'.", sigFullPath, filePath);
+
+            using (var document = PdfSharp.Pdf.IO.PdfReader.Open(filePath, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Modify))
+            {
+                if (document.PageCount > 0)
+                {
+                    var page = document.Pages[0];
+                    using (var gfx = PdfSharp.Drawing.XGraphics.FromPdfPage(page))
+                    {
+                        using (var image = PdfSharp.Drawing.XImage.FromFile(sigFullPath))
+                        {
+                            double width = 130;
+                            double height = 90;
+                            double x = page.Width.Point - 190;
+                            double y = page.Height.Point - 170;
+
+                            gfx.DrawImage(image, x, y, width, height);
+                        }
+                    }
+                    document.Save(filePath);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "PDF Bridge: Failed to apply signature/stamp to PDF.");
         }
     }
 

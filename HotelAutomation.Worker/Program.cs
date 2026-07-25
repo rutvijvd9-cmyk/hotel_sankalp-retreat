@@ -147,6 +147,16 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.Use(async (context, next) =>
+{
+    if (context.User.Identity?.IsAuthenticated == true && !string.IsNullOrEmpty(context.User.Identity.Name))
+    {
+        var userRepo = context.RequestServices.GetRequiredService<UserRepository>();
+        await userRepo.UpdateLastActiveAsync(context.User.Identity.Name);
+    }
+    await next();
+});
+
 // ── Seed Default User ─────────────────────────────────────────────────────────
 using (var scope = app.Services.CreateScope())
 {
@@ -156,6 +166,19 @@ using (var scope = app.Services.CreateScope())
     var srkHash = hasher.HashPassword("Srk@1990");
     // Seed default accounts
     userRepo.SeedDefaultOwnerAsync(defaultHash, srkHash).GetAwaiter().GetResult();
+
+    // Bind signature path callback on the PDF connector
+    var pdfConnector = scope.ServiceProvider.GetService<HotelAutomation.Connectors.Pms.PdfPmsConnector>();
+    if (pdfConnector != null)
+    {
+        pdfConnector.GetActiveUserSignaturePath = async () =>
+        {
+            using var lookupScope = app.Services.CreateScope();
+            var lookupRepo = lookupScope.ServiceProvider.GetRequiredService<UserRepository>();
+            var lastActive = await lookupRepo.GetLastActiveUserAsync();
+            return lastActive?.SignaturePath;
+        };
+    }
 }
 
 app.UseDefaultFiles();
@@ -443,6 +466,46 @@ app.MapDelete("/api/users/{id:int}", async (int id, UserRepository userRepo, Htt
 
     await userRepo.DeleteAsync(id);
     return Results.Ok(new { message = "User deleted successfully" });
+}).RequireAuthorization();
+
+// Upload user signature & stamp (Owner & Developer only)
+app.MapPost("/api/users/{id:int}/signature", async (int id, HttpContext context, UserRepository userRepo) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+    {
+        return Results.Forbid();
+    }
+
+    var user = await userRepo.GetByIdAsync(id);
+    if (user == null) return Results.NotFound();
+
+    var form = await context.Request.ReadFormAsync();
+    var file = form.Files.GetFile("file");
+    if (file == null || file.Length == 0)
+    {
+        return Results.BadRequest(new { error = "No file uploaded" });
+    }
+
+    var uploadDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "signatures");
+    if (!Directory.Exists(uploadDir))
+    {
+        Directory.CreateDirectory(uploadDir);
+    }
+
+    var ext = Path.GetExtension(file.FileName);
+    if (string.IsNullOrEmpty(ext)) ext = ".png";
+    var fileName = $"user_{id}_signature{ext}";
+    var filePath = Path.Combine(uploadDir, fileName);
+
+    using (var stream = new FileStream(filePath, FileMode.Create))
+    {
+        await file.CopyToAsync(stream);
+    }
+
+    var relativeUrl = $"/signatures/{fileName}";
+    await userRepo.UpdateSignaturePathAsync(id, relativeUrl);
+
+    return Results.Ok(new { message = "Signature uploaded successfully", signaturePath = relativeUrl });
 }).RequireAuthorization();
 
 // Get all role permissions (for sidebar dynamic loading)
