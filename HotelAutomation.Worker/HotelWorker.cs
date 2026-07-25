@@ -237,28 +237,24 @@ public sealed class HotelWorker : BackgroundService
                 using var scope = _scopeFactory.CreateScope();
                 var contactRepo = scope.ServiceProvider.GetRequiredService<ContactRepository>();
                 
-                var existingColumns = new HashSet<string>(await contactRepo.GetDynamicColumnsAsync(), StringComparer.OrdinalIgnoreCase);
                 var customFields = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
-                if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
-                {
-                    try
-                    {
-                        var rawDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(pmsEvent.RawPayload);
-                        if (rawDict != null)
-                        {
-                            foreach (var kv in rawDict)
-                            {
-                                if (existingColumns.Contains(kv.Key))
-                                {
-                                    var valStr = kv.Value.ValueKind == System.Text.Json.JsonValueKind.Null ? "" : (kv.Value.ToString() ?? "");
-                                    customFields[kv.Key] = valStr;
-                                }
-                            }
-                        }
-                    }
-                    catch { }
-                }
+                 if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
+                 {
+                     try
+                     {
+                         var rawDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(pmsEvent.RawPayload);
+                         if (rawDict != null)
+                         {
+                             foreach (var kv in rawDict)
+                             {
+                                 var valStr = kv.Value.ValueKind == System.Text.Json.JsonValueKind.Null ? "" : (kv.Value.ToString() ?? "");
+                                 customFields[kv.Key] = valStr;
+                             }
+                         }
+                     }
+                     catch { }
+                 }
 
                 if (!customFields.ContainsKey("Room No") && !string.IsNullOrEmpty(pmsEvent.RoomNumber))
                 {

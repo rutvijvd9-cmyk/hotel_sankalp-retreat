@@ -255,7 +255,22 @@ public sealed class PdfPmsConnector : IPmsEventSource
                               ? "" : $"_Room{SanitizeFileName(pmsEvent.RoomNumber)}";
         var invoicePart = string.IsNullOrWhiteSpace(pmsEvent.BookingReference)
                               ? "" : $"_{SanitizeFileName(pmsEvent.BookingReference)}";
-        return $"{guestPart}{roomPart}{invoicePart}_{datePart}.pdf";
+
+        var regPart = "";
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
+            {
+                var payload = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(pmsEvent.RawPayload);
+                if (payload != null && payload.TryGetValue("Registration No", out var regNo) && !string.IsNullOrWhiteSpace(regNo))
+                {
+                    regPart = $"_Reg{SanitizeFileName(regNo)}";
+                }
+            }
+        }
+        catch { }
+
+        return $"{guestPart}{roomPart}{invoicePart}{regPart}_{datePart}.pdf";
     }
 
     private static string SanitizeFileName(string? input)
