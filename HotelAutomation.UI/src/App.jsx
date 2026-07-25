@@ -3694,7 +3694,7 @@ export default function App() {
         </nav>
       </aside>
 
-      <main className="main-content" style={{ flex: 1, overflowX: 'hidden', transition: 'margin-left 0.3s ease' }}>
+      <main className="main-content" style={{ flex: 1, minWidth: 0, overflowX: 'hidden', transition: 'margin-left 0.3s ease' }}>
         <header className="topbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', padding: '0 24px', minHeight: '72px' }}>
           <div className="topbar-title" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <button className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => setSidebarOpen(!sidebarOpen)}>
