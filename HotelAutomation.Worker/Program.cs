@@ -1281,7 +1281,7 @@ app.MapPost("/api/test-event", (string? phone, ManualPmsConnector pms) =>
 {
     pms.RaiseTestEvent(new HotelAutomation.Core.Models.PmsEvent
     {
-        EventType = "CheckOut",
+        EventType = "PMS_CHECKOUT",
         GuestName = "Test Guest",
         PhoneNumber = string.IsNullOrWhiteSpace(phone) ? "+1234567890" : phone,
         RoomNumber = "101",
