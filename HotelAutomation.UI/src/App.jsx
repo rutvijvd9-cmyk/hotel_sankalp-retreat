@@ -3274,7 +3274,7 @@ export default function App() {
       const targetRoles = ['Manager', 'Employer'];
 
       return (
-        <div style={{ padding: '24px' }}>
+        <div style={{ padding: '24px', maxWidth: '100%', overflow: 'hidden' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
             <h2 style={{ margin: 0, fontWeight: 700, color: 'var(--text-primary)' }}>User Accounts & Access Control</h2>
             {(user?.role === 'Owner' || user?.role === 'Developer') && userSubTab === 'list' && (
