@@ -318,9 +318,49 @@ public sealed class PdfDataExtractor
                     BitmapAlphaMode.Premultiplied);
 
                 var result = await ocrEngine.RecognizeAsync(softwareBitmap);
-                if (result != null && !string.IsNullOrWhiteSpace(result.Text))
+                if (result != null && result.Lines != null)
                 {
-                    sb.AppendLine(result.Text);
+                    var words = new List<OcrWord>();
+                    foreach (var line in result.Lines)
+                    {
+                        if (line.Words == null) continue;
+                        foreach (var word in line.Words)
+                        {
+                            words.Add(word);
+                        }
+                    }
+
+                    var sortedWords = words.OrderBy(w => w.BoundingRect.Y).ToList();
+                    var rows = new List<List<OcrWord>>();
+                    foreach (var word in sortedWords)
+                    {
+                        var row = rows.FirstOrDefault(r => 
+                        {
+                            var rowY = r[0].BoundingRect.Y;
+                            var rowH = r[0].BoundingRect.Height;
+                            return Math.Abs(word.BoundingRect.Y - rowY) < rowH * 0.6;
+                        });
+
+                        if (row != null)
+                        {
+                            row.Add(word);
+                        }
+                        else
+                        {
+                            rows.Add(new List<OcrWord> { word });
+                        }
+                    }
+
+                    var sortedRows = rows
+                        .OrderBy(r => r[0].BoundingRect.Y)
+                        .Select(r => r.OrderBy(w => w.BoundingRect.X).ToList())
+                        .ToList();
+
+                    foreach (var row in sortedRows)
+                    {
+                        var lineText = string.Join(" ", row.Select(w => w.Text));
+                        sb.AppendLine(lineText);
+                    }
                 }
             }
         }
