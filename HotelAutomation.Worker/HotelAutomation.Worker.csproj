@@ -8,6 +8,7 @@
     <!-- UserSecretsId: enables `dotnet user-secrets` for dev-time secret storage.
          The AccessToken MUST be stored here, NEVER in appsettings.json. -->
     <UserSecretsId>HotelAutomation-Worker-29A4F1E2-B3C7-4D8A-9E0F-1A2B3C4D5E6F</UserSecretsId>
+    <OutputType>WinExe</OutputType>
     <!-- Suppress the default worker service launchSettings; we control startup explicitly -->
     <RootNamespace>HotelAutomation.Worker</RootNamespace>
   </PropertyGroup>
