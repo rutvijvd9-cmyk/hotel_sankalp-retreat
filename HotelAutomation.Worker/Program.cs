@@ -55,6 +55,10 @@ if (!File.Exists(dbDestPath) && File.Exists(dbSeedPath))
 var uploadsDataDir = Path.Combine(appDataDir, "uploads");
 Directory.CreateDirectory(uploadsDataDir);
 
+// Redirect signatures folder to AppData (Program Files is read-only for normal users)
+var signaturesDataDir = Path.Combine(appDataDir, "signatures");
+Directory.CreateDirectory(signaturesDataDir);
+
 var rawConnString = builder.Configuration.GetConnectionString("Sqlite")
     ?? "Data Source=hotel_automation.db";
 
@@ -203,6 +207,7 @@ using (var scope = app.Services.CreateScope())
     var pdfConnector = scope.ServiceProvider.GetService<HotelAutomation.Connectors.Pms.PdfPmsConnector>();
     if (pdfConnector != null)
     {
+        pdfConnector.SignaturesDataDir = signaturesDataDir;
         pdfConnector.GetActiveUserSignaturePath = async () =>
         {
             using var lookupScope = app.Services.CreateScope();
@@ -223,6 +228,13 @@ app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(uploadsPath),
     RequestPath = "/uploads"
+});
+
+// Serve signatures from AppData (writable even when installed in Program Files)
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(signaturesDataDir),
+    RequestPath = "/signatures"
 });
 
 // ── API Endpoints for UI ──────────────────────────────────────────────────────
@@ -521,7 +533,8 @@ app.MapPost("/api/users/{id:int}/signature", async (int id, HttpContext context,
         return Results.BadRequest(new { error = "No file uploaded" });
     }
 
-    var uploadDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "signatures");
+    // Save to AppData\signatures (writable even when installed in Program Files)
+    var uploadDir = signaturesDataDir;
     if (!Directory.Exists(uploadDir))
     {
         Directory.CreateDirectory(uploadDir);

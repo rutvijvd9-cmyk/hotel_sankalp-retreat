@@ -31,16 +31,10 @@ public sealed class PdfDataExtractor
 
     // ── Regex patterns matched to The Sankalp Retreat bill layout ─────────────
 
-    // Guest name follows "Guest Details" header — grab the first non-empty line after it.
-    // Handles prefixes like "MR", "MRS", "MS", "DR" etc.
-    private static readonly Regex GuestNameRegex = new(
-        @"Guest\s+Details?[^\r\n]*\r?\n\s*(.+?)(?:\r?\n|$)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
     // Fallback for room number if not found by RoomNoRegex.
     // Matches the number at the end of the line starting with "Invoice Date".
     private static readonly Regex InvoiceDateAndRoomRegex = new(
-        @"Invoice\s*Date\s*[:\-]?\s*\d{2}/\d{2}/\d{4}\s+(\d+\w*)",
+        @"Invoice\s*Date\s*[:\-]?\s*\d{2}[\/\s\-\|lI1\\]+\d{2}[\/\s\-\|lI1\\]+\d{4}\s+(\d+\w*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Indian mobile number: 10 digits starting with 6, 7, 8, or 9.
@@ -54,70 +48,127 @@ public sealed class PdfDataExtractor
         @"Room\s*No\.?\s*[:\-]?\s*(\d+\w*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    // Registration number — "Regn No : 1057"
+    // Registration number — "Regn No : 1057" or "Regn.N0. : 1115"
     private static readonly Regex RegnNoRegex = new(
-        @"Reg(?:n|istration)\.?\s*No\.?\s*[:\-]?\s*(\d+)",
+        @"Reg(?:n|istration)\.?\s*N[o0]\.?\s*[^a-zA-Z0-9]?\s*(\d+)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Invoice number — "Invoice No : ROOM/1055"
+    // Require alphanumeric first char to avoid catching bullet • or punctuation that
+    // sometimes appears between the label and the value in OCR-rendered temp PDFs.
     private static readonly Regex InvoiceNoRegex = new(
-        @"Invoice\s*No\.?\s*[:\-]?\s*(\S+)",
+        @"Invoice\s*No\.?\s*[^a-zA-Z0-9]?\s*([A-Za-z0-9][A-Za-z0-9/\-]*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    // Invoice date — "Invoice Date : 22/07/2026"
+    // Invoice date — "Invoice Date : 22/07/2026" (handling OCR vertical bars, spaces, ones, and slashes)
     private static readonly Regex InvoiceDateRegex = new(
-        @"Invoice\s*Date\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",
+        @"Invoice\s*Date\s*[^a-zA-Z0-9]?\s*(\d{2})[\/\s\-\|lI1\\]+(\d{2})[\/\s\-\|lI1\\]+(\d{4})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Arrival date — "Arrival Date : 21/07/2026"
     private static readonly Regex ArrivalDateRegex = new(
-        @"Arrival\s*Date\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",
+        @"Arrival\s*Date\s*[^a-zA-Z0-9]?\s*(\d{2})[\/\s\-\|lI1\\]+(\d{2})[\/\s\-\|lI1\\]+(\d{4})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Departure date — "Dept. Date : 22/07/2026" or "Departure Date : 22/07/2026"
+    // Also catches "Dep. Date", "Dept Date" (no dot), "Check Out Date" etc.
     private static readonly Regex DepartureDateRegex = new(
-        @"(?:Dept\.?|Departure)\s*Date\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",
+        @"(?:Dept\.?|Dep\.?|Departure|Check\s*Out)\s*Date\s*[^a-zA-Z0-9]?\s*(\d{2})[\/\s\-\|lI1\\]+(\d{2})[\/\s\-\|lI1\\]+(\d{4})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Invoice Total — must match "Invoice Total : 3528.00" specifically
     // (not "Total" alone, to avoid matching intermediate sub-totals)
     private static readonly Regex InvoiceTotalRegex = new(
-        @"Invoice\s+Total\s*[:\-]?\s*([\d,]+\.?\d*)",
+        @"Invoice\s+Total\s*[^a-zA-Z0-9]?\s*([\d,]+\.?\d*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // CGST amount — "CGST : 84.00"
     private static readonly Regex CgstRegex = new(
-        @"CGST\s*[:\-]?\s*([\d,]+\.?\d*)",
+        @"CGST\s*[^a-zA-Z0-9]?\s*([\d,]+\.?\d*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // SGST amount — "SGST : 84.00"
     private static readonly Regex SgstRegex = new(
-        @"SGST\s*[:\-]?\s*([\d,]+\.?\d*)",
+        @"SGST\s*[^a-zA-Z0-9]?\s*([\d,]+\.?\d*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Taxable value — "Taxable Value : 3360.00"
     private static readonly Regex TaxableValueRegex = new(
-        @"Taxable\s+Value\s*[:\-]?\s*([\d,]+\.?\d*)",
+        @"Taxable\s+Value\s*[^a-zA-Z0-9]?\s*([\d,]+\.?\d*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Room type — "Type Of Room : Presidential Sur"
     private static readonly Regex RoomTypeRegex = new(
-        @"Type\s+Of\s+Room\s*[:\-]?\s*(.+?)(?:\r?\n|$)",
+        @"Type\s+Of\s+Room\s*[^a-zA-Z0-9]?\s*(.+?)(?:\r?\n|$)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    // Tariff per day — "Tariff : 4500"
+    // Tariff per day — "Tariff : 4500" or "Tariff • 5800"
     private static readonly Regex TariffRegex = new(
-        @"Tariff\s*[:\-]?\s*([\d,]+\.?\d*)",
+        @"Tariff\s*[^a-zA-Z0-9]?\s*([\d,]+\.?\d*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Number of persons — "Persons : 1"
     private static readonly Regex PersonsRegex = new(
-        @"Persons?\s*[:\-]?\s*(\d+)",
+        @"Persons?\s*[^a-zA-Z0-9]?\s*(\d+)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Number of days — "Days : 1"
     private static readonly Regex DaysRegex = new(
-        @"\bDays?\s*[:\-]?\s*(\d+)",
+        @"\bDays?\s*[^a-zA-Z0-9]?\s*(\d+)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Arrival time — from "Arrival Date : 27/07/2026 Time 16:05"
+    // Uses [\ s\S]{0,60}? so the time can be on the SAME line OR the next OCR line,
+    // which handles virtual-printer PDFs whose word-banding differs from sunil.pdf.
+    private static readonly Regex ArrivalTimeRegex = new(
+        @"Arrival\s*Date[\s\S]{0,60}?T[i1l]?m[e|]?\s*[^a-zA-Z0-9]?\s*(\d{2}:\d{2})",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Departure time — from "Dept. Date : 28/07/2026 Time 09:40"
+    // Same multi-line tolerance as ArrivalTimeRegex.
+    private static readonly Regex DepartureTimeRegex = new(
+        @"(?:Dept\.?|Dep\.?|Departure|Check\s*Out)\s*Date[\s\S]{0,60}?T[i1l]?m[e|]?\s*[^a-zA-Z0-9]?\s*(\d{2}:\d{2})",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Standalone fallback: any "Time HH:MM" anywhere in the text.
+    // First match → Arrival Time, second match → Departure Time.
+    private static readonly Regex TmeGlobalRegex = new(
+        @"T[i1l]?m[e|]?\s*[^a-zA-Z0-9]?\s*(\d{2}:\d{2})",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Round off — from "Round Off : 0.24" (supporting newlines)
+    private static readonly Regex RoundOffRegex = new(
+        @"Round\s*Off\s*(?:\r?\n)?\s*[:\-]?\s*([\d\.\-]+)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Payment mode — from "Bill To : P O S MACHINE"
+    private static readonly Regex PaymentModeRegex = new(
+        @"Bill\s*To\s*[:\-]?\s*\r?\n\s*(.+?)(?:\r?\n|$|Type\s+Of\s+Room)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Discount — e.g. "Discount 63.88%"
+    private static readonly Regex DiscountRegex = new(
+        @"Discount\s*[^a-zA-Z0-9]?\s*([\d\.]+%?)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Deposit / Advance
+    private static readonly Regex DepositRegex = new(
+        @"(?:Deposit|Advance)\s*[^a-zA-Z0-9]?\s*([\d,]+\.?\d*)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Room Service
+    private static readonly Regex RoomServiceRegex = new(
+        @"Room\s*Service\s*[^a-zA-Z0-9]?\s*([\d,]+\.?\d*)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Laundry
+    private static readonly Regex LaundryRegex = new(
+        @"Laundr[yi]\s*[^a-zA-Z0-9]?\s*([\d,]+\.?\d*)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Misc Service
+    private static readonly Regex MiscServiceRegex = new(
+        @"(?:Misc|Miscellaneous)(?:\s*Service)?\s*[^a-zA-Z0-9]?\s*([\d,]+\.?\d*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public PdfDataExtractor(ILogger<PdfDataExtractor> logger)
@@ -165,11 +216,13 @@ public sealed class PdfDataExtractor
         }
 
         // ── Extract all fields ─────────────────────────────────────────────────
-        var guestName    = ExtractString(fullText, GuestNameRegex)?.Trim();
-        if (guestName != null)
+        var (prefix, firstName, lastName) = ParseGuestDetails(fullText);
+        var guestName = string.IsNullOrWhiteSpace(lastName) ? firstName : $"{firstName} {lastName}";
+        if (guestName == "Guest" || string.IsNullOrWhiteSpace(guestName))
         {
-            guestName = Regex.Replace(guestName, @"(?:\s+Rcx\W*mNo\.?|\s+Room\s*No\.?).*$", "", RegexOptions.IgnoreCase).Trim();
+            guestName = "Guest";
         }
+
         var rawPhone     = ExtractString(fullText, PhoneRegex);
         var roomNumber   = ExtractString(fullText, RoomNoRegex);
         if (string.IsNullOrWhiteSpace(roomNumber))
@@ -186,15 +239,15 @@ public sealed class PdfDataExtractor
         {
             if (invoiceNo.StartsWith("ROOM-", StringComparison.OrdinalIgnoreCase) || invoiceNo.StartsWith("ROOM/", StringComparison.OrdinalIgnoreCase))
             {
-                var prefix = invoiceNo.Substring(0, 5);
+                var prfx = invoiceNo.Substring(0, 5);
                 var rest = invoiceNo.Substring(5);
-                invoiceNo = prefix + NormalizeRoomNumber(rest);
+                invoiceNo = prfx + NormalizeRoomNumber(rest);
             }
         }
 
-        var invoiceDate  = ExtractString(fullText, InvoiceDateRegex);
-        var arrivalDate  = ExtractString(fullText, ArrivalDateRegex);
-        var departDate   = ExtractString(fullText, DepartureDateRegex);
+        var invoiceDate  = ExtractDateString(fullText, InvoiceDateRegex);
+        var arrivalDate  = ExtractDateString(fullText, ArrivalDateRegex);
+        var departDate   = ExtractDateString(fullText, DepartureDateRegex);
 
         if (string.IsNullOrWhiteSpace(departDate))
         {
@@ -205,6 +258,37 @@ public sealed class PdfDataExtractor
             }
         }
 
+        var arrivalTime  = ExtractString(fullText, ArrivalTimeRegex);
+        var departTime   = ExtractString(fullText, DepartureTimeRegex);
+
+        // Fallback: if time patterns didn't match, scan for all "Tme HH:MM" occurrences globally.
+        // First occurrence = Arrival Time, second = Departure Time.
+        if (string.IsNullOrWhiteSpace(arrivalTime) || string.IsNullOrWhiteSpace(departTime))
+        {
+            var tmeMatches = TmeGlobalRegex.Matches(fullText);
+            // De-duplicate across both PDF pages (bill typically prints 2 copies)
+            var distinctTimes = tmeMatches
+                .Select(m => m.Groups[1].Value)
+                .Distinct()
+                .ToList();
+            if (string.IsNullOrWhiteSpace(arrivalTime) && distinctTimes.Count >= 1)
+                arrivalTime = distinctTimes[0];
+            if (string.IsNullOrWhiteSpace(departTime) && distinctTimes.Count >= 2)
+                departTime = distinctTimes[1];
+        }
+        var roundOff     = ExtractString(fullText, RoundOffRegex);
+        var paymentMode  = ExtractString(fullText, PaymentModeRegex)?.Trim();
+        if (paymentMode != null)
+        {
+            paymentMode = Regex.Replace(paymentMode, @"\s+", " ");
+        }
+
+        var discount     = ExtractString(fullText, DiscountRegex);
+        var deposit      = ExtractString(fullText, DepositRegex);
+        var roomService  = ExtractString(fullText, RoomServiceRegex);
+        var laundry      = ExtractString(fullText, LaundryRegex);
+        var miscService  = ExtractString(fullText, MiscServiceRegex);
+
         var invoiceTotal = ExtractDecimal(fullText, InvoiceTotalRegex);
         var cgst         = ExtractDecimal(fullText, CgstRegex);
         var sgst         = ExtractDecimal(fullText, SgstRegex);
@@ -213,6 +297,25 @@ public sealed class PdfDataExtractor
         var tariff       = ExtractString(fullText, TariffRegex);
         var persons      = ExtractString(fullText, PersonsRegex);
         var days         = ExtractString(fullText, DaysRegex);
+
+        // Calculate days if missing
+        if (string.IsNullOrWhiteSpace(days) && !string.IsNullOrWhiteSpace(arrivalDate) && !string.IsNullOrWhiteSpace(departDate))
+        {
+            try
+            {
+                var provider = System.Globalization.CultureInfo.InvariantCulture;
+                if (DateTime.TryParseExact(arrivalDate, "dd/MM/yyyy", provider, System.Globalization.DateTimeStyles.None, out var arrD) &&
+                    DateTime.TryParseExact(departDate, "dd/MM/yyyy", provider, System.Globalization.DateTimeStyles.None, out var depD))
+                {
+                    var diff = (depD - arrD).TotalDays;
+                    if (diff > 0)
+                    {
+                        days = ((int)diff).ToString();
+                    }
+                }
+            }
+            catch { }
+        }
 
         // ── Phone is mandatory — cannot send WhatsApp without it ───────────────
         if (string.IsNullOrWhiteSpace(rawPhone))
@@ -226,27 +329,97 @@ public sealed class PdfDataExtractor
 
         var phoneE164 = NormalizeIndianPhone(rawPhone);
 
-        var (city, state, nationality) = ParseAddress(fullText);
+        // Limit address extraction to the guest details block to avoid false positives with the hotel's details
+        var guestAddressBlock = GetGuestAddressBlock(fullText);
+        var (city, state, nationality) = ParseAddress(guestAddressBlock);
+        if (state == "Unknown" || city == "Unknown")
+        {
+            var (c, s, n) = ParseAddress(fullText);
+            if (state == "Unknown") state = s;
+            if (city == "Unknown") city = c;
+        }
+
+        // Determine Company Name if mapped to payment mode (and it doesn't look like cash/pos/upi)
+        string companyName = "-";
+        if (!string.IsNullOrWhiteSpace(paymentMode) &&
+            !paymentMode.Contains("CASH", StringComparison.OrdinalIgnoreCase) &&
+            !paymentMode.Contains("P O S", StringComparison.OrdinalIgnoreCase) &&
+            !paymentMode.Contains("POS", StringComparison.OrdinalIgnoreCase) &&
+            !paymentMode.Contains("CARD", StringComparison.OrdinalIgnoreCase) &&
+            !paymentMode.Contains("UPI", StringComparison.OrdinalIgnoreCase) &&
+            !paymentMode.Contains("ONLINE", StringComparison.OrdinalIgnoreCase))
+        {
+            companyName = paymentMode;
+        }
 
         // ── Build rich payload dictionary (stored in RawPayload for template use) ──
         var extras = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (regnNo       != null) extras["Registration Number"] = regnNo;
-        if (invoiceNo    != null) extras["Bill No"]             = invoiceNo;
-        if (invoiceDate  != null) extras["Invoice Date"]        = invoiceDate;
-        if (arrivalDate  != null) extras["Arrival Date"]        = arrivalDate;
-        if (departDate   != null) extras["Departure date"]      = departDate;
-        if (city         != null) extras["City Name"]           = city;
-        if (state        != null) extras["State Name"]          = state;
-        if (nationality  != null) extras["Nationality"]         = nationality;
-        if (roomNumber   != null) extras["Room No"]             = roomNumber;
+        extras["Prefix"]              = prefix ?? "-";
+        extras["Registration Number"] = regnNo ?? "-";
+        extras["Invoice Number"]      = invoiceNo ?? "-";
+        extras["Bill No"]             = "-";
+        extras["Invoice Date"]        = invoiceDate ?? "-";
+        extras["Arrival Date"]        = arrivalDate ?? "-";
+        extras["Departure date"]      = departDate ?? "-";
+        extras["Arrival Time"]        = arrivalTime ?? "-";
+        extras["Departure Time"]      = departTime ?? "-";
+        extras["City Name"]           = city ?? "-";
+        extras["State Name"]          = state ?? "-";
+        extras["Nationality"]         = nationality ?? "Indian";
+        extras["Room No"]             = roomNumber ?? "-";
 
-        if (cgst         != null) extras["CGST"]             = cgst.Value.ToString("0.00");
-        if (sgst         != null) extras["SGST"]             = sgst.Value.ToString("0.00");
-        if (taxableValue != null) extras["Taxable Value"]    = taxableValue.Value.ToString("0.00");
-        if (roomType     != null) extras["Room Type"]        = roomType;
-        if (tariff       != null) extras["Tariff"]           = tariff;
-        if (persons      != null) extras["Persons"]          = persons;
-        if (days         != null) extras["Days"]             = days;
+        extras["CGST"]             = cgst?.ToString("0.00") ?? "0.00";
+        extras["SGST"]             = sgst?.ToString("0.00") ?? "0.00";
+        extras["Taxable Value"]    = taxableValue?.ToString("0.00") ?? "0.00";
+        extras["Room Type"]        = roomType ?? "-";
+        extras["Tariff"]           = tariff ?? "-";
+        extras["Room Tariff"]      = tariff ?? "-";
+        extras["Final Tariff"]     = tariff ?? "-";
+        extras["Persons"]          = persons ?? "-";
+        extras["Days"]             = days ?? "-";
+        extras["Expected Stay days"] = days ?? "-";
+        extras["Expected Departure Date"] = departDate ?? "-";
+        extras["days"]             = days ?? "-";
+        extras["Round off"]        = roundOff ?? "0.00";
+        extras["Mode of Payment/Bill To"] = paymentMode ?? "-";
+        
+        // Category 3 defaulted/parsed fields
+        extras["Discount"]         = discount ?? "0.00";
+        extras["Deposit"]          = deposit ?? "0.00";
+        extras["Deposit(-)"]       = deposit ?? "0.00";
+        extras["Roon Service"]     = roomService ?? "0.00"; // Typo in db column schema matched
+        extras["Laundary"]         = laundry ?? "0.00";     // Typo in db column schema matched
+        extras["Misc Service"]     = miscService ?? "0.00";
+        extras["Company Name"]     = companyName;
+        extras["AP"]               = "0.00";
+        extras["MAP"]              = "0.00";
+        extras["EP"]               = "0.00";
+        extras["CP"]               = "0.00";
+        extras["Carry Date"]       = "-";
+        extras["Carry registraction No"] = "-";
+        extras["Carry Amount"]     = "0.00";
+        extras["C/F. Amount"]      = "0.00";
+        extras["Group"]            = "-";
+        extras["Person"]           = "-";
+        extras["Extra Person"]     = "-";
+        extras["Reservation Remark"] = "-";
+        extras["Room Change"]      = "-";
+        extras["Other Remark"]     = "-";
+        extras["B/F Registration No"] = "-";
+        extras["C/F Registration No"] = "-";
+
+        if (invoiceTotal != null)
+        {
+            extras["Room Total"]     = invoiceTotal.Value.ToString("0.00");
+            extras["Total"]          = invoiceTotal.Value.ToString("0.00");
+            extras["Final Amount"]   = invoiceTotal.Value.ToString("0.00");
+        }
+        else
+        {
+            extras["Room Total"]     = "0.00";
+            extras["Total"]          = "0.00";
+            extras["Final Amount"]   = "0.00";
+        }
         extras["Source PDF"] = Path.GetFileName(pdfPath);
 
         var rawPayload = System.Text.Json.JsonSerializer.Serialize(extras);
@@ -297,6 +470,20 @@ public sealed class PdfDataExtractor
         return match.Success ? match.Groups[1].Value : null;
     }
 
+    private static string? ExtractDateString(string text, Regex regex)
+    {
+        var match = regex.Match(text);
+        if (match.Success)
+        {
+            if (match.Groups.Count >= 4)
+            {
+                return $"{match.Groups[1].Value}/{match.Groups[2].Value}/{match.Groups[3].Value}";
+            }
+            return match.Groups[1].Value;
+        }
+        return null;
+    }
+
     private static decimal? ExtractDecimal(string text, Regex regex)
     {
         var raw = ExtractString(text, regex);
@@ -322,7 +509,7 @@ public sealed class PdfDataExtractor
         return raw;
     }
 
-    private static async Task<string> OcrPdfImagesAsync(string pdfPath)
+    public static async Task<string> OcrPdfImagesAsync(string pdfPath)
     {
         var sb = new StringBuilder();
         var ocrEngine = OcrEngine.TryCreateFromUserProfileLanguages();
@@ -338,7 +525,14 @@ public sealed class PdfDataExtractor
         {
             using var page = pdfDoc.GetPage(i);
             using var stream = new InMemoryRandomAccessStream();
-            await page.RenderToStreamAsync(stream);
+            
+            // Render at 3x resolution (approx 216 DPI) for significantly higher OCR accuracy on small text
+            var options = new Windows.Data.Pdf.PdfPageRenderOptions
+            {
+                DestinationWidth = (uint)(page.Size.Width * 3),
+                DestinationHeight = (uint)(page.Size.Height * 3)
+            };
+            await page.RenderToStreamAsync(stream, options);
 
             var decoder = await BitmapDecoder.CreateAsync(stream);
             using var softwareBitmap = await decoder.GetSoftwareBitmapAsync(
@@ -391,8 +585,141 @@ public sealed class PdfDataExtractor
                 }
             }
         }
-
         return sb.ToString();
+    }
+
+    private static (string Prefix, string FirstName, string LastName) ParseGuestDetails(string text)
+    {
+        int idx = text.IndexOf("Guest Details", StringComparison.OrdinalIgnoreCase);
+        if (idx == -1) return ("", "Guest", "");
+
+        var lines = text.Substring(idx).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        string? nameLine = null;
+
+        foreach (var line in lines)
+        {
+            // Clean common invoice properties from the line
+            var cleaned = Regex.Replace(line, @"(?:Guest\s+Details|Invoice\s*No|Room\s*No|Invoice\s*Date|Regn\.?N[o0]|Arrival|Dept\s*Date|Tme|Days|•|:|-).*", "", RegexOptions.IgnoreCase).Trim();
+            
+            // If it's a valid alphabetic name line
+            if (!string.IsNullOrWhiteSpace(cleaned) && cleaned.Length > 3 && Regex.IsMatch(cleaned, @"^[a-zA-Z\s\.]+$"))
+            {
+                // We want to skip generic payment names if they appear here
+                if (cleaned.Contains("P O S MACHINE", StringComparison.OrdinalIgnoreCase) || cleaned.Contains("CASH", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                nameLine = cleaned;
+                break;
+            }
+        }
+
+        if (nameLine == null) return ("", "Guest", "");
+
+        // Split prefix and names
+        var match = Regex.Match(nameLine, @"^(MR|MRS|MS|DR|MISS)\.?\s+(.+)$", RegexOptions.IgnoreCase);
+        if (match.Success)
+        {
+            string prefix = match.Groups[1].Value.ToUpper();
+            string fullName = match.Groups[2].Value.Trim();
+            var parts = fullName.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            string firstName = parts.Length > 0 ? parts[0] : "";
+            string lastName = parts.Length > 1 ? string.Join(" ", parts[1..]) : "";
+            return (prefix, firstName, lastName);
+        }
+        else
+        {
+            var parts = nameLine.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            string firstName = parts.Length > 0 ? parts[0] : "";
+            string lastName = parts.Length > 1 ? string.Join(" ", parts[1..]) : "";
+            return ("", firstName, lastName);
+        }
+    }
+
+    private static string GetGuestAddressBlock(string fullText)
+    {
+        int idx = fullText.IndexOf("Guest Details", StringComparison.OrdinalIgnoreCase);
+        if (idx == -1) return fullText;
+
+        // Take lines starting from Guest Details, stopping at "Bill To" or the Arrival/Dept section
+        var lines = fullText.Substring(idx).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        var blockLines = new List<string>();
+        foreach (var line in lines.Take(12))
+        {
+            // Stop before company/payment section starts
+            if (Regex.IsMatch(line, @"^\s*(?:Bill\s*To|Remarks|GSTIN\s*:|Place\s*o[ft]\s*Supply)", RegexOptions.IgnoreCase))
+                break;
+
+            // Remove common invoice fields that appear on the right-hand side
+            var cleaned = Regex.Replace(line, @"(?:Invoice\s*No|Room\s*No\.?|Invoice\s*Date|Regn\.?N[o0]|Arrival\s*Date|Dept\s*Date|T[im]?me|Days).*$", "", RegexOptions.IgnoreCase).Trim();
+            if (!string.IsNullOrWhiteSpace(cleaned))
+                blockLines.Add(cleaned);
+        }
+        return string.Join("\n", blockLines);
+    }
+
+    // Full list of Indian states (and common OCR variants)
+    private static readonly (string Pattern, string Canonical)[] _indianStates = new[]
+    {
+        ("ANDAMAN",           "ANDAMAN AND NICOBAR ISLANDS"),
+        ("ANDHRA",            "ANDHRA PRADESH"),
+        ("ARUNACHAL",         "ARUNACHAL PRADESH"),
+        ("ASSAM",             "ASSAM"),
+        ("BIHAR",             "BIHAR"),
+        ("CHANDIGARH",        "CHANDIGARH"),
+        ("CHHATTISGARH",      "CHHATTISGARH"),
+        ("DADRA",             "DADRA AND NAGAR HAVELI"),
+        ("DAMAN",             "DAMAN AND DIU"),
+        ("DELHI",             "DELHI"),
+        ("GOA",               "GOA"),
+        ("HIMACHAL",          "HIMACHAL PRADESH"),
+        ("JAMMU",             "JAMMU AND KASHMIR"),
+        ("JHARKHAND",         "JHARKHAND"),
+        ("KARNATAKA",         "KARNATAKA"),
+        ("KERALA",            "KERALA"),
+        ("LADAKH",            "LADAKH"),
+        ("LAKSHADWEEP",       "LAKSHADWEEP"),
+        ("MADHYA PRADESH",    "MADHYA PRADESH"),
+        ("MAHARASHTRA",       "MAHARASHTRA"),
+        ("MANIPUR",           "MANIPUR"),
+        ("MEGHALAYA",         "MEGHALAYA"),
+        ("MIZORAM",           "MIZORAM"),
+        ("NAGALAND",          "NAGALAND"),
+        ("ODISHA",            "ODISHA"),
+        ("ORISSA",            "ODISHA"),
+        ("PUDUCHERRY",        "PUDUCHERRY"),
+        ("PUNJAB",            "PUNJAB"),
+        ("RAJASTHAN",         "RAJASTHAN"),
+        ("RAJSTHAN",          "RAJASTHAN"),
+        ("SIKKIM",            "SIKKIM"),
+        ("TAMIL NADU",        "TAMIL NADU"),
+        ("TELANGANA",         "TELANGANA"),
+        ("TRIPURA",           "TRIPURA"),
+        ("UTTAR PRADESH",     "UTTAR PRADESH"),
+        ("UTTARAKHAND",       "UTTARAKHAND"),
+        ("WEST BENGAL",       "WEST BENGAL"),
+        // GUJARAT last so it doesn't match "Place of Supply: 24-GUJARAT" before the guest address
+        ("GUJARAT",           "GUJARAT"),
+    };
+
+    private static readonly Dictionary<string, string> _cityAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["AHEMDABAD"]  = "Ahmedabad",
+        ["AHMEDABAD"]  = "Ahmedabad",
+        ["AHMDABAD"]   = "Ahmedabad",
+        ["DHARMASHALA"]= "Dharamshala",
+        ["DHARAMSHALA"]= "Dharamshala",
+        ["RNKOT"]      = "Rajkot",
+        ["RAJKOT"]     = "Rajkot",
+        ["KHATRA"]     = "Khatra",
+        ["DEOLI"]      = "Deoli",
+        ["WARDHA"]     = "Wardha",
+        ["WARSHA"]     = "Wardha",   // OCR variant
+    };
+
+    private static string NormaliseCity(string raw)
+    {
+        if (_cityAliases.TryGetValue(raw.Trim(), out var canonical)) return canonical;
+        return System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(raw.Trim().ToLower());
     }
 
     private static (string City, string State, string Nationality) ParseAddress(string text)
@@ -401,39 +728,74 @@ public sealed class PdfDataExtractor
         string city = "Unknown";
         string nationality = "Indian";
 
-        var states = new[] { "MAHARASHTRA", "GUJARAT", "WEST BENGAL", "HIMACHAL" };
-        foreach (var s in states)
+        // Find the first state keyword that appears in the address block text
+        foreach (var (pattern, canonical) in _indianStates)
         {
-            if (text.Contains(s, StringComparison.OrdinalIgnoreCase))
-            {
-                state = s == "HIMACHAL" ? "HIMACHAL PRADESH" : s;
-                break;
-            }
-        }
+            var stateIdx = text.IndexOf(pattern, StringComparison.OrdinalIgnoreCase);
+            if (stateIdx == -1) continue;
 
-        if (state == "MAHARASHTRA")
-        {
-            city = "Wardha";
-            if (text.Contains("DEOLI", StringComparison.OrdinalIgnoreCase)) city = "Deoli";
-        }
-        else if (state == "GUJARAT")
-        {
-            if (text.Contains("AHEMDABAD", StringComparison.OrdinalIgnoreCase) || text.Contains("AHMEDABAD", StringComparison.OrdinalIgnoreCase))
-                city = "Ahmedabad";
-            else if (text.Contains("RAJKOT", StringComparison.OrdinalIgnoreCase) || text.Contains("RNKOT", StringComparison.OrdinalIgnoreCase))
-                city = "Rajkot";
-        }
-        else if (state == "WEST BENGAL")
-        {
-            city = "Khatra";
-        }
-        else if (state == "HIMACHAL PRADESH")
-        {
-            city = "Dharamshala";
+            state = canonical;
+
+            // ── Per-state city extraction ────────────────────────────────────────
+            if (state == "HIMACHAL PRADESH")
+            {
+                // Dharamshala/Dharmashala is the only city we typically see
+                foreach (var c in new[] { "DHARAMSHALA", "DHARMASHALA" })
+                {
+                    if (text.Contains(c, StringComparison.OrdinalIgnoreCase))
+                    { city = "Dharamshala"; break; }
+                }
+            }
+            else if (state == "MAHARASHTRA")
+            {
+                // Address format: "AT ISAPUR PO NANDORA TAH DEOLI" → city after TAH
+                var tahMatch = Regex.Match(text, @"\bTAH\s+([A-Z][A-Z]+)", RegexOptions.IgnoreCase);
+                if (tahMatch.Success)
+                {
+                    city = NormaliseCity(tahMatch.Groups[1].Value);
+                }
+                else
+                {
+                    // Fallback: token before MAHARASHTRA on same line
+                    city = ExtractCityBeforeKeyword(text, pattern);
+                }
+            }
+            else
+            {
+                // General rule: token immediately before the state keyword on the same line
+                city = ExtractCityBeforeKeyword(text, pattern);
+            }
+
+            break;
         }
 
         return (city, state, nationality);
     }
+
+    /// <summary>Finds the last non-trivial word on the same line as <paramref name="keyword"/>, before it.</summary>
+    private static string ExtractCityBeforeKeyword(string text, string keyword)
+    {
+        var stateIdx = text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
+        if (stateIdx == -1) return "Unknown";
+
+        var lineStart = text.LastIndexOf('\n', stateIdx);
+        var lineText = (lineStart == -1 ? text : text.Substring(lineStart + 1)).Trim();
+
+        // Remove state keyword and everything after it
+        var kwIdx = lineText.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
+        if (kwIdx <= 0) return "Unknown";
+        var beforeState = lineText.Substring(0, kwIdx).Trim();
+
+        // Split and take last meaningful token (≥3 chars, not a number or noise)
+        var tokens = beforeState
+            .Split(new[] { ',', ' ', '\t', '.' }, StringSplitOptions.RemoveEmptyEntries)
+            .Where(t => t.Length >= 3 && !Regex.IsMatch(t, @"^\d+$"))
+            .ToArray();
+
+        if (tokens.Length == 0) return "Unknown";
+        return NormaliseCity(tokens[^1]);
+    }
+
 
     private static string NormalizeRoomNumber(string? roomVal)
     {

@@ -13,6 +13,7 @@ const API_BASE = '/api';
 
 const PERMANENT_CUSTOM_FIELDS = [
   'Registration Number',
+  'Invoice Number',
   'Bill No',
   'Arrival Date',
   'Departure date',
@@ -1046,7 +1047,7 @@ export default function App() {
                 
                 <div style={{ flex: 1, overflowY: 'auto', paddingRight: '4px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <div style={{ fontWeight: 600, fontSize: '0.9em', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>Standard Fields</div>
-                  {['Phone', 'First Name', 'Last Name', 'Added Date', 'Updated Date', 'Updates'].map(col => {
+                  {['Phone', 'Full Name', 'Added Date', 'Updated Date', 'Updates'].map(col => {
                     const isVisible = !hiddenColumns.includes(col);
                     return (
                       <label key={col} style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.95em', userSelect: 'none' }}>
@@ -1103,7 +1104,7 @@ export default function App() {
                     <button className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.8em', minWidth: 'auto' }} onClick={() => setHiddenColumns(['Added Date', 'Updated Date', 'Updates', ...dynamicHeaders])}>
                       Minimal
                     </button>
-                    <button className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.8em', minWidth: 'auto' }} onClick={() => setHiddenColumns(['Phone', 'First Name', 'Last Name', 'Added Date', 'Updated Date', 'Updates', ...dynamicHeaders])}>
+                    <button className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.8em', minWidth: 'auto' }} onClick={() => setHiddenColumns(['Phone', 'Full Name', 'Added Date', 'Updated Date', 'Updates', ...dynamicHeaders])}>
                       Clear All
                     </button>
                   </div>
@@ -1185,8 +1186,7 @@ export default function App() {
                       <tr>
                         {!hiddenColumns.includes('Phone') && <th>Phone</th>}
                         {!hiddenColumns.includes('Prefix') && <th>Prefix</th>}
-                        {!hiddenColumns.includes('First Name') && <th>First Name</th>}
-                        {!hiddenColumns.includes('Last Name') && <th>Last Name</th>}
+                        {!hiddenColumns.includes('Full Name') && <th>Full Name</th>}
                         {(Array.isArray(dynamicHeaders) ? dynamicHeaders : [])
                           .filter(h => h !== 'Prefix')
                           .filter(h => !hiddenColumns.includes(h))
@@ -1205,8 +1205,9 @@ export default function App() {
                           <tr key={c.Id || c.id}>
                             {!hiddenColumns.includes('Phone') && <td style={{ fontFamily: 'monospace', fontWeight: 500 }}>{c.PhoneNumber || c.phoneNumber}</td>}
                             {!hiddenColumns.includes('Prefix') && <td>{fields['Prefix'] || '-'}</td>}
-                            {!hiddenColumns.includes('First Name') && <td>{c.FirstName || c.firstName}</td>}
-                            {!hiddenColumns.includes('Last Name') && <td>{c.LastName || c.lastName}</td>}
+                            {!hiddenColumns.includes('Full Name') && (
+                              <td>{`${c.FirstName || c.firstName || ''} ${c.LastName || c.lastName || ''}`.trim() || '-'}</td>
+                            )}
                             {(Array.isArray(dynamicHeaders) ? dynamicHeaders : [])
                               .filter(h => h !== 'Prefix')
                               .filter(h => !hiddenColumns.includes(h))

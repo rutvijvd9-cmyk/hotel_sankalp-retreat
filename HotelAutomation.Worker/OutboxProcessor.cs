@@ -105,7 +105,19 @@ public sealed class OutboxProcessor : BackgroundService
                     await _outboxRepository.UpdateStatusAsync(
                         messageToProcess.Id, "Sent", messageToProcess.RetryCount, DateTimeOffset.UtcNow, externalId, null, ct);
                     
-
+                    string guestName = "Guest";
+                    try
+                    {
+                        var paramDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(messageToProcess.ParametersJson ?? "{}");
+                        if (paramDict != null && paramDict.TryGetValue("Name", out var name))
+                        {
+                            guestName = name;
+                        }
+                    }
+                    catch {}
+                    TrayIconService.ShowNotification(
+                        "WhatsApp Message Sent",
+                        $"Successfully sent message to {guestName} ({messageToProcess.ToPhoneNumber})");
 
                     _logger.LogInformation("OutboxMessage {Id} → Sent via {Channel}", messageToProcess.Id, channelType);
                 }
@@ -117,6 +129,20 @@ public sealed class OutboxProcessor : BackgroundService
                     {
                         await _outboxRepository.UpdateStatusAsync(messageToProcess.Id, "Failed", newRetryCount, null, null, failureReason, ct);
                         _logger.LogWarning("OutboxMessage {Id} failed permanently: {Reason}", messageToProcess.Id, failureReason);
+
+                        string guestName = "Guest";
+                        try
+                        {
+                            var paramDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(messageToProcess.ParametersJson ?? "{}");
+                            if (paramDict != null && paramDict.TryGetValue("Name", out var name))
+                            {
+                                guestName = name;
+                            }
+                        }
+                        catch {}
+                        TrayIconService.ShowNotification(
+                            "WhatsApp Message Failed",
+                            $"Failed to send message to {guestName} ({messageToProcess.ToPhoneNumber}): {failureReason}");
 
                         // FALLBACK LOGIC
                         if (!string.IsNullOrEmpty(template.FallbackChannelType))

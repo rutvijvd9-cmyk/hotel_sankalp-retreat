@@ -74,14 +74,27 @@ public sealed class HotelWorker : BackgroundService
             // so the Contacts tab is always populated from scanned PDFs.
             await UpsertContactAsync(pmsEvent, cleanPhoneEarly, firstNameEarly, lastNameEarly);
 
-            var rules = await _ruleRepository.GetEnabledRulesForEventTypeAsync(pmsEvent.EventType);
+            // Normalize trigger event types so that scanned PDF events (CheckIn, CheckOut) match the rule database event types (PMS_CHECKIN, PMS_CHECKOUT)
+            var targetEventType = pmsEvent.EventType;
+            if (string.Equals(targetEventType, "CheckIn", StringComparison.OrdinalIgnoreCase) || string.Equals(targetEventType, "Check-in", StringComparison.OrdinalIgnoreCase))
+            {
+                targetEventType = "PMS_CHECKIN";
+            }
+            else if (string.Equals(targetEventType, "CheckOut", StringComparison.OrdinalIgnoreCase) || string.Equals(targetEventType, "Check-out", StringComparison.OrdinalIgnoreCase))
+            {
+                targetEventType = "PMS_CHECKOUT";
+            }
+
+            var normalizedEvent = pmsEvent with { EventType = targetEventType };
+
+            var rules = await _ruleRepository.GetEnabledRulesForEventTypeAsync(targetEventType);
             var templates = await _templateRepository.GetAllAsync();
-            var match = AutomationRuleMatcher.Match(pmsEvent, rules, templates);
+            var match = AutomationRuleMatcher.Match(normalizedEvent, rules, templates);
 
             if (match is null)
             {
-                _logger.LogWarning("No matching rule for event type: {EventType} — contact saved but no WhatsApp message will be sent.", pmsEvent.EventType);
-                await _eventLog.LogAsync(pmsEvent);
+                _logger.LogWarning("No matching rule for event type: {EventType} — contact saved but no WhatsApp message will be sent.", targetEventType);
+                await _eventLog.LogAsync(normalizedEvent);
                 return;
             }
 
@@ -240,7 +253,7 @@ public sealed class HotelWorker : BackgroundService
                 _dedupLock.Release();
             }
             
-            await _eventLog.LogAsync(pmsEvent, null); // We don't have OutboxMessageId yet
+            await _eventLog.LogAsync(normalizedEvent, null); // We don't have OutboxMessageId yet
 
             // Contact already saved above (unconditionally before rule matching)
 

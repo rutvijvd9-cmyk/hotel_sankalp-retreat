@@ -11,6 +11,7 @@ namespace HotelAutomation.Worker;
 /// </summary>
 public sealed class TrayIconService : IHostedService, IDisposable
 {
+    private static TrayIconService? _instance;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<TrayIconService> _logger;
     private Thread? _uiThread;
@@ -20,6 +21,30 @@ public sealed class TrayIconService : IHostedService, IDisposable
     {
         _lifetime = lifetime;
         _logger = logger;
+        _instance = this;
+    }
+
+    public static void ShowNotification(string title, string text)
+    {
+        _instance?.ShowNotificationInternal(title, text);
+    }
+
+    private void ShowNotificationInternal(string title, string text)
+    {
+        try
+        {
+            if (_trayIcon != null)
+            {
+                _trayIcon.BalloonTipTitle = title;
+                _trayIcon.BalloonTipText = text;
+                _trayIcon.BalloonTipIcon = ToolTipIcon.Info;
+                _trayIcon.ShowBalloonTip(5000);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to show balloon tip notification.");
+        }
     }
 
     public Task StartAsync(CancellationToken cancellationToken)

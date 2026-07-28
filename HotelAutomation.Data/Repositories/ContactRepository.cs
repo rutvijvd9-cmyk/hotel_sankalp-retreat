@@ -236,6 +236,7 @@ public sealed class ContactRepository
         var predefined = new List<string>
         {
             "Registration Number",
+            "Invoice Number",
             "Bill No",
             "Arrival Date",
             "Departure date",
