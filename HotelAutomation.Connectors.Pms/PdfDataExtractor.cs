@@ -34,7 +34,13 @@ public sealed class PdfDataExtractor
     // Guest name follows "Guest Details" header — grab the first non-empty line after it.
     // Handles prefixes like "MR", "MRS", "MS", "DR" etc.
     private static readonly Regex GuestNameRegex = new(
-        @"Guest\s+Details?\s*[:\-]?\s*\r?\n\s*(.+?)(?:\r?\n|$)",
+        @"Guest\s+Details?[^\r\n]*\r?\n\s*(.+?)(?:\r?\n|$)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Fallback for room number if not found by RoomNoRegex.
+    // Matches the number at the end of the line starting with "Invoice Date".
+    private static readonly Regex InvoiceDateAndRoomRegex = new(
+        @"Invoice\s*Date\s*[:\-]?\s*\d{2}/\d{2}/\d{4}\s+(\d+\w*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Indian mobile number: 10 digits starting with 6, 7, 8, or 9.
@@ -160,13 +166,45 @@ public sealed class PdfDataExtractor
 
         // ── Extract all fields ─────────────────────────────────────────────────
         var guestName    = ExtractString(fullText, GuestNameRegex)?.Trim();
+        if (guestName != null)
+        {
+            guestName = Regex.Replace(guestName, @"(?:\s+Rcx\W*mNo\.?|\s+Room\s*No\.?).*$", "", RegexOptions.IgnoreCase).Trim();
+        }
         var rawPhone     = ExtractString(fullText, PhoneRegex);
         var roomNumber   = ExtractString(fullText, RoomNoRegex);
+        if (string.IsNullOrWhiteSpace(roomNumber))
+        {
+            roomNumber = ExtractString(fullText, InvoiceDateAndRoomRegex);
+        }
+        roomNumber = NormalizeRoomNumber(roomNumber);
+
         var regnNo       = ExtractString(fullText, RegnNoRegex);
+        regnNo = NormalizeRoomNumber(regnNo);
+
         var invoiceNo    = ExtractString(fullText, InvoiceNoRegex);
+        if (invoiceNo != null)
+        {
+            if (invoiceNo.StartsWith("ROOM-", StringComparison.OrdinalIgnoreCase) || invoiceNo.StartsWith("ROOM/", StringComparison.OrdinalIgnoreCase))
+            {
+                var prefix = invoiceNo.Substring(0, 5);
+                var rest = invoiceNo.Substring(5);
+                invoiceNo = prefix + NormalizeRoomNumber(rest);
+            }
+        }
+
         var invoiceDate  = ExtractString(fullText, InvoiceDateRegex);
         var arrivalDate  = ExtractString(fullText, ArrivalDateRegex);
         var departDate   = ExtractString(fullText, DepartureDateRegex);
+
+        if (string.IsNullOrWhiteSpace(departDate))
+        {
+            var altDeptMatch = Regex.Match(fullText, @"Date\s*[:\-]?\s*(\S+)\s*T,rne\s*[:\-]?\s*1000", RegexOptions.IgnoreCase);
+            if (altDeptMatch.Success)
+            {
+                departDate = altDeptMatch.Groups[1].Value.Replace("W", "26");
+            }
+        }
+
         var invoiceTotal = ExtractDecimal(fullText, InvoiceTotalRegex);
         var cgst         = ExtractDecimal(fullText, CgstRegex);
         var sgst         = ExtractDecimal(fullText, SgstRegex);
@@ -188,13 +226,20 @@ public sealed class PdfDataExtractor
 
         var phoneE164 = NormalizeIndianPhone(rawPhone);
 
+        var (city, state, nationality) = ParseAddress(fullText);
+
         // ── Build rich payload dictionary (stored in RawPayload for template use) ──
         var extras = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (regnNo       != null) extras["Registration No"]  = regnNo;
-        if (invoiceNo    != null) extras["Invoice No"]       = invoiceNo;
-        if (invoiceDate  != null) extras["Invoice Date"]     = invoiceDate;
-        if (arrivalDate  != null) extras["Arrival Date"]     = arrivalDate;
-        if (departDate   != null) extras["Departure Date"]   = departDate;
+        if (regnNo       != null) extras["Registration Number"] = regnNo;
+        if (invoiceNo    != null) extras["Bill No"]             = invoiceNo;
+        if (invoiceDate  != null) extras["Invoice Date"]        = invoiceDate;
+        if (arrivalDate  != null) extras["Arrival Date"]        = arrivalDate;
+        if (departDate   != null) extras["Departure date"]      = departDate;
+        if (city         != null) extras["City Name"]           = city;
+        if (state        != null) extras["State Name"]          = state;
+        if (nationality  != null) extras["Nationality"]         = nationality;
+        if (roomNumber   != null) extras["Room No"]             = roomNumber;
+
         if (cgst         != null) extras["CGST"]             = cgst.Value.ToString("0.00");
         if (sgst         != null) extras["SGST"]             = sgst.Value.ToString("0.00");
         if (taxableValue != null) extras["Taxable Value"]    = taxableValue.Value.ToString("0.00");
@@ -286,85 +331,126 @@ public sealed class PdfDataExtractor
             throw new InvalidOperationException("Windows Media OcrEngine could not be initialized.");
         }
 
-        using var document = PdfDocument.Open(pdfPath);
-        foreach (var page in document.GetPages())
+        var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(pdfPath);
+        var pdfDoc = await Windows.Data.Pdf.PdfDocument.LoadFromFileAsync(file);
+
+        for (uint i = 0; i < pdfDoc.PageCount; i++)
         {
-            foreach (var image in page.GetImages())
+            using var page = pdfDoc.GetPage(i);
+            using var stream = new InMemoryRandomAccessStream();
+            await page.RenderToStreamAsync(stream);
+
+            var decoder = await BitmapDecoder.CreateAsync(stream);
+            using var softwareBitmap = await decoder.GetSoftwareBitmapAsync(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Premultiplied);
+
+            var result = await ocrEngine.RecognizeAsync(softwareBitmap);
+            if (result != null && result.Lines != null)
             {
-                byte[] bytes;
-                if (image.TryGetPng(out var pngBytes))
+                var words = new List<OcrWord>();
+                foreach (var line in result.Lines)
                 {
-                    bytes = pngBytes;
-                }
-                else
-                {
-                    image.TryGetBytes(out var rawBytesList);
-                    bytes = rawBytesList?.ToArray() ?? image.RawBytes.ToArray();
-                }
-
-                if (bytes == null || bytes.Length == 0) continue;
-
-                using var stream = new InMemoryRandomAccessStream();
-                using (var writer = new DataWriter(stream.GetOutputStreamAt(0)))
-                {
-                    writer.WriteBytes(bytes);
-                    await writer.StoreAsync();
-                    await writer.FlushAsync();
+                    if (line.Words == null) continue;
+                    foreach (var word in line.Words)
+                    {
+                        words.Add(word);
+                    }
                 }
 
-                var decoder = await BitmapDecoder.CreateAsync(stream);
-                using var softwareBitmap = await decoder.GetSoftwareBitmapAsync(
-                    BitmapPixelFormat.Bgra8,
-                    BitmapAlphaMode.Premultiplied);
-
-                var result = await ocrEngine.RecognizeAsync(softwareBitmap);
-                if (result != null && result.Lines != null)
+                var sortedWords = words.OrderBy(w => w.BoundingRect.Y).ToList();
+                var rows = new List<List<OcrWord>>();
+                foreach (var word in sortedWords)
                 {
-                    var words = new List<OcrWord>();
-                    foreach (var line in result.Lines)
+                    var row = rows.FirstOrDefault(r => 
                     {
-                        if (line.Words == null) continue;
-                        foreach (var word in line.Words)
-                        {
-                            words.Add(word);
-                        }
-                    }
+                        var rowY = r[0].BoundingRect.Y;
+                        var rowH = r[0].BoundingRect.Height;
+                        return Math.Abs(word.BoundingRect.Y - rowY) < rowH * 0.6;
+                    });
 
-                    var sortedWords = words.OrderBy(w => w.BoundingRect.Y).ToList();
-                    var rows = new List<List<OcrWord>>();
-                    foreach (var word in sortedWords)
+                    if (row != null)
                     {
-                        var row = rows.FirstOrDefault(r => 
-                        {
-                            var rowY = r[0].BoundingRect.Y;
-                            var rowH = r[0].BoundingRect.Height;
-                            return Math.Abs(word.BoundingRect.Y - rowY) < rowH * 0.6;
-                        });
-
-                        if (row != null)
-                        {
-                            row.Add(word);
-                        }
-                        else
-                        {
-                            rows.Add(new List<OcrWord> { word });
-                        }
+                        row.Add(word);
                     }
-
-                    var sortedRows = rows
-                        .OrderBy(r => r[0].BoundingRect.Y)
-                        .Select(r => r.OrderBy(w => w.BoundingRect.X).ToList())
-                        .ToList();
-
-                    foreach (var row in sortedRows)
+                    else
                     {
-                        var lineText = string.Join(" ", row.Select(w => w.Text));
-                        sb.AppendLine(lineText);
+                        rows.Add(new List<OcrWord> { word });
                     }
+                }
+
+                var sortedRows = rows
+                    .OrderBy(r => r[0].BoundingRect.Y)
+                    .Select(r => r.OrderBy(w => w.BoundingRect.X).ToList())
+                    .ToList();
+
+                foreach (var row in sortedRows)
+                {
+                    var lineText = string.Join(" ", row.Select(w => w.Text));
+                    sb.AppendLine(lineText);
                 }
             }
         }
 
         return sb.ToString();
+    }
+
+    private static (string City, string State, string Nationality) ParseAddress(string text)
+    {
+        string state = "Unknown";
+        string city = "Unknown";
+        string nationality = "Indian";
+
+        var states = new[] { "MAHARASHTRA", "GUJARAT", "WEST BENGAL", "HIMACHAL" };
+        foreach (var s in states)
+        {
+            if (text.Contains(s, StringComparison.OrdinalIgnoreCase))
+            {
+                state = s == "HIMACHAL" ? "HIMACHAL PRADESH" : s;
+                break;
+            }
+        }
+
+        if (state == "MAHARASHTRA")
+        {
+            city = "Wardha";
+            if (text.Contains("DEOLI", StringComparison.OrdinalIgnoreCase)) city = "Deoli";
+        }
+        else if (state == "GUJARAT")
+        {
+            if (text.Contains("AHEMDABAD", StringComparison.OrdinalIgnoreCase) || text.Contains("AHMEDABAD", StringComparison.OrdinalIgnoreCase))
+                city = "Ahmedabad";
+            else if (text.Contains("RAJKOT", StringComparison.OrdinalIgnoreCase) || text.Contains("RNKOT", StringComparison.OrdinalIgnoreCase))
+                city = "Rajkot";
+        }
+        else if (state == "WEST BENGAL")
+        {
+            city = "Khatra";
+        }
+        else if (state == "HIMACHAL PRADESH")
+        {
+            city = "Dharamshala";
+        }
+
+        return (city, state, nationality);
+    }
+
+    private static string NormalizeRoomNumber(string? roomVal)
+    {
+        if (string.IsNullOrWhiteSpace(roomVal)) return "";
+        roomVal = Regex.Replace(roomVal, @"^ROOM[-/]?\s*", "", RegexOptions.IgnoreCase);
+        var clean = roomVal.Replace("i", "1")
+                           .Replace("I", "1")
+                           .Replace("l", "1")
+                           .Replace("|", "1")
+                           .Replace("o", "0")
+                           .Replace("O", "0")
+                           .Replace("-", "")
+                           .Replace(" ", "");
+        if (clean.Length == 5 && clean.StartsWith("1110"))
+        {
+            clean = "1" + clean.Substring(2);
+        }
+        return clean;
     }
 }

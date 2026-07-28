@@ -14,6 +14,9 @@ using Dapper;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Always bind to localhost:8000 regardless of environment or launchSettings ──
+builder.WebHost.UseUrls("http://localhost:8000");
+
 builder.WebHost.ConfigureKestrel(options => 
 {
     options.Limits.MaxRequestBodySize = 250_000_000; // 250 MB
@@ -32,10 +35,34 @@ builder.Services.AddCors(options => {
 });
 
 // ── Database ──────────────────────────────────────────────────────────────────
-var connectionString = builder.Configuration.GetConnectionString("Sqlite")
-    ?? throw new InvalidOperationException("Missing ConnectionStrings:Sqlite in config.");
+// When installed to Program Files, the exe has no write access to its own directory.
+// We store the live database in %AppData%\HotelSankalpRetreat\ which is always writable.
+var appDataDir = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+    "HotelSankalpRetreat");
+Directory.CreateDirectory(appDataDir);
+
+var dbDestPath = Path.Combine(appDataDir, "hotel_automation.db");
+
+// On first install, copy the seed database shipped with the app
+var dbSeedPath = Path.Combine(AppContext.BaseDirectory, "hotel_automation.db");
+if (!File.Exists(dbDestPath) && File.Exists(dbSeedPath))
+{
+    File.Copy(dbSeedPath, dbDestPath);
+}
+
+// Also redirect the uploads folder to AppData so user files are writable
+var uploadsDataDir = Path.Combine(appDataDir, "uploads");
+Directory.CreateDirectory(uploadsDataDir);
+
+var rawConnString = builder.Configuration.GetConnectionString("Sqlite")
+    ?? "Data Source=hotel_automation.db";
+
+// Replace relative filename with absolute AppData path
+var connectionString = $"Data Source={dbDestPath}";
 
 builder.Services.AddSingleton(new SqliteConnectionFactory(connectionString));
+
 
 // ── Repositories ──────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<ITemplateRepository, TemplateRepository>();
@@ -141,6 +168,11 @@ builder.Services.AddHostedService<CampaignProcessor>();
 builder.Services.AddHostedService<DateTriggerProcessor>();
 builder.Services.AddHostedService<WebhookRelayPoller>();
 
+// ── System Tray Icon (Windows) ────────────────────────────────────────────────
+// Shows a notification-area icon so the user knows the server is running.
+// Double-click or right-click → Open Dashboard opens the browser.
+builder.Services.AddHostedService<TrayIconService>();
+
 var app = builder.Build();
 app.UseCors();
 
@@ -184,7 +216,8 @@ using (var scope = app.Services.CreateScope())
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-var uploadsPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "uploads");
+// Use the AppData uploads folder (writable even when installed in Program Files)
+var uploadsPath = uploadsDataDir;
 if (!System.IO.Directory.Exists(uploadsPath)) System.IO.Directory.CreateDirectory(uploadsPath);
 app.UseStaticFiles(new StaticFileOptions
 {
@@ -235,14 +268,15 @@ app.MapGet("/api/auth/me", (HttpContext context) =>
     return Results.Unauthorized();
 });
 
-// Impersonate another user (Owner only)
+// Impersonate another user (Owner and Developer only)
 app.MapPost("/api/auth/impersonate/{id:int}", async (int id, UserRepository userRepo, HttpContext context) =>
 {
-    var isOwner = context.User.IsInRole("Owner") || 
-                  (context.User.HasClaim(c => c.Type == "OriginalRole") && 
-                   context.User.FindFirst("OriginalRole")?.Value == "Owner");
+    var isAuthorized = context.User.IsInRole("Owner") || context.User.IsInRole("Developer") || 
+                       (context.User.HasClaim(c => c.Type == "OriginalRole") && 
+                        (context.User.FindFirst("OriginalRole")?.Value == "Owner" || 
+                         context.User.FindFirst("OriginalRole")?.Value == "Developer"));
 
-    if (!isOwner)
+    if (!isAuthorized)
     {
         return Results.Forbid();
     }
@@ -254,7 +288,8 @@ app.MapPost("/api/auth/impersonate/{id:int}", async (int id, UserRepository user
     }
 
     var originalUsername = context.User.FindFirst("OriginalUsername")?.Value ?? context.User.Identity?.Name ?? "";
-    var originalRole = context.User.FindFirst("OriginalRole")?.Value ?? "Owner";
+    var originalRole = context.User.FindFirst("OriginalRole")?.Value ?? context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? "Owner";
+
 
     var claims = new List<System.Security.Claims.Claim>
     {
@@ -2115,12 +2150,26 @@ app.Lifetime.ApplicationStarted.Register(() =>
     try
     {
         var dbFactory = app.Services.GetRequiredService<SqliteConnectionFactory>();
-        var schemaPath = Path.Combine(Directory.GetCurrentDirectory(), "..", "HotelAutomation.Data", "Schema.sql");
-        var initScript = File.ReadAllText(schemaPath);
-        using var conn = dbFactory.OpenAsync().GetAwaiter().GetResult();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = initScript;
-        cmd.ExecuteNonQuery();
+
+        // Look for Schema.sql in order:
+        // 1. Next to the running exe (installed via setup)
+        // 2. Dev source layout: ../HotelAutomation.Data/Schema.sql
+        var schemaPath = Path.Combine(AppContext.BaseDirectory, "Schema.sql");
+        if (!File.Exists(schemaPath))
+            schemaPath = Path.Combine(Directory.GetCurrentDirectory(), "..", "HotelAutomation.Data", "Schema.sql");
+
+        if (!File.Exists(schemaPath))
+        {
+            app.Logger.LogWarning("Schema.sql not found at any expected path — skipping DB init (tables should already exist).");
+        }
+        else
+        {
+            var initScript = File.ReadAllText(schemaPath);
+            using var conn = dbFactory.OpenAsync().GetAwaiter().GetResult();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = initScript;
+            cmd.ExecuteNonQuery();
+        }
 
 
         
@@ -2428,6 +2477,18 @@ app.MapPost("/api/pdf-bridge/scan", (IPmsEventSource pmsSource, ILogger<Program>
         return Results.Ok(new { status = "success", message = "Scan triggered. Check logs for results." });
     }
     return Results.BadRequest(new { status = "error", message = "PDF Bridge connector is not active." });
+});
+
+// ── Open browser when server is ready ────────────────────────────────────────
+// Fires once Kestrel has bound the port and is accepting connections.
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    try
+    {
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+            "http://localhost:8000") { UseShellExecute = true });
+    }
+    catch { /* ignore — browser may not be available */ }
 });
 
 app.Run();

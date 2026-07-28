@@ -62,13 +62,25 @@ public sealed class HotelWorker : BackgroundService
             _logger.LogInformation("Event received: {EventType} for {Guest}",
                 pmsEvent.EventType, pmsEvent.GuestName);
 
+            // ── Compute name parts (needed for contact save below) ────────────
+            var guestNameEarly = pmsEvent.GuestName?.Trim() ?? "";
+            var namePartsEarly = guestNameEarly.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var firstNameEarly = namePartsEarly.Length > 0 ? namePartsEarly[0] : "";
+            var lastNameEarly  = namePartsEarly.Length > 1 ? string.Join(" ", namePartsEarly.Skip(1)) : "";
+            var cleanPhoneEarly = new string((pmsEvent.PhoneNumber ?? "").Where(char.IsDigit).ToArray());
+
+            // ── ALWAYS save/update contact on every PMS event ─────────────────
+            // This runs unconditionally — even when no automation rule matches,
+            // so the Contacts tab is always populated from scanned PDFs.
+            await UpsertContactAsync(pmsEvent, cleanPhoneEarly, firstNameEarly, lastNameEarly);
+
             var rules = await _ruleRepository.GetEnabledRulesForEventTypeAsync(pmsEvent.EventType);
             var templates = await _templateRepository.GetAllAsync();
             var match = AutomationRuleMatcher.Match(pmsEvent, rules, templates);
 
             if (match is null)
             {
-                _logger.LogWarning("No matching rule for event type: {EventType}", pmsEvent.EventType);
+                _logger.LogWarning("No matching rule for event type: {EventType} — contact saved but no WhatsApp message will be sent.", pmsEvent.EventType);
                 await _eventLog.LogAsync(pmsEvent);
                 return;
             }
@@ -149,13 +161,12 @@ public sealed class HotelWorker : BackgroundService
             // Build the ParametersJson dictionary
             var paramDict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
             
-            // Core guest info
-            var guestName = pmsEvent.GuestName?.Trim() ?? "";
+            // Core guest info (reuse the name parts already computed above)
+            var guestName = guestNameEarly;
+            var firstName = firstNameEarly;
+            var lastName  = lastNameEarly;
+            var cleanPhone = cleanPhoneEarly;
             paramDict["Name"] = guestName;
-            
-            var nameParts = guestName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var firstName = nameParts.Length > 0 ? nameParts[0] : "";
-            var lastName = nameParts.Length > 1 ? string.Join(" ", nameParts.Skip(1)) : "";
             paramDict["First Name"] = firstName;
             paramDict["FirstName"] = firstName;
             paramDict["Last Name"] = lastName;
@@ -193,7 +204,7 @@ public sealed class HotelWorker : BackgroundService
                 catch { }
             }
 
-            var cleanPhone = new string((pmsEvent.PhoneNumber ?? "").Where(char.IsDigit).ToArray());
+            // cleanPhone already declared above from cleanPhoneEarly
 
             // Enqueue into ScheduledJobs to support Drip Campaigns (Phase 1)
             var job = new ScheduledJob
@@ -231,82 +242,103 @@ public sealed class HotelWorker : BackgroundService
             
             await _eventLog.LogAsync(pmsEvent, null); // We don't have OutboxMessageId yet
 
-            // Save or Update Contact
-            if (!string.IsNullOrWhiteSpace(cleanPhone) && !string.IsNullOrWhiteSpace(pmsEvent.GuestName))
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var contactRepo = scope.ServiceProvider.GetRequiredService<ContactRepository>();
-                
-                var customFields = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-
-                 if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
-                 {
-                     try
-                     {
-                         var rawDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(pmsEvent.RawPayload);
-                         if (rawDict != null)
-                         {
-                             foreach (var kv in rawDict)
-                             {
-                                 var valStr = kv.Value.ValueKind == System.Text.Json.JsonValueKind.Null ? "" : (kv.Value.ToString() ?? "");
-                                 customFields[kv.Key] = valStr;
-                             }
-                         }
-                     }
-                     catch { }
-                 }
-
-                if (!customFields.ContainsKey("Room No") && !string.IsNullOrEmpty(pmsEvent.RoomNumber))
-                {
-                    customFields["Room No"] = pmsEvent.RoomNumber;
-                }
-
-                var existingContact = await contactRepo.GetByPhoneNumberAsync(cleanPhone);
-                if (existingContact == null)
-                {
-                    await contactRepo.InsertAsync(new Contact
-                    {
-                        PhoneNumber = cleanPhone,
-                        FirstName = firstName,
-                        LastName = lastName,
-                        CustomFieldsJson = System.Text.Json.JsonSerializer.Serialize(customFields),
-                        CreatedAt = DateTimeOffset.UtcNow,
-                        UpdatedAt = DateTimeOffset.UtcNow
-                    });
-                    _logger.LogInformation("Added new contact: {Name} ({Phone}) with dynamic fields", pmsEvent.GuestName, cleanPhone);
-                }
-                else
-                {
-                    var mergedCustomFields = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(existingContact.CustomFieldsJson ?? "{}") ?? new Dictionary<string, object>();
-                    foreach (var kv in customFields)
-                    {
-                        mergedCustomFields[kv.Key] = kv.Value;
-                    }
-
-                    var updatedContact = new Contact
-                    {
-                        Id = existingContact.Id,
-                        PhoneNumber = existingContact.PhoneNumber,
-                        FirstName = firstName,
-                        LastName = lastName,
-                        CategoryId = existingContact.CategoryId,
-                        CustomFieldsJson = System.Text.Json.JsonSerializer.Serialize(mergedCustomFields),
-                        CreatedAt = existingContact.CreatedAt,
-                        UpdatedAt = DateTimeOffset.UtcNow,
-                        UpdateCount = existingContact.UpdateCount,
-                        CheckInCount = existingContact.CheckInCount,
-                        AverageStayDays = existingContact.AverageStayDays,
-                        IsVip = existingContact.IsVip
-                    };
-                    await contactRepo.UpdateAsync(existingContact.Id, updatedContact);
-                }
-            }
+            // Contact already saved above (unconditionally before rule matching)
 
             _logger.LogInformation("ScheduledJob {Id} queued for {Phone} to execute in {Delay} minutes", job.Id, cleanPhone, matchedRule.DelayMinutes);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling PmsEvent {EventType}", pmsEvent.EventType);
+        }
+    }
+
+    /// <summary>
+    /// Always creates or updates a contact from a PmsEvent.
+    /// Called unconditionally on every PDF scan — before rule matching —
+    /// so the Contacts tab is always populated regardless of WhatsApp setup.
+    /// </summary>
+    private async Task UpsertContactAsync(PmsEvent pmsEvent, string cleanPhone, string firstName, string lastName)
+    {
+        if (string.IsNullOrWhiteSpace(cleanPhone) || string.IsNullOrWhiteSpace(pmsEvent.GuestName))
+        {
+            _logger.LogWarning("UpsertContact: skipping — phone or guest name is empty.");
+            return;
+        }
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var contactRepo = scope.ServiceProvider.GetRequiredService<ContactRepository>();
+
+            // Build custom fields from all extracted PDF data (RawPayload)
+            var customFields = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
+            {
+                try
+                {
+                    var rawDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(pmsEvent.RawPayload);
+                    if (rawDict != null)
+                    {
+                        foreach (var kv in rawDict)
+                        {
+                            var valStr = kv.Value.ValueKind == System.Text.Json.JsonValueKind.Null
+                                ? "" : (kv.Value.ToString() ?? "");
+                            if (!string.IsNullOrWhiteSpace(valStr))
+                                customFields[kv.Key] = valStr;
+                        }
+                    }
+                }
+                catch { /* ignore malformed payload */ }
+            }
+
+            // Always include room number from the top-level event field
+            if (!string.IsNullOrEmpty(pmsEvent.RoomNumber))
+                customFields["Room No"] = pmsEvent.RoomNumber;
+
+            var existingContact = await contactRepo.GetByPhoneNumberAsync(cleanPhone);
+            if (existingContact == null)
+            {
+                await contactRepo.InsertAsync(new Contact
+                {
+                    PhoneNumber      = cleanPhone,
+                    FirstName        = firstName,
+                    LastName         = lastName,
+                    CustomFieldsJson = System.Text.Json.JsonSerializer.Serialize(customFields),
+                    CreatedAt        = DateTimeOffset.UtcNow,
+                    UpdatedAt        = DateTimeOffset.UtcNow
+                });
+                _logger.LogInformation("Contact CREATED: {Name} ({Phone})", pmsEvent.GuestName, cleanPhone);
+            }
+            else
+            {
+                // Merge: existing fields are overwritten only when the new value is non-empty
+                var merged = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(
+                    existingContact.CustomFieldsJson ?? "{}") ?? new Dictionary<string, object>();
+                foreach (var kv in customFields)
+                    merged[kv.Key] = kv.Value;
+
+                await contactRepo.UpdateAsync(existingContact.Id, new Contact
+                {
+                    Id               = existingContact.Id,
+                    PhoneNumber      = existingContact.PhoneNumber,
+                    FirstName        = firstName,
+                    LastName         = lastName,
+                    CategoryId       = existingContact.CategoryId,
+                    CustomFieldsJson = System.Text.Json.JsonSerializer.Serialize(merged),
+                    CreatedAt        = existingContact.CreatedAt,
+                    UpdatedAt        = DateTimeOffset.UtcNow,
+                    UpdateCount      = existingContact.UpdateCount,
+                    CheckInCount     = existingContact.CheckInCount,
+                    AverageStayDays  = existingContact.AverageStayDays,
+                    IsVip            = existingContact.IsVip
+                });
+                _logger.LogInformation("Contact UPDATED: {Name} ({Phone})", pmsEvent.GuestName, cleanPhone);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "UpsertContact: failed for {Phone}", cleanPhone);
         }
     }
 

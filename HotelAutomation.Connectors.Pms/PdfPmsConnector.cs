@@ -66,6 +66,14 @@ public sealed class PdfPmsConnector : IPmsEventSource
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        // ── Resolve {AppDir} → the directory containing the running executable ──
+        // This allows appsettings.json to use "{AppDir}\\PDFs" and have it
+        // automatically resolve to e.g. C:\Program Files\Scalifts\PDFs
+        var appDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        _options.WatchFolder       = _options.WatchFolder.Replace("{AppDir}", appDir, StringComparison.OrdinalIgnoreCase);
+        _options.PrinterOutputFile = _options.PrinterOutputFile.Replace("{AppDir}", appDir, StringComparison.OrdinalIgnoreCase);
+        _options.ArchiveFolder     = _options.ArchiveFolder.Replace("{AppDir}", appDir, StringComparison.OrdinalIgnoreCase);
+
         // Normalize paths for macOS/Linux dev environments while preserving Windows compatibility
         _options.WatchFolder = NormalizePath(_options.WatchFolder);
         _options.ArchiveFolder = NormalizePath(_options.ArchiveFolder);
@@ -253,28 +261,22 @@ public sealed class PdfPmsConnector : IPmsEventSource
     /// </summary>
     private static string BuildGuestFileName(Core.Models.PmsEvent pmsEvent)
     {
-        var datePart    = DateTimeOffset.Now.ToString("yyyyMMdd");
-        var guestPart   = SanitizeFileName(pmsEvent.GuestName);
-        var roomPart    = string.IsNullOrWhiteSpace(pmsEvent.RoomNumber)
-                              ? "" : $"_Room{SanitizeFileName(pmsEvent.RoomNumber)}";
-        var invoicePart = string.IsNullOrWhiteSpace(pmsEvent.BookingReference)
-                              ? "" : $"_{SanitizeFileName(pmsEvent.BookingReference)}";
-
-        var regPart = "";
+        var datePart = DateTimeOffset.Now.ToString("yyyyMMdd");
+        var regNo = "Unknown";
         try
         {
             if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
             {
                 var payload = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(pmsEvent.RawPayload);
-                if (payload != null && payload.TryGetValue("Registration No", out var regNo) && !string.IsNullOrWhiteSpace(regNo))
+                if (payload != null && payload.TryGetValue("Registration No", out var extractedRegNo) && !string.IsNullOrWhiteSpace(extractedRegNo))
                 {
-                    regPart = $"_Reg{SanitizeFileName(regNo)}";
+                    regNo = SanitizeFileName(extractedRegNo);
                 }
             }
         }
         catch { }
 
-        return $"{guestPart}{roomPart}{invoicePart}{regPart}_{datePart}.pdf";
+        return $"{regNo}_{datePart}.pdf";
     }
 
     private static string SanitizeFileName(string? input)

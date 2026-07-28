@@ -59,7 +59,10 @@ public sealed class VirtualPrinterInstaller : IHostedService
         }
 
         var printerName = _options.VirtualPrinterName;
-        var outputFile  = _options.PrinterOutputFile;
+
+        // Resolve the {AppDir} placeholder so the printer port points to the real installed path
+        var appDir     = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var outputFile = _options.PrinterOutputFile.Replace("{AppDir}", appDir, StringComparison.OrdinalIgnoreCase);
 
         if (IsPrinterAlreadyInstalled(printerName))
         {
@@ -142,7 +145,7 @@ public sealed class VirtualPrinterInstaller : IHostedService
             $"    -Name '{escapedName}' `",
             $"    -DriverName '{PdfDriverName}' `",
             $"    -PortName '{portName}' `",
-            "    -Comment 'Hotel Sankalp Retreat — auto-installed by HotelAutomation app'",
+            "    -Comment 'Scalifts — auto-installed by Scalifts app'",
             "",
             $"Write-Host 'Printer installed: {escapedName}'"
         );

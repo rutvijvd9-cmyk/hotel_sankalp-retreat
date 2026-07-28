@@ -11,6 +11,10 @@
     <OutputType>WinExe</OutputType>
     <!-- Suppress the default worker service launchSettings; we control startup explicitly -->
     <RootNamespace>HotelAutomation.Worker</RootNamespace>
+    <!-- Windows Forms: required for NotifyIcon (system tray) -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Embed hotel.ico as the exe icon shown in Explorer / taskbar -->
+    <ApplicationIcon>hotel.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,6 +31,11 @@
     <ProjectReference Include="..\HotelAutomation.Connectors.WhatsApp\HotelAutomation.Connectors.WhatsApp.csproj" />
     <ProjectReference Include="..\HotelAutomation.Connectors.Pms\HotelAutomation.Connectors.Pms.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Include hotel.ico so it is copied to the publish output folder -->
+    <Content Include="hotel.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+  </ItemGroup>
+
   <Target Name="CopyReactApp" BeforeTargets="Build">
     <ItemGroup>
       <ReactAppFiles Include="..\HotelAutomation.UI\dist\**\*.*" />
