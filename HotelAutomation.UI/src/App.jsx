@@ -3540,6 +3540,10 @@ export default function App() {
       );
     }
 
+    if (activeTab === 'settings') {
+      return <SettingsTab />;
+    }
+
     return null;
   };
 
@@ -3681,6 +3685,13 @@ export default function App() {
             </div>
           )}
 
+          {/* Settings tab (Owner & Developer only) */}
+          {(user.role === 'Owner' || user.role === 'Developer') && (
+            <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
+              <Settings size={20} /> Settings
+            </div>
+          )}
+
           <div className="sidebar-divider" style={{ margin: '8px 16px', borderBottom: '1px solid var(--border)' }}></div>
           {hasAccess('manual-checkin') && (
             <div className={`nav-item ${activeTab === 'manual-checkin' ? 'active' : ''}`} onClick={() => setActiveTab('manual-checkin')}>
@@ -3702,7 +3713,7 @@ export default function App() {
               <Menu size={20} />
             </button>
             <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>
-              {activeTab === 'rules' ? 'Automation' : activeTab === 'users' ? 'User Accounts' : activeTab.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+              {activeTab === 'rules' ? 'Automation' : activeTab === 'users' ? 'User Accounts' : activeTab === 'settings' ? 'Settings' : activeTab.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
             </h2>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -3842,3 +3853,166 @@ export default function App() {
     </div>
   );
 }
+
+const SettingsTab = () => {
+  const [settings, setSettings] = React.useState({
+    AccessToken: '',
+    PhoneNumberId: '',
+    ApiVersion: 'v25.0',
+    VerifyToken: '',
+    WhatsAppBusinessAccountId: ''
+  });
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+  const [message, setMessage] = React.useState(null);
+
+  React.useEffect(() => {
+    fetch('/api/settings/whatsapp')
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to load settings');
+        return res.json();
+      })
+      .then(data => {
+        setSettings({
+          AccessToken: data.AccessToken || data.accessToken || '',
+          PhoneNumberId: data.PhoneNumberId || data.phoneNumberId || '',
+          ApiVersion: data.ApiVersion || data.apiVersion || 'v25.0',
+          VerifyToken: data.VerifyToken || data.verifyToken || '',
+          WhatsAppBusinessAccountId: data.WhatsAppBusinessAccountId || data.whatsAppBusinessAccountId || ''
+        });
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setMessage({ type: 'error', text: 'Error loading settings from server.' });
+        setLoading(false);
+      });
+  }, []);
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    try {
+      const res = await fetch('/api/settings/whatsapp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      });
+      if (!res.ok) throw new Error('Failed to save settings');
+      setMessage({ type: 'success', text: 'Settings saved successfully! The C# Backend will use these credentials automatically.' });
+    } catch (err) {
+      console.error(err);
+      setMessage({ type: 'error', text: 'Failed to save settings. Please check backend connection.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div style={{ padding: '40px', display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ width: '32px', height: '32px', borderRadius: '50%', border: '3px solid var(--border-color)', borderTopColor: 'var(--primary)', animation: 'spin 1s linear infinite' }}></div>
+        <p style={{ color: 'var(--text-secondary)' }}>Loading settings...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '24px', maxWidth: '800px' }}>
+      <div style={{ marginBottom: '24px' }}>
+        <h2 style={{ margin: '0 0 8px 0', fontWeight: 700, color: 'var(--text-primary)' }}>Meta Integration Settings</h2>
+        <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>
+          Configure connection parameters for Meta/WhatsApp Business Cloud API. These settings are persisted in the database and applied dynamically without restarting the application.
+        </p>
+      </div>
+
+      {message && (
+        <div style={{
+          padding: '12px 16px',
+          borderRadius: '6px',
+          marginBottom: '24px',
+          fontSize: '14px',
+          border: '1px solid',
+          backgroundColor: message.type === 'success' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+          color: message.type === 'success' ? '#10b981' : '#ef4444',
+          borderColor: message.type === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}>
+          {message.type === 'success' ? '✅' : '❌'} {message.text}
+        </div>
+      )}
+
+      <form onSubmit={handleSave} className="premium-card" style={{ padding: '28px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+          <div className="form-group">
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>WhatsApp Business Account ID (WABA ID)</label>
+            <input
+              type="text"
+              value={settings.WhatsAppBusinessAccountId}
+              onChange={e => setSettings({ ...settings, WhatsAppBusinessAccountId: e.target.value })}
+              placeholder="e.g. 1493788272767952"
+              required
+              style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+            />
+          </div>
+
+          <div className="form-group">
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Phone Number ID</label>
+            <input
+              type="text"
+              value={settings.PhoneNumberId}
+              onChange={e => setSettings({ ...settings, PhoneNumberId: e.target.value })}
+              placeholder="e.g. 1190623417473092"
+              required
+              style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+          <div className="form-group">
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Graph API Version</label>
+            <input
+              type="text"
+              value={settings.ApiVersion}
+              onChange={e => setSettings({ ...settings, ApiVersion: e.target.value })}
+              placeholder="e.g. v25.0"
+              required
+              style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+            />
+          </div>
+
+          <div className="form-group">
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Webhook Verify Token</label>
+            <input
+              type="text"
+              value={settings.VerifyToken}
+              onChange={e => setSettings({ ...settings, VerifyToken: e.target.value })}
+              placeholder="Your custom webhook verification string"
+              style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+            />
+          </div>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: '28px' }}>
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>System User Access Token</label>
+          <textarea
+            value={settings.AccessToken}
+            onChange={e => setSettings({ ...settings, AccessToken: e.target.value })}
+            placeholder="Paste your Meta Permanent Access Token here..."
+            required
+            rows={4}
+            style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)', resize: 'vertical', fontFamily: 'monospace', fontSize: '13px' }}
+          />
+        </div>
+
+        <button type="submit" disabled={saving} className="btn btn-primary" style={{ padding: '10px 24px', borderRadius: '6px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {saving ? 'Saving...' : 'Save Settings'}
+        </button>
+      </form>
+    </div>
+  );
+};

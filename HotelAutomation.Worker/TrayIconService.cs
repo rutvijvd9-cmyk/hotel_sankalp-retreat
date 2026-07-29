@@ -1,3 +1,4 @@
+#if WINDOWS
 using System.Diagnostics;
 using System.Windows.Forms;
 
@@ -163,3 +164,34 @@ public sealed class TrayIconService : IHostedService, IDisposable
         _trayIcon?.Dispose();
     }
 }
+#else
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace HotelAutomation.Worker;
+
+public sealed class TrayIconService : IHostedService, IDisposable
+{
+    public TrayIconService(IHostApplicationLifetime lifetime, ILogger<TrayIconService> logger)
+    {
+    }
+
+    public static void ShowNotification(string title, string text)
+    {
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+
+    public void Dispose()
+    {
+    }
+}
+#endif

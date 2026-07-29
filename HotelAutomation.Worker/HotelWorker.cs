@@ -1,8 +1,10 @@
 namespace HotelAutomation.Worker;
 
+using Dapper;
 using HotelAutomation.Core.Engine;
 using HotelAutomation.Core.Interfaces;
 using HotelAutomation.Core.Models;
+using HotelAutomation.Data;
 using HotelAutomation.Data.Repositories;
 
 /// <summary>
@@ -19,6 +21,7 @@ public sealed class HotelWorker : BackgroundService
     private readonly UnsubscribedContactRepository _unsubRepo;
     private readonly ILogger<HotelWorker> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly SqliteConnectionFactory _factory;
     private static readonly SemaphoreSlim _dedupLock = new(1, 1);
 
     public HotelWorker(
@@ -30,7 +33,8 @@ public sealed class HotelWorker : BackgroundService
         JobRepository jobRepository,
         UnsubscribedContactRepository unsubRepo,
         ILogger<HotelWorker> logger,
-        IServiceScopeFactory scopeFactory)
+        IServiceScopeFactory scopeFactory,
+        SqliteConnectionFactory factory)
     {
         _pmsSource = pmsSource;
         _ruleRepository = ruleRepository;
@@ -41,6 +45,7 @@ public sealed class HotelWorker : BackgroundService
         _unsubRepo = unsubRepo;
         _logger = logger;
         _scopeFactory = scopeFactory;
+        _factory = factory;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -247,6 +252,20 @@ public sealed class HotelWorker : BackgroundService
                 }
 
                 await _jobRepository.AddAsync(job);
+
+                // Track step-level execution: increment TRIGGER count
+                try
+                {
+                    using var countConn = await _factory.OpenAsync();
+                    await countConn.ExecuteAsync(@"
+                        INSERT INTO RuleExecutionCounts (RuleId, StepType, Count, LastAt)
+                        VALUES (@RuleId, 'TRIGGER', 1, @Now)
+                        ON CONFLICT(RuleId, StepType) DO UPDATE SET
+                            Count = Count + 1,
+                            LastAt = excluded.LastAt",
+                        new { RuleId = matchedRule.Id, Now = DateTimeOffset.UtcNow.ToString("o") });
+                }
+                catch { /* non-critical */ }
             }
             finally
             {

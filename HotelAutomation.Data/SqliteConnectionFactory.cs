@@ -372,5 +372,21 @@ public sealed class SqliteConnectionFactory
             await migCmd.ExecuteNonQueryAsync(ct);
         }
         catch { }
+
+        // RuleExecutionCounts table — tracks per-step-type execution counts per rule
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS RuleExecutionCounts (
+                    RuleId    INTEGER NOT NULL,
+                    StepType  TEXT    NOT NULL,
+                    Count     INTEGER NOT NULL DEFAULT 0,
+                    LastAt    TEXT    NULL,
+                    PRIMARY KEY (RuleId, StepType)
+                );";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
     }
 }

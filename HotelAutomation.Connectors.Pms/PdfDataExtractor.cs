@@ -1,6 +1,9 @@
+#if WINDOWS
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 using Windows.Media.Ocr;
+#endif
+
 
 namespace HotelAutomation.Connectors.Pms;
 
@@ -511,6 +514,7 @@ public sealed class PdfDataExtractor
 
     public static async Task<string> OcrPdfImagesAsync(string pdfPath)
     {
+#if WINDOWS
         var sb = new StringBuilder();
         var ocrEngine = OcrEngine.TryCreateFromUserProfileLanguages();
         if (ocrEngine == null)
@@ -586,6 +590,10 @@ public sealed class PdfDataExtractor
             }
         }
         return sb.ToString();
+#else
+        await Task.CompletedTask;
+        throw new PlatformNotSupportedException("OCR is only supported on Windows.");
+#endif
     }
 
     private static (string Prefix, string FirstName, string LastName) ParseGuestDetails(string text)

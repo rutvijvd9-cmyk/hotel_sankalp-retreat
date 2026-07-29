@@ -104,6 +104,24 @@ public sealed class OutboxProcessor : BackgroundService
                 {
                     await _outboxRepository.UpdateStatusAsync(
                         messageToProcess.Id, "Sent", messageToProcess.RetryCount, DateTimeOffset.UtcNow, externalId, null, ct);
+
+                    // Track WHATSAPP step execution count
+                    if (messageToProcess.RuleId.HasValue)
+                    {
+                        try
+                        {
+                            using var countConn = await _dbFactory.OpenAsync(ct);
+                            await Dapper.SqlMapper.ExecuteAsync(countConn, @"
+                                INSERT INTO RuleExecutionCounts (RuleId, StepType, Count, LastAt)
+                                VALUES (@RuleId, 'WHATSAPP', 1, @Now)
+                                ON CONFLICT(RuleId, StepType) DO UPDATE SET
+                                    Count = Count + 1,
+                                    LastAt = excluded.LastAt",
+                                new { RuleId = messageToProcess.RuleId.Value, Now = DateTimeOffset.UtcNow.ToString("o") });
+                        }
+                        catch { /* non-critical */ }
+                    }
+
                     
                     string guestName = "Guest";
                     try

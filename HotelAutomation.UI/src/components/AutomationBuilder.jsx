@@ -184,10 +184,11 @@ function AddBtn({ onAdd }) {
   );
 }
 
-function StepCard({ step, onUpdate, onDelete, canDelete = true, allTriggerOptions = [] }) {
+function StepCard({ step, onUpdate, onDelete, canDelete = true, allTriggerOptions = [], stepCounts = {} }) {
   const [isExpanded, setIsExpanded] = useState(true);
   const cfg = STEP_TYPES[step.stepType] || STEP_TYPES.WHATSAPP;
   const Icon = cfg.icon;
+  const execCount = stepCounts[step.stepType]?.count ?? null;
 
   return (
     <div style={{
@@ -205,6 +206,7 @@ function StepCard({ step, onUpdate, onDelete, canDelete = true, allTriggerOption
         padding: '0.7rem 0.9rem',
         display: 'flex', alignItems: 'center', gap: '0.65rem', cursor: 'pointer',
         userSelect: 'none',
+        position: 'relative',
       }} onClick={() => setIsExpanded(e => !e)}>
         <div style={{ width: 32, height: 32, borderRadius: 8, background: `${cfg.color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <Icon size={15} color={cfg.color} />
@@ -223,7 +225,26 @@ function StepCard({ step, onUpdate, onDelete, canDelete = true, allTriggerOption
             {step.stepType === 'STOP' && 'Workflow ends'}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.2rem', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+          {/* Execution count badge */}
+          {execCount !== null && step.stepType !== 'STOP' && (
+            <span
+              title={`Executed ${execCount} time${execCount !== 1 ? 's' : ''}`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                minWidth: '22px', height: '22px', padding: '0 6px',
+                borderRadius: '999px',
+                background: execCount > 0 ? cfg.color : 'rgba(100,116,139,0.18)',
+                color: execCount > 0 ? '#fff' : 'var(--text-sub, #64748b)',
+                fontSize: '0.68rem', fontWeight: 700,
+                boxShadow: execCount > 0 ? `0 1px 4px ${cfg.color}55` : 'none',
+                letterSpacing: '0.01em',
+                transition: 'all 0.2s',
+              }}
+            >
+              {execCount}
+            </span>
+          )}
           {isExpanded ? <ChevronUp size={13} color="var(--text-sub, #64748b)" /> : <ChevronDown size={13} color="var(--text-sub, #64748b)" />}
           {canDelete && step.stepType !== 'TRIGGER' && (
             <button
@@ -500,6 +521,7 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
   const [ruleDescription, setRuleDescription] = useState(initialRule ? (initialRule.Description || initialRule.description || '') : '');
   const [dynamicHeaders, setDynamicHeaders] = React.useState([]);
   const [templates, setTemplates] = React.useState([]);
+  const [stepCounts, setStepCounts] = React.useState({});
   
   const [steps, setSteps] = useState(() => {
     if (initialRule) {
@@ -603,6 +625,15 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
         setSteps(prev => prev.map(s => s.stepType === 'WHATSAPP' ? { ...s, templatesList: tpl } : s));
       })
       .catch(e => console.log(e));
+
+    // Fetch per-step execution counts for existing rules
+    const ruleId = initialRule ? (initialRule.Id || initialRule.id) : null;
+    if (ruleId) {
+      fetch(`/api/rules/${ruleId}/step-counts`)
+        .then(r => r.json())
+        .then(data => setStepCounts(data || {}))
+        .catch(() => {});
+    }
   }, []);
 
   const allTriggerOptions = [
@@ -815,6 +846,7 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
                 onDelete={deleteStep} 
                 canDelete={step.stepType !== 'TRIGGER'} 
                 allTriggerOptions={allTriggerOptions}
+                stepCounts={stepCounts}
               />
               {index < steps.length - 1 && !isStop && <AddBtn onAdd={(type) => addStep(type, index)} />}
             </React.Fragment>

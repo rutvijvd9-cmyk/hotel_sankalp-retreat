@@ -78,6 +78,7 @@ builder.Services.AddSingleton<LinkShortenerService>();
 builder.Services.AddSingleton<EventLogRepository>();
 builder.Services.AddSingleton<JobRepository>();
 builder.Services.AddSingleton<CategoryRepository>();
+builder.Services.AddSingleton<AppConfigRepository>();
 builder.Services.AddSingleton<ContactRepository>();
 builder.Services.AddSingleton<CsvImportService>();
 builder.Services.AddSingleton<BroadcastRepository>();
@@ -110,6 +111,7 @@ builder.Services.AddAuthorization();
 // ── WhatsApp Connector ────────────────────────────────────────────────────────
 builder.Services.Configure<WhatsAppOptions>(
     builder.Configuration.GetSection(WhatsAppOptions.SectionName));
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<WhatsAppOptions>, HotelAutomation.Worker.Services.ConfigureWhatsAppOptions>();
 
 builder.Services.AddHttpClient<WhatsAppApiClient>();
 builder.Services.AddSingleton<IMessageChannel, WhatsAppMessageSender>();
@@ -172,10 +174,9 @@ builder.Services.AddHostedService<CampaignProcessor>();
 builder.Services.AddHostedService<DateTriggerProcessor>();
 builder.Services.AddHostedService<WebhookRelayPoller>();
 
-// ── System Tray Icon (Windows) ────────────────────────────────────────────────
-// Shows a notification-area icon so the user knows the server is running.
-// Double-click or right-click → Open Dashboard opens the browser.
+#if WINDOWS
 builder.Services.AddHostedService<TrayIconService>();
+#endif
 
 var app = builder.Build();
 app.UseCors();
@@ -1278,6 +1279,21 @@ app.MapGet("/api/rules/{id}/failures", async (int id, SqliteConnectionFactory fa
         "SELECT ToPhoneNumber, FailureReason, CreatedAt FROM OutboxMessages WHERE RuleId = @id AND Status = 'Failed' ORDER BY CreatedAt DESC LIMIT 100", 
         new { id });
     return Results.Ok(failures);
+});
+
+// Per-step execution counts for a rule
+app.MapGet("/api/rules/{id}/step-counts", async (int id, SqliteConnectionFactory factory) =>
+{
+    using var conn = await factory.OpenAsync();
+    var rows = await conn.QueryAsync(
+        "SELECT StepType, Count, LastAt FROM RuleExecutionCounts WHERE RuleId = @Id",
+        new { Id = id });
+    // Convert to a dict keyed by StepType for easy frontend consumption
+    var result = rows.ToDictionary(
+        r => (string)r.StepType,
+        r => new { count = (long)r.Count, lastAt = (string?)r.LastAt }
+    );
+    return Results.Ok(result);
 });
 
 app.MapGet("/api/rules/{id}/analytics-details", async (int id, SqliteConnectionFactory factory) => 
@@ -2386,7 +2402,35 @@ app.MapPost("/api/integrations/pms-mappings", async (HotelAutomation.Core.Models
 app.MapDelete("/api/integrations/pms-mappings/{id}", async (int id, PmsMappingRepository repo) => 
 {
     await repo.DeleteAsync(id);
-    return Results.Ok();
+});
+
+
+app.MapGet("/api/settings/whatsapp", async (AppConfigRepository repo, Microsoft.Extensions.Options.IOptions<WhatsAppOptions> options) =>
+{
+    var accessToken = await repo.GetValueAsync("WhatsApp_AccessToken") ?? options.Value.AccessToken;
+    var phoneNumberId = await repo.GetValueAsync("WhatsApp_PhoneNumberId") ?? options.Value.PhoneNumberId;
+    var apiVersion = await repo.GetValueAsync("WhatsApp_ApiVersion") ?? options.Value.ApiVersion;
+    var verifyToken = await repo.GetValueAsync("WhatsApp_VerifyToken") ?? options.Value.VerifyToken;
+    var wabaId = await repo.GetValueAsync("WhatsApp_WhatsAppBusinessAccountId") ?? options.Value.WhatsAppBusinessAccountId;
+
+    return Results.Ok(new
+    {
+        AccessToken = accessToken,
+        PhoneNumberId = phoneNumberId,
+        ApiVersion = apiVersion,
+        VerifyToken = verifyToken,
+        WhatsAppBusinessAccountId = wabaId
+    });
+});
+
+app.MapPost("/api/settings/whatsapp", async (AppConfigDto dto, AppConfigRepository repo) =>
+{
+    await repo.SetValueAsync("WhatsApp_AccessToken", dto.AccessToken ?? "");
+    await repo.SetValueAsync("WhatsApp_PhoneNumberId", dto.PhoneNumberId ?? "");
+    await repo.SetValueAsync("WhatsApp_ApiVersion", dto.ApiVersion ?? "");
+    await repo.SetValueAsync("WhatsApp_VerifyToken", dto.VerifyToken ?? "");
+    await repo.SetValueAsync("WhatsApp_WhatsAppBusinessAccountId", dto.WhatsAppBusinessAccountId ?? "");
+    return Results.Ok(new { message = "Settings saved successfully" });
 });
 
 app.MapPost("/api/webhooks/pms-events", async (
@@ -2530,3 +2574,4 @@ public record ChangePasswordRequest(string OldPassword, string NewPassword);
 public record UpdateRoleRequest(string Role);
 public record ResetPasswordRequest(string Password);
 public record SavePermissionRequest(string Role, string Module, bool IsEnabled);
+public record AppConfigDto(string? AccessToken, string? PhoneNumberId, string? ApiVersion, string? VerifyToken, string? WhatsAppBusinessAccountId);
