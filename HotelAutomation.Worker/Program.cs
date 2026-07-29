@@ -2009,6 +2009,8 @@ app.MapPost("/api/event-trigger/{slug}", async (
     if (!incomingFields.TryGetValue("phone", out var phone) && !incomingFields.TryGetValue("PhoneNumber", out phone))
         return Results.BadRequest(new { error = "A 'phone' or 'PhoneNumber' field is required in the request body." });
 
+    phone = HotelAutomation.Core.Helpers.PhoneHelper.NormalizePhone(phone);
+
     if (!incomingFields.TryGetValue("name", out var guestName) && !incomingFields.TryGetValue("GuestName", out guestName))
         guestName = "Guest";
 

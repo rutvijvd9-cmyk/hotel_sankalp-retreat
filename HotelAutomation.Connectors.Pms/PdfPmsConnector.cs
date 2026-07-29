@@ -235,6 +235,21 @@ public sealed class PdfPmsConnector : IPmsEventSource
                 return;
             }
 
+            // Check if Departure Date matches Current Date -> activate CheckOut automation
+            if (!string.IsNullOrWhiteSpace(pmsEvent.CheckOutDate))
+            {
+                try
+                {
+                    var todayStr = DateTime.Now.ToString("dd/MM/yyyy");
+                    if (string.Equals(pmsEvent.CheckOutDate.Trim(), todayStr, StringComparison.OrdinalIgnoreCase))
+                    {
+                        pmsEvent = pmsEvent with { EventType = "CheckOut" };
+                        _logger.LogInformation("PDF Bridge: Departure date '{DeptDate}' matches current date '{Today}' — CheckOut automation activated.", pmsEvent.CheckOutDate, todayStr);
+                    }
+                }
+                catch { }
+            }
+
             FilesProcessed++;
             LastProcessedAt = DateTimeOffset.Now;
             LastError       = null;

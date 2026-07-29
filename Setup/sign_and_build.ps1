@@ -8,7 +8,7 @@ $PfxPass      = ConvertTo-SecureString -String "HotelSankalp2025!" -Force -AsPla
 $PublishDir   = "$Root\publish_output"
 $OutDir       = "$Root\installer_output"
 $ExeToSign    = "$PublishDir\HotelAutomation.Worker.exe"
-$InstallerExe = "$OutDir\HotelSankalpRetreat_Setup.exe"
+$InstallerExe = "$OutDir\Scalifts_Setup.exe"
 
 # --- Step 1: Create self-signed cert -----------------------------------------
 Write-Host ""
@@ -110,4 +110,4 @@ Write-Host "==========================================================" -Foregro
 Write-Host ""
 Write-Host "TO USE ON THIS MACHINE (no SmartScreen warning):" -ForegroundColor Cyan
 Write-Host "  1. Run Setup\trust_on_this_machine.ps1 as Administrator" -ForegroundColor White
-Write-Host "  2. Then double-click HotelSankalpRetreat_Setup.exe" -ForegroundColor White
+Write-Host "  2. Then double-click Scalifts_Setup.exe" -ForegroundColor White

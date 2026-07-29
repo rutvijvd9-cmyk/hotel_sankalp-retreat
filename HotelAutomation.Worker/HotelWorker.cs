@@ -67,7 +67,7 @@ public sealed class HotelWorker : BackgroundService
             var namePartsEarly = guestNameEarly.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             var firstNameEarly = namePartsEarly.Length > 0 ? namePartsEarly[0] : "";
             var lastNameEarly  = namePartsEarly.Length > 1 ? string.Join(" ", namePartsEarly.Skip(1)) : "";
-            var cleanPhoneEarly = new string((pmsEvent.PhoneNumber ?? "").Where(char.IsDigit).ToArray());
+            var cleanPhoneEarly = HotelAutomation.Core.Helpers.PhoneHelper.NormalizePhone(pmsEvent.PhoneNumber);
 
             // ── ALWAYS save/update contact on every PMS event ─────────────────
             // This runs unconditionally — even when no automation rule matches,
@@ -116,7 +116,7 @@ public sealed class HotelWorker : BackgroundService
                         var cfName   = cond.TryGetValue("CustomFieldName", out var cfEl)  ? cfEl.GetString()  ?? "" : "";
 
                         // Load contact to check field values
-                        var cleanPhoneForCond = new string((pmsEvent.PhoneNumber ?? "").Where(char.IsDigit).ToArray());
+                        var cleanPhoneForCond = HotelAutomation.Core.Helpers.PhoneHelper.NormalizePhone(pmsEvent.PhoneNumber);
                         using var condScope = _scopeFactory.CreateScope();
                         var condContactRepo = condScope.ServiceProvider.GetRequiredService<HotelAutomation.Data.Repositories.ContactRepository>();
                         var condContact = await condContactRepo.GetByPhoneNumberAsync(cleanPhoneForCond);
@@ -310,8 +310,15 @@ public sealed class HotelWorker : BackgroundService
                 customFields["Room No"] = pmsEvent.RoomNumber;
 
             var existingContact = await contactRepo.GetByPhoneNumberAsync(cleanPhone);
+            bool isCheckOutEvent = string.Equals(pmsEvent.EventType, "CheckOut", StringComparison.OrdinalIgnoreCase) ||
+                                   string.Equals(pmsEvent.EventType, "PMS_CHECKOUT", StringComparison.OrdinalIgnoreCase);
+            bool isCheckInEvent = string.Equals(pmsEvent.EventType, "CheckIn", StringComparison.OrdinalIgnoreCase) ||
+                                  string.Equals(pmsEvent.EventType, "PMS_CHECKIN", StringComparison.OrdinalIgnoreCase);
+
             if (existingContact == null)
             {
+                customFields["Stage"] = isCheckOutEvent ? "Checked Out" : "Checked In";
+                customFields["AutomationCount"] = 1;
                 await contactRepo.InsertAsync(new Contact
                 {
                     PhoneNumber      = cleanPhone,
@@ -319,9 +326,10 @@ public sealed class HotelWorker : BackgroundService
                     LastName         = lastName,
                     CustomFieldsJson = System.Text.Json.JsonSerializer.Serialize(customFields),
                     CreatedAt        = DateTimeOffset.UtcNow,
-                    UpdatedAt        = DateTimeOffset.UtcNow
+                    UpdatedAt        = DateTimeOffset.UtcNow,
+                    CheckInCount     = isCheckInEvent ? 1 : 0
                 });
-                _logger.LogInformation("Contact CREATED: {Name} ({Phone})", pmsEvent.GuestName, cleanPhone);
+                _logger.LogInformation("Contact CREATED: {Name} ({Phone}) - Stage: {Stage}, AutomationCount: 1", pmsEvent.GuestName, cleanPhone, customFields["Stage"]);
             }
             else
             {
@@ -330,6 +338,17 @@ public sealed class HotelWorker : BackgroundService
                     existingContact.CustomFieldsJson ?? "{}") ?? new Dictionary<string, object>();
                 foreach (var kv in customFields)
                     merged[kv.Key] = kv.Value;
+
+                merged["Stage"] = isCheckOutEvent ? "Checked Out" : "Checked In";
+
+                int currentAutoCount = 0;
+                if (merged.TryGetValue("AutomationCount", out var acVal) && int.TryParse(acVal?.ToString(), out var parsedAc))
+                {
+                    currentAutoCount = parsedAc;
+                }
+                merged["AutomationCount"] = currentAutoCount + 1;
+
+                int checkInCount = existingContact.CheckInCount + (isCheckInEvent ? 1 : 0);
 
                 await contactRepo.UpdateAsync(existingContact.Id, new Contact
                 {
@@ -341,12 +360,13 @@ public sealed class HotelWorker : BackgroundService
                     CustomFieldsJson = System.Text.Json.JsonSerializer.Serialize(merged),
                     CreatedAt        = existingContact.CreatedAt,
                     UpdatedAt        = DateTimeOffset.UtcNow,
-                    UpdateCount      = existingContact.UpdateCount,
-                    CheckInCount     = existingContact.CheckInCount,
+                    UpdateCount      = existingContact.UpdateCount + 1,
+                    CheckInCount     = checkInCount,
                     AverageStayDays  = existingContact.AverageStayDays,
                     IsVip            = existingContact.IsVip
                 });
-                _logger.LogInformation("Contact UPDATED: {Name} ({Phone})", pmsEvent.GuestName, cleanPhone);
+                _logger.LogInformation("Contact UPDATED: {Name} ({Phone}) - UpdateCount: {UpdateCount}, AutomationCount: {AutoCount}, Stage: {Stage}", 
+                    pmsEvent.GuestName, cleanPhone, existingContact.UpdateCount + 1, currentAutoCount + 1, merged["Stage"]);
             }
         }
         catch (Exception ex)

@@ -1,6 +1,6 @@
 ; ─────────────────────────────────────────────────────────────────────────────
 ; Inno Setup Script — Hotel Sankalp Retreat Automation
-; Produces: HotelSankalpRetreat_Setup.exe
+; Produces: Scalifts_Setup.exe
 ;
 ; Requirements:
 ;   - Inno Setup 6 installed: https://jrsoftware.org/isdl.php

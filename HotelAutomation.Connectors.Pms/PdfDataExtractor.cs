@@ -62,18 +62,18 @@ public sealed class PdfDataExtractor
 
     // Invoice date — "Invoice Date : 22/07/2026" (handling OCR vertical bars, spaces, ones, and slashes)
     private static readonly Regex InvoiceDateRegex = new(
-        @"Invoice\s*Date\s*[^a-zA-Z0-9]?\s*(\d{2})[\/\s\-\|lI1\\]+(\d{2})[\/\s\-\|lI1\\]+(\d{4})",
+        @"Invoice\s*Date\s*[^a-zA-Z0-9]{0,10}\s*(\d{2})[\/\s\-\|lI1\\]+(\d{2})[\/\s\-\|lI1\\]+(\d{4})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Arrival date — "Arrival Date : 21/07/2026"
     private static readonly Regex ArrivalDateRegex = new(
-        @"Arrival\s*Date\s*[^a-zA-Z0-9]?\s*(\d{2})[\/\s\-\|lI1\\]+(\d{2})[\/\s\-\|lI1\\]+(\d{4})",
+        @"Arrival\s*Date\s*[^a-zA-Z0-9]{0,10}\s*(\d{2})[\/\s\-\|lI1\\]+(\d{2})[\/\s\-\|lI1\\]+(\d{4})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Departure date — "Dept. Date : 22/07/2026" or "Departure Date : 22/07/2026"
     // Also catches "Dep. Date", "Dept Date" (no dot), "Check Out Date" etc.
     private static readonly Regex DepartureDateRegex = new(
-        @"(?:Dept\.?|Dep\.?|Departure|Check\s*Out)\s*Date\s*[^a-zA-Z0-9]?\s*(\d{2})[\/\s\-\|lI1\\]+(\d{2})[\/\s\-\|lI1\\]+(\d{4})",
+        @"(?:Dept\.?|Dep\.?|Departure|Check\s*Out)\s*Date\s*[^a-zA-Z0-9]{0,10}\s*(\d{2})[\/\s\-\|lI1\\]+(\d{2})[\/\s\-\|lI1\\]+(\d{4})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Invoice Total — must match "Invoice Total : 3528.00" specifically

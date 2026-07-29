@@ -5,7 +5,7 @@
 # Usage (Run as Administrator):
 #   powershell -ExecutionPolicy Bypass -File trust_on_this_machine.ps1
 #
-# After running this, double-clicking HotelSankalpRetreat_Setup.exe will install without any warning.
+# After running this, double-clicking Scalifts_Setup.exe will install without any warning.
 
 param(
     [string]$CertPath = "$PSScriptRoot\HotelSankalp_CodeSign.cer"

@@ -42,3 +42,19 @@ test_*.js
 container.html
 .dotnet/
 scratch/
+
+# Ignore Setup binaries
+Setup/*.exe
+Setup/*.pdb
+Setup/*.dll
+Setup/*.pfx
+Setup/*.cer
+Setup/wwwroot/
+installer_output/
+publish_output/
+ALL_SETUPS/
+HotelSankalpRetreat_Setup.exe
+PDFs/
+contacts/
+publish/
+replacements.json

@@ -17,6 +17,7 @@ public sealed class ContactRepository
 
     public async Task UpsertAsync(Contact contact, CancellationToken ct = default)
     {
+        var normalizedPhone = HotelAutomation.Core.Helpers.PhoneHelper.NormalizePhone(contact.PhoneNumber);
         await using var conn = await _factory.OpenAsync(ct);
         await conn.ExecuteAsync("""
             INSERT INTO Contacts (PhoneNumber, FirstName, LastName, CategoryId, CustomFieldsJson, CreatedAt, UpdatedAt, CheckInCount, AverageStayDays, IsVip)
@@ -30,7 +31,7 @@ public sealed class ContactRepository
                 UpdateCount = Contacts.UpdateCount + 1;
             """, new
         {
-            contact.PhoneNumber,
+            PhoneNumber = normalizedPhone,
             contact.FirstName,
             contact.LastName,
             contact.CategoryId,
@@ -163,6 +164,7 @@ public sealed class ContactRepository
 
     public async Task<int> InsertAsync(Contact contact, CancellationToken ct = default)
     {
+        var normalizedPhone = HotelAutomation.Core.Helpers.PhoneHelper.NormalizePhone(contact.PhoneNumber);
         await using var conn = await _factory.OpenAsync(ct);
         var sql = @"
             INSERT INTO Contacts (PhoneNumber, FirstName, LastName, CategoryId, CustomFieldsJson, CreatedAt, UpdatedAt, CheckInCount, AverageStayDays, IsVip)
@@ -171,7 +173,7 @@ public sealed class ContactRepository
         
         return await conn.ExecuteScalarAsync<int>(sql, new
         {
-            contact.PhoneNumber,
+            PhoneNumber = normalizedPhone,
             contact.FirstName,
             contact.LastName,
             contact.CategoryId,
@@ -186,6 +188,7 @@ public sealed class ContactRepository
 
     public async Task<bool> UpdateAsync(int id, Contact contact, CancellationToken ct = default)
     {
+        var normalizedPhone = HotelAutomation.Core.Helpers.PhoneHelper.NormalizePhone(contact.PhoneNumber);
         await using var conn = await _factory.OpenAsync(ct);
         var sql = @"
             UPDATE Contacts 
@@ -195,7 +198,7 @@ public sealed class ContactRepository
         var rows = await conn.ExecuteAsync(sql, new
         {
             id,
-            contact.PhoneNumber,
+            PhoneNumber = normalizedPhone,
             contact.FirstName,
             contact.LastName,
             contact.CategoryId,
@@ -210,8 +213,12 @@ public sealed class ContactRepository
 
     public async Task<Contact?> GetByPhoneNumberAsync(string phoneNumber, CancellationToken ct = default)
     {
+        var norm = HotelAutomation.Core.Helpers.PhoneHelper.NormalizePhone(phoneNumber);
+        var digitsOnly = new string((phoneNumber ?? "").Where(char.IsDigit).ToArray());
         await using var conn = await _factory.OpenAsync(ct);
-        return await conn.QueryFirstOrDefaultAsync<Contact>("SELECT * FROM Contacts WHERE PhoneNumber = @PhoneNumber", new { PhoneNumber = phoneNumber });
+        return await conn.QueryFirstOrDefaultAsync<Contact>(
+            "SELECT * FROM Contacts WHERE PhoneNumber = @norm OR PhoneNumber = @phoneNumber OR PhoneNumber = @digitsOnly", 
+            new { norm, phoneNumber, digitsOnly });
     }
 
     public async Task<IEnumerable<Contact>> SearchContactsAsync(string query, CancellationToken ct = default)

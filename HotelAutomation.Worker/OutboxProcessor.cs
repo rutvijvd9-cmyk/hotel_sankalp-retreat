@@ -109,15 +109,27 @@ public sealed class OutboxProcessor : BackgroundService
                     try
                     {
                         var paramDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(messageToProcess.ParametersJson ?? "{}");
-                        if (paramDict != null && paramDict.TryGetValue("Name", out var name))
+                        if (paramDict != null)
                         {
-                            guestName = name;
+                            if (paramDict.TryGetValue("Full_Name", out var fullName) && !string.IsNullOrWhiteSpace(fullName))
+                            {
+                                guestName = fullName;
+                            }
+                            else if (paramDict.TryGetValue("FullName", out var fn) && !string.IsNullOrWhiteSpace(fn))
+                            {
+                                guestName = fn;
+                            }
+                            else if (paramDict.TryGetValue("Name", out var name) && !string.IsNullOrWhiteSpace(name))
+                            {
+                                guestName = name;
+                            }
                         }
                     }
                     catch {}
+
                     TrayIconService.ShowNotification(
                         "WhatsApp Message Sent",
-                        $"Successfully sent message to {guestName} ({messageToProcess.ToPhoneNumber})");
+                        $"The Whatsapp Message Has Been Sent To {guestName}");
 
                     _logger.LogInformation("OutboxMessage {Id} → Sent via {Channel}", messageToProcess.Id, channelType);
                 }
