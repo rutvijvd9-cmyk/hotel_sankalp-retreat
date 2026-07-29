@@ -26,7 +26,7 @@ DefaultGroupName={#AppName}
 AllowNoIcons=no
 ; Output installer details
 OutputDir=..\installer_output
-OutputBaseFilename=Scalifts_Setup
+OutputBaseFilename=Scalifts_installer
 ; Icon for the installer exe itself
 SetupIconFile=..\HotelAutomation.Worker\hotel.ico
 ; Compression

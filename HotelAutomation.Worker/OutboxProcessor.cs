@@ -146,8 +146,8 @@ public sealed class OutboxProcessor : BackgroundService
                     catch {}
 
                     TrayIconService.ShowNotification(
-                        "WhatsApp Message Sent",
-                        $"The Whatsapp Message Has Been Sent To {guestName}");
+                        "WhatsApp Sent ✅",
+                        $"WhatsApp sent to {guestName}");
 
                     _logger.LogInformation("OutboxMessage {Id} → Sent via {Channel}", messageToProcess.Id, channelType);
                 }

@@ -167,6 +167,7 @@ public sealed class TrayIconService : IHostedService, IDisposable
 #else
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace HotelAutomation.Worker;
 
@@ -178,6 +179,27 @@ public sealed class TrayIconService : IHostedService, IDisposable
 
     public static void ShowNotification(string title, string text)
     {
+        // On macOS: fire a native Notification Center alert via osascript (stdin avoids quoting issues)
+        try
+        {
+            var safeTitle = title.Replace("\"", "'");
+            var safeText  = text .Replace("\"", "'");
+            var psi = new ProcessStartInfo("osascript")
+            {
+                RedirectStandardInput  = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError  = true,
+                UseShellExecute = false,
+                CreateNoWindow  = true
+            };
+            var proc = Process.Start(psi);
+            if (proc != null)
+            {
+                proc.StandardInput.WriteLine($"display notification \"{safeText}\" with title \"{safeTitle}\"");
+                proc.StandardInput.Close();
+            }
+        }
+        catch { /* notifications are non-critical */ }
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
