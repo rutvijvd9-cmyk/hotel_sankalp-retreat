@@ -253,6 +253,11 @@ public sealed class HotelWorker : BackgroundService
 
                 await _jobRepository.AddAsync(job);
 
+                // ── Desktop notification: automation triggered ─────────────────
+                TrayIconService.ShowNotification(
+                    "🔔 Automation Triggered",
+                    $"Automation fired for {pmsEvent.GuestName ?? cleanPhone}\n📱 {cleanPhone}");
+
                 // Track step-level execution: increment TRIGGER count
                 try
                 {

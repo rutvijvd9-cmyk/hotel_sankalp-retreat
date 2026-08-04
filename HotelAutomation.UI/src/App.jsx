@@ -410,6 +410,29 @@ export default function App() {
   const [importProgress, setImportProgress] = useState(0);
   const [analyticsRule, setAnalyticsRule] = useState(null);
   const [ruleFailures, setRuleFailures] = useState([]);
+  const [analyticsTab, setAnalyticsTab] = useState('overview'); // 'overview' | 'contacts'
+  const [contactsLog, setContactsLog] = useState([]);
+  const [contactsLogTotal, setContactsLogTotal] = useState(0);
+  const [contactsLogPage, setContactsLogPage] = useState(1);
+  const [contactsLogStatus, setContactsLogStatus] = useState('');
+  const [contactsLogLoading, setContactsLogLoading] = useState(false);
+
+  const fetchContactsLog = async (ruleId, page = 1, status = '') => {
+    setContactsLogLoading(true);
+    try {
+      const url = `${API_BASE}/rules/${ruleId}/contacts-log?page=${page}&pageSize=50${status ? `&status=${status}` : ''}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setContactsLog(data.rows || []);
+        setContactsLogTotal(data.total || 0);
+      }
+    } catch (e) {
+      console.error("Failed to fetch contacts log", e);
+    } finally {
+      setContactsLogLoading(false);
+    }
+  };
   const [parsedContacts, setParsedContacts] = useState([]);
 
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
@@ -2452,9 +2475,13 @@ export default function App() {
         setIsBuildingRule(true);
       };
 
-      const handleShowAnalytics = async (rule) => {
+      const handleShowAnalytics = async (rule, initialTab = 'overview') => {
         setAnalyticsRule(rule);
+        setAnalyticsTab(initialTab);
         setRuleFailures([]);
+        setContactsLog([]);
+        setContactsLogPage(1);
+        setContactsLogStatus('');
         try {
           const res = await fetch(`${API_BASE}/rules/${rule.Id || rule.id}/failures`);
           if (res.ok) {
@@ -2462,6 +2489,10 @@ export default function App() {
           }
         } catch (e) {
           console.error("Failed to fetch failures", e);
+        }
+
+        if (initialTab === 'contacts') {
+          fetchContactsLog(rule.Id || rule.id, 1, '');
         }
       };
 
@@ -2493,14 +2524,14 @@ export default function App() {
       };
 
       if (isBuildingRule) {
-        return <AutomationBuilder onCancel={() => { setIsBuildingRule(false); setEditingRule(null); }} initialRule={editingRule} />;
+        return <AutomationBuilder onCancel={() => { setIsBuildingRule(false); setEditingRule(null); }} initialRule={editingRule} onShowAnalytics={(rule) => handleShowAnalytics(rule, 'contacts')} />;
       }
       return (
         <div className="premium-table-card">
           <div className="premium-toolbar">
-            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>Automation Rules</h3>
+            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>Automations</h3>
             <button className="btn btn-primary" onClick={() => { setEditingRule(null); setIsBuildingRule(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Plus size={16} /> Create Rule
+              <Plus size={16} /> Create Automation
             </button>
           </div>
           <div className="premium-table-wrapper">
@@ -2518,7 +2549,7 @@ export default function App() {
                     <td style={{ fontSize: '0.85rem' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         <div style={{ display: 'flex', gap: '12px' }}>
-                          <span title="Triggered" style={{ color: '#0d9488', fontWeight: 500 }}>T: {r.stats?.Triggered ?? r.stats?.triggered ?? 0}</span>
+                          <span title="Triggered - Click to view contacts log" onClick={() => handleShowAnalytics(r, 'contacts')} style={{ color: '#0d9488', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}>T: {r.stats?.Triggered ?? r.stats?.triggered ?? 0}</span>
                           <span title="Sent" style={{ color: '#2563eb', fontWeight: 500 }}>S: {r.stats?.TotalSent ?? r.stats?.totalSent ?? 0}</span>
                           <span title="Failed" style={{ color: '#dc2626', fontWeight: 500 }}>F: {r.stats?.Failed ?? r.stats?.failed ?? 0}</span>
                         </div>
@@ -2546,6 +2577,9 @@ export default function App() {
                         <button className="premium-icon-btn delete" onClick={() => handleDeleteRule(r.Id || r.id)} title="Delete">
                           <Trash2 size={18} />
                         </button>
+                        <button className="premium-icon-btn edit" style={{ color: 'var(--primary)', borderColor: 'transparent' }} onClick={() => handleEditRule(r)} title="View">
+                          <Eye size={18} />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -2571,49 +2605,214 @@ export default function App() {
                 
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '20px', fontSize: '0.95rem' }}>Viewing stats for: <strong>{analyticsRule.Name || analyticsRule.name}</strong></p>
                 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '32px' }}>
-                  <div className="premium-stat-card premium-stat-triggered">
-                    <div style={{ fontSize: '0.8rem', color: '#0d9488', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>TRIGGERED</div>
-                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#0f766e' }}>
-                      {analyticsRule.stats?.Triggered ?? analyticsRule.stats?.triggered ?? 0}
-                    </div>
-                  </div>
-                  <div className="premium-stat-card premium-stat-sent">
-                    <div style={{ fontSize: '0.8rem', color: '#2563eb', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>SENT SUCCESSFULLY</div>
-                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1d4ed8' }}>
-                      {analyticsRule.stats?.TotalSent ?? analyticsRule.stats?.totalSent ?? 0}
-                    </div>
-                  </div>
-                  <div className="premium-stat-card premium-stat-failed">
-                    <div style={{ fontSize: '0.8rem', color: '#dc2626', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>FAILED</div>
-                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#b91c1c' }}>
-                      {analyticsRule.stats?.Failed ?? analyticsRule.stats?.failed ?? 0}
-                    </div>
-                  </div>
+                {/* Tab Navigation */}
+                <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color, #e2e8f0)', marginBottom: '20px', gap: '8px' }}>
+                  <button 
+                    onClick={() => setAnalyticsTab('overview')} 
+                    style={{ 
+                      padding: '8px 16px', 
+                      background: 'none', 
+                      border: 'none', 
+                      borderBottom: analyticsTab === 'overview' ? '2px solid var(--primary, #3b82f6)' : '2px solid transparent', 
+                      color: analyticsTab === 'overview' ? 'var(--primary, #3b82f6)' : 'var(--text-secondary, #64748b)', 
+                      fontWeight: 600, 
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      fontSize: '0.9rem'
+                    }}
+                  >
+                    Overview
+                  </button>
+                  <button 
+                    onClick={() => { 
+                      setAnalyticsTab('contacts'); 
+                      setContactsLogPage(1);
+                      fetchContactsLog(analyticsRule.Id || analyticsRule.id, 1, contactsLogStatus); 
+                    }} 
+                    style={{ 
+                      padding: '8px 16px', 
+                      background: 'none', 
+                      border: 'none', 
+                      borderBottom: analyticsTab === 'contacts' ? '2px solid var(--primary, #3b82f6)' : '2px solid transparent', 
+                      color: analyticsTab === 'contacts' ? 'var(--primary, #3b82f6)' : 'var(--text-secondary, #64748b)', 
+                      fontWeight: 600, 
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      fontSize: '0.9rem'
+                    }}
+                  >
+                    Contacts Log
+                  </button>
                 </div>
 
-                <h4 style={{ marginBottom: '12px', color: 'var(--text-primary)', fontWeight: 600, fontSize: '1rem' }}>Recent Failure Log</h4>
-                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '300px', border: '1px solid var(--border-color)', borderRadius: '12px', backgroundColor: '#f8fafc', padding: '16px' }}>
-                  {ruleFailures.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '32px 0', fontSize: '0.95rem' }}>
-                      No failed messages recorded for this rule.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {ruleFailures.map((f, i) => (
-                        <div key={i} style={{ padding: '12px', backgroundColor: '#ffffff', border: '1px solid var(--border-color)', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
-                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{f.ToPhoneNumber || f.toPhoneNumber}</span>
-                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{new Date(f.CreatedAt || f.createdAt).toLocaleString()}</span>
-                          </div>
-                          <div style={{ fontSize: '0.85rem', color: '#b91c1c', backgroundColor: '#fef2f2', padding: '8px 12px', borderRadius: '6px', border: '1px solid #fecaca' }}>
-                            <strong>Reason:</strong> {f.FailureReason || f.failureReason || 'Failed to connect to WhatsApp API.'}
-                          </div>
+                {analyticsTab === 'overview' ? (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '32px' }}>
+                      <div className="premium-stat-card premium-stat-triggered">
+                        <div style={{ fontSize: '0.8rem', color: '#0d9488', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>TRIGGERED</div>
+                        <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#0f766e' }}>
+                          {analyticsRule.stats?.Triggered ?? analyticsRule.stats?.triggered ?? 0}
                         </div>
-                      ))}
+                      </div>
+                      <div className="premium-stat-card premium-stat-sent">
+                        <div style={{ fontSize: '0.8rem', color: '#2563eb', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>SENT SUCCESSFULLY</div>
+                        <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1d4ed8' }}>
+                          {analyticsRule.stats?.TotalSent ?? analyticsRule.stats?.totalSent ?? 0}
+                        </div>
+                      </div>
+                      <div className="premium-stat-card premium-stat-failed">
+                        <div style={{ fontSize: '0.8rem', color: '#dc2626', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>FAILED</div>
+                        <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#b91c1c' }}>
+                          {analyticsRule.stats?.Failed ?? analyticsRule.stats?.failed ?? 0}
+                        </div>
+                      </div>
                     </div>
-                  )}
-                </div>
+
+                    <h4 style={{ marginBottom: '12px', color: 'var(--text-primary)', fontWeight: 600, fontSize: '1rem' }}>Recent Failure Log</h4>
+                    <div style={{ flex: 1, overflowY: 'auto', maxHeight: '300px', border: '1px solid var(--border-color)', borderRadius: '12px', backgroundColor: '#f8fafc', padding: '16px' }}>
+                      {ruleFailures.length === 0 ? (
+                        <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '32px 0', fontSize: '0.95rem' }}>
+                          No failed messages recorded for this rule.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          {ruleFailures.map((f, i) => (
+                            <div key={i} style={{ padding: '12px', backgroundColor: '#ffffff', border: '1px solid var(--border-color)', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
+                                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{f.ToPhoneNumber || f.toPhoneNumber}</span>
+                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{new Date(f.CreatedAt || f.createdAt).toLocaleString()}</span>
+                              </div>
+                              <div style={{ fontSize: '0.85rem', color: '#b91c1c', backgroundColor: '#fef2f2', padding: '8px 12px', borderRadius: '6px', border: '1px solid #fecaca' }}>
+                                <strong>Reason:</strong> {f.FailureReason || f.failureReason || 'Failed to connect to WhatsApp API.'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div>
+                    {/* Status Filters */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        {['', 'Sent', 'Failed', 'Pending'].map((st) => (
+                          <button
+                            key={st}
+                            onClick={() => {
+                              setContactsLogStatus(st);
+                              setContactsLogPage(1);
+                              fetchContactsLog(analyticsRule.Id || analyticsRule.id, 1, st);
+                            }}
+                            style={{
+                              padding: '6px 12px',
+                              fontSize: '0.8rem',
+                              borderRadius: '6px',
+                              border: '1px solid var(--border-color, #e2e8f0)',
+                              background: contactsLogStatus === st ? 'var(--primary, #3b82f6)' : 'white',
+                              color: contactsLogStatus === st ? 'white' : 'var(--text-secondary, #64748b)',
+                              cursor: 'pointer',
+                              fontWeight: 500,
+                              transition: 'all 0.15s'
+                            }}
+                          >
+                            {st === '' ? 'All' : st}
+                          </button>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #64748b)' }}>
+                        Total: <strong>{contactsLogTotal}</strong>
+                      </div>
+                    </div>
+
+                    {/* Table wrapper */}
+                    <div style={{ border: '1px solid var(--border-color, #e2e8f0)', borderRadius: '12px', backgroundColor: '#fff', overflow: 'hidden', minHeight: '180px', maxHeight: '300px', overflowY: 'auto' }}>
+                      {contactsLogLoading ? (
+                        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '40px 0', color: 'var(--text-secondary, #64748b)', fontSize: '0.9rem' }}>
+                          Loading contacts log...
+                        </div>
+                      ) : contactsLog.length === 0 ? (
+                        <div style={{ textAlign: 'center', color: 'var(--text-secondary, #64748b)', padding: '40px 0', fontSize: '0.9rem' }}>
+                          No records found.
+                        </div>
+                      ) : (
+                        <table className="premium-table" style={{ margin: 0, width: '100%', fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr>
+                              <th>Phone Number</th>
+                              <th>Guest Name</th>
+                              <th>Status</th>
+                              <th>Triggered</th>
+                              <th>Details / Failures</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {contactsLog.map((c, i) => {
+                              const isErr = (c.Status || c.status) === 'Failed';
+                              const badgeStyle = (c.Status || c.status) === 'Sent' ? 'badge-delivered' : isErr ? 'badge-failed' : 'badge-pending';
+                              return (
+                                <tr key={c.Id || c.id || i} style={{ backgroundColor: isErr ? '#fff5f5' : 'inherit' }}>
+                                  <td style={{ fontWeight: 600 }}>{c.ToPhoneNumber || c.toPhoneNumber}</td>
+                                  <td>{c.GuestName || c.guestName || <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Unknown Guest</span>}</td>
+                                  <td>
+                                    <span className={`badge ${badgeStyle}`}>
+                                      {c.Status || c.status}
+                                    </span>
+                                  </td>
+                                  <td>{c.CreatedAt || c.createdAt ? new Date(c.CreatedAt || c.createdAt).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '-'}</td>
+                                  <td>
+                                    {isErr ? (
+                                      <span style={{ color: '#ef4444', display: 'block', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.FailureReason || c.failureReason}>
+                                        {c.FailureReason || c.failureReason || 'Failed to send'}
+                                      </span>
+                                    ) : (c.Status || c.status) === 'Pending' ? (
+                                      <span style={{ color: '#d97706' }}>In queue (Pending)</span>
+                                    ) : (
+                                      <span style={{ color: '#10b981' }}>Sent successfully</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+
+                    {/* Pagination */}
+                    {contactsLogTotal > 50 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
+                        <button
+                          className="btn btn-secondary"
+                          disabled={contactsLogPage === 1 || contactsLogLoading}
+                          onClick={() => {
+                            const newPg = contactsLogPage - 1;
+                            setContactsLogPage(newPg);
+                            fetchContactsLog(analyticsRule.Id || analyticsRule.id, newPg, contactsLogStatus);
+                          }}
+                          style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                        >
+                          Previous
+                        </button>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #64748b)' }}>
+                          Page {contactsLogPage} of {Math.ceil(contactsLogTotal / 50)}
+                        </span>
+                        <button
+                          className="btn btn-secondary"
+                          disabled={contactsLogPage >= Math.ceil(contactsLogTotal / 50) || contactsLogLoading}
+                          onClick={() => {
+                            const newPg = contactsLogPage + 1;
+                            setContactsLogPage(newPg);
+                            fetchContactsLog(analyticsRule.Id || analyticsRule.id, newPg, contactsLogStatus);
+                          }}
+                          style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '24px' }}>
                   <button className="btn btn-primary" onClick={() => setAnalyticsRule(null)}>Done</button>
@@ -2626,13 +2825,21 @@ export default function App() {
     }
 
     if (activeTab === 'analytics') {
-      const handleShowAnalytics = async (rule) => {
+      const handleShowAnalytics = async (rule, initialTab = 'overview') => {
         setAnalyticsRule(rule);
+        setAnalyticsTab(initialTab);
         setRuleFailures([]);
+        setContactsLog([]);
+        setContactsLogPage(1);
+        setContactsLogStatus('');
         try {
           const res = await fetch(`${API_BASE}/rules/${rule.Id || rule.id}/analytics-details`);
           if (res.ok) setRuleFailures(await res.json());
         } catch (e) { console.error(e); }
+
+        if (initialTab === 'contacts') {
+          fetchContactsLog(rule.Id || rule.id, 1, '');
+        }
       };
 
       const handleShowBroadcastAnalytics = async (b) => {
@@ -2729,7 +2936,7 @@ export default function App() {
                       <tr key={r.Id || r.id}>
                         <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{r.Name || r.name}</td>
                         <td><span className="badge badge-pending">{r.TriggerEventType || r.triggerEventType}</span></td>
-                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{trig}</td>
+                        <td style={{ textAlign: 'center', fontWeight: 600 }}><span onClick={() => handleShowAnalytics(r, 'contacts')} style={{ color: '#0d9488', cursor: 'pointer', textDecoration: 'underline' }} title="Click to view triggered contacts log">{trig}</span></td>
                         <td style={{ textAlign: 'center', color: '#10b981', fontWeight: 600 }}>{s}</td>
                         <td style={{ textAlign: 'center', color: '#ef4444', fontWeight: 600 }}>{f}</td>
                         <td style={{ textAlign: 'center', fontWeight: 600 }}>{ruleRate}%</td>
@@ -2867,74 +3074,238 @@ export default function App() {
                   <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>Analytics: {analyticsRule.Name || analyticsRule.name}</h3>
                   <button className="premium-icon-btn" onClick={() => setAnalyticsRule(null)}>✕</button>
                 </div>
-                
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '32px' }}>
-                  <div className="premium-stat-card premium-stat-triggered">
-                    <div style={{ fontSize: '0.8rem', color: '#0d9488', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>TRIGGERED</div>
-                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#0f766e' }}>
-                      {analyticsRule.stats?.Triggered ?? analyticsRule.stats?.triggered ?? 0}
-                    </div>
-                  </div>
-                  <div className="premium-stat-card premium-stat-sent">
-                    <div style={{ fontSize: '0.8rem', color: '#2563eb', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>SENT SUCCESSFULLY</div>
-                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1d4ed8' }}>
-                      {analyticsRule.stats?.TotalSent ?? analyticsRule.stats?.totalSent ?? 0}
-                    </div>
-                  </div>
-                  <div className="premium-stat-card premium-stat-failed">
-                    <div style={{ fontSize: '0.8rem', color: '#dc2626', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>FAILED</div>
-                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#b91c1c' }}>
-                      {analyticsRule.stats?.Failed ?? analyticsRule.stats?.failed ?? 0}
-                    </div>
-                  </div>
+                {/* Tab Navigation */}
+                <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color, #e2e8f0)', marginBottom: '20px', gap: '8px' }}>
+                  <button 
+                    onClick={() => setAnalyticsTab('overview')} 
+                    style={{ 
+                      padding: '8px 16px', 
+                      background: 'none', 
+                      border: 'none', 
+                      borderBottom: analyticsTab === 'overview' ? '2px solid var(--primary, #3b82f6)' : '2px solid transparent', 
+                      color: analyticsTab === 'overview' ? 'var(--primary, #3b82f6)' : 'var(--text-secondary, #64748b)', 
+                      fontWeight: 600, 
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      fontSize: '0.9rem'
+                    }}
+                  >
+                    Overview
+                  </button>
+                  <button 
+                    onClick={() => { 
+                      setAnalyticsTab('contacts'); 
+                      setContactsLogPage(1);
+                      fetchContactsLog(analyticsRule.Id || analyticsRule.id, 1, contactsLogStatus); 
+                    }} 
+                    style={{ 
+                      padding: '8px 16px', 
+                      background: 'none', 
+                      border: 'none', 
+                      borderBottom: analyticsTab === 'contacts' ? '2px solid var(--primary, #3b82f6)' : '2px solid transparent', 
+                      color: analyticsTab === 'contacts' ? 'var(--primary, #3b82f6)' : 'var(--text-secondary, #64748b)', 
+                      fontWeight: 600, 
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      fontSize: '0.9rem'
+                    }}
+                  >
+                    Contacts Log
+                  </button>
                 </div>
 
-                <h4 style={{ marginBottom: '12px', color: 'var(--text-primary)', fontWeight: 600, fontSize: '1rem' }}>Delivery Details Log</h4>
-                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '350px', border: '1px solid var(--border-color)', borderRadius: '12px', backgroundColor: '#f8fafc', padding: '16px' }}>
-                  {ruleFailures.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '32px 0', fontSize: '0.95rem' }}>
-                      No messages recorded.
+                {analyticsTab === 'overview' ? (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '32px' }}>
+                      <div className="premium-stat-card premium-stat-triggered">
+                        <div style={{ fontSize: '0.8rem', color: '#0d9488', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>TRIGGERED</div>
+                        <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#0f766e' }}>
+                          {analyticsRule.stats?.Triggered ?? analyticsRule.stats?.triggered ?? 0}
+                        </div>
+                      </div>
+                      <div className="premium-stat-card premium-stat-sent">
+                        <div style={{ fontSize: '0.8rem', color: '#2563eb', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>SENT SUCCESSFULLY</div>
+                        <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1d4ed8' }}>
+                          {analyticsRule.stats?.TotalSent ?? analyticsRule.stats?.totalSent ?? 0}
+                        </div>
+                      </div>
+                      <div className="premium-stat-card premium-stat-failed">
+                        <div style={{ fontSize: '0.8rem', color: '#dc2626', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>FAILED</div>
+                        <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#b91c1c' }}>
+                          {analyticsRule.stats?.Failed ?? analyticsRule.stats?.failed ?? 0}
+                        </div>
+                      </div>
                     </div>
-                  ) : (
-                    <table className="premium-table" style={{ margin: 0, backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
-                      <thead>
-                        <tr>
-                          <th>Phone</th>
-                          <th>Status</th>
-                          <th>Date</th>
-                          <th>Details</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ruleFailures.map((f, i) => (
-                          <tr key={i}>
-                            <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                              {f.ToPhoneNumber || f.toPhoneNumber}
-                              {(f.IsUnsubscribed || f.isUnsubscribed) === 1 && (
-                                <span style={{ marginLeft: '8px', fontSize: '10px', backgroundColor: '#ef4444', color: 'white', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Unsubscribed</span>
-                              )}
-                            </td>
-                            <td>
-                              <span className={`badge badge-${(f.Status || f.status || '').toLowerCase()}`}>
-                                {f.Status || f.status}
-                              </span>
-                            </td>
-                            <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                              {new Date(f.CreatedAt || f.createdAt).toLocaleString()}
-                            </td>
-                            <td style={{ fontSize: '0.85rem' }}>
-                              {(f.Status || f.status) === 'Failed' ? (
-                                <span style={{ color: '#ef4444' }}>{f.FailureReason || f.failureReason || 'Failed to connect to Meta WhatsApp API.'}</span>
-                              ) : (
-                                <span style={{ color: '#10b981' }}>-</span>
-                              )}
-                            </td>
-                          </tr>
+
+                    <h4 style={{ marginBottom: '12px', color: 'var(--text-primary)', fontWeight: 600, fontSize: '1rem' }}>Delivery Details Log</h4>
+                    <div style={{ flex: 1, overflowY: 'auto', maxHeight: '350px', border: '1px solid var(--border-color)', borderRadius: '12px', backgroundColor: '#f8fafc', padding: '16px' }}>
+                      {ruleFailures.length === 0 ? (
+                        <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '32px 0', fontSize: '0.95rem' }}>
+                          No messages recorded.
+                        </div>
+                      ) : (
+                        <table className="premium-table" style={{ margin: 0, backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+                          <thead>
+                            <tr>
+                              <th>Phone</th>
+                              <th>Status</th>
+                              <th>Date</th>
+                              <th>Details</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ruleFailures.map((f, i) => (
+                              <tr key={i}>
+                                <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                  {f.ToPhoneNumber || f.toPhoneNumber}
+                                  {(f.IsUnsubscribed || f.isUnsubscribed) === 1 && (
+                                    <span style={{ marginLeft: '8px', fontSize: '10px', backgroundColor: '#ef4444', color: 'white', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Unsubscribed</span>
+                                  )}
+                                </td>
+                                <td>
+                                  <span className={`badge badge-${(f.Status || f.status || '').toLowerCase()}`}>
+                                    {f.Status || f.status}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                  {new Date(f.CreatedAt || f.createdAt).toLocaleString()}
+                                </td>
+                                <td style={{ fontSize: '0.85rem' }}>
+                                  {(f.Status || f.status) === 'Failed' ? (
+                                    <span style={{ color: '#ef4444' }}>{f.FailureReason || f.failureReason || 'Failed to connect to Meta WhatsApp API.'}</span>
+                                  ) : (
+                                    <span style={{ color: '#10b981' }}>-</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div>
+                    {/* Status Filters */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        {['', 'Sent', 'Failed', 'Pending'].map((st) => (
+                          <button
+                            key={st}
+                            onClick={() => {
+                              setContactsLogStatus(st);
+                              setContactsLogPage(1);
+                              fetchContactsLog(analyticsRule.Id || analyticsRule.id, 1, st);
+                            }}
+                            style={{
+                              padding: '6px 12px',
+                              fontSize: '0.8rem',
+                              borderRadius: '6px',
+                              border: '1px solid var(--border-color, #e2e8f0)',
+                              background: contactsLogStatus === st ? 'var(--primary, #3b82f6)' : 'white',
+                              color: contactsLogStatus === st ? 'white' : 'var(--text-secondary, #64748b)',
+                              cursor: 'pointer',
+                              fontWeight: 500,
+                              transition: 'all 0.15s'
+                            }}
+                          >
+                            {st === '' ? 'All' : st}
+                          </button>
                         ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #64748b)' }}>
+                        Total: <strong>{contactsLogTotal}</strong>
+                      </div>
+                    </div>
+
+                    {/* Table wrapper */}
+                    <div style={{ border: '1px solid var(--border-color, #e2e8f0)', borderRadius: '12px', backgroundColor: '#fff', overflow: 'hidden', minHeight: '180px', maxHeight: '300px', overflowY: 'auto' }}>
+                      {contactsLogLoading ? (
+                        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '40px 0', color: 'var(--text-secondary, #64748b)', fontSize: '0.9rem' }}>
+                          Loading contacts log...
+                        </div>
+                      ) : contactsLog.length === 0 ? (
+                        <div style={{ textAlign: 'center', color: 'var(--text-secondary, #64748b)', padding: '40px 0', fontSize: '0.9rem' }}>
+                          No records found.
+                        </div>
+                      ) : (
+                        <table className="premium-table" style={{ margin: 0, width: '100%', fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr>
+                              <th>Phone Number</th>
+                              <th>Guest Name</th>
+                              <th>Status</th>
+                              <th>Triggered</th>
+                              <th>Details / Failures</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {contactsLog.map((c, i) => {
+                              const isErr = (c.Status || c.status) === 'Failed';
+                              const badgeStyle = (c.Status || c.status) === 'Sent' ? 'badge-delivered' : isErr ? 'badge-failed' : 'badge-pending';
+                              return (
+                                <tr key={c.Id || c.id || i} style={{ backgroundColor: isErr ? '#fff5f5' : 'inherit' }}>
+                                  <td style={{ fontWeight: 600 }}>{c.ToPhoneNumber || c.toPhoneNumber}</td>
+                                  <td>{c.GuestName || c.guestName || <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Unknown Guest</span>}</td>
+                                  <td>
+                                    <span className={`badge ${badgeStyle}`}>
+                                      {c.Status || c.status}
+                                    </span>
+                                  </td>
+                                  <td>{c.CreatedAt || c.createdAt ? new Date(c.CreatedAt || c.createdAt).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '-'}</td>
+                                  <td>
+                                    {isErr ? (
+                                      <span style={{ color: '#ef4444', display: 'block', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.FailureReason || c.failureReason}>
+                                        {c.FailureReason || c.failureReason || 'Failed to send'}
+                                      </span>
+                                    ) : (c.Status || c.status) === 'Pending' ? (
+                                      <span style={{ color: '#d97706' }}>In queue (Pending)</span>
+                                    ) : (
+                                      <span style={{ color: '#10b981' }}>Sent successfully</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+
+                    {/* Pagination */}
+                    {contactsLogTotal > 50 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
+                        <button
+                          className="btn btn-secondary"
+                          disabled={contactsLogPage === 1 || contactsLogLoading}
+                          onClick={() => {
+                            const newPg = contactsLogPage - 1;
+                            setContactsLogPage(newPg);
+                            fetchContactsLog(analyticsRule.Id || analyticsRule.id, newPg, contactsLogStatus);
+                          }}
+                          style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                        >
+                          Previous
+                        </button>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #64748b)' }}>
+                          Page {contactsLogPage} of {Math.ceil(contactsLogTotal / 50)}
+                        </span>
+                        <button
+                          className="btn btn-secondary"
+                          disabled={contactsLogPage >= Math.ceil(contactsLogTotal / 50) || contactsLogLoading}
+                          onClick={() => {
+                            const newPg = contactsLogPage + 1;
+                            setContactsLogPage(newPg);
+                            fetchContactsLog(analyticsRule.Id || analyticsRule.id, newPg, contactsLogStatus);
+                          }}
+                          style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '24px' }}>
                   <button className="btn btn-primary" onClick={() => setAnalyticsRule(null)}>Close</button>
@@ -3260,6 +3631,8 @@ export default function App() {
       return <ManualCheckOut />;
     }
 
+
+
     if (activeTab === 'users') {
       const modulesConfig = [
         { key: 'dashboard', name: 'Dashboard' },
@@ -3270,7 +3643,8 @@ export default function App() {
         { key: 'analytics', name: 'Analytics & Reports' },
         { key: 'optouts', name: 'Opt-Outs List' },
         { key: 'manual-checkin', name: 'Manual Check-In' },
-        { key: 'manual-checkout', name: 'Manual Check-Out' }
+        { key: 'manual-checkout', name: 'Manual Check-Out' },
+        { key: 'settings', name: 'Settings' }
       ];
       const targetRoles = ['Manager', 'Employer'];
 
@@ -3385,42 +3759,26 @@ export default function App() {
                         )}
                       </td>
                       <td style={{ padding: '16px 24px' }}>
-                        {u.signaturePath || u.SignaturePath ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          {(u.signaturePath || u.SignaturePath) ? (
                             <img 
                               src={`${API_BASE.replace('/api', '')}${u.signaturePath || u.SignaturePath}`} 
                               alt="Signature" 
-                              style={{ height: '36px', maxHeight: '36px', width: 'auto', borderRadius: '4px', border: '1px solid var(--border-color)', padding: '2px', backgroundColor: 'white' }} 
+                              style={{ height: '36px', maxWidth: '80px', objectFit: 'contain', borderRadius: '4px', border: '1px solid var(--border-color)', padding: '2px', backgroundColor: 'white' }} 
                             />
-                            {(user?.role === 'Owner' || user?.role === 'Developer') && (
-                              <label style={{ cursor: 'pointer', color: 'var(--primary)', fontSize: '12px', fontWeight: 600 }}>
-                                Change
-                                <input 
-                                  type="file" 
-                                  accept="image/*"
-                                  onChange={(e) => handleUploadSignature(id, e.target.files[0])}
-                                  style={{ display: 'none' }}
-                                />
-                              </label>
-                            )}
-                          </div>
-                        ) : (
-                          <div>
-                            {(user?.role === 'Owner' || user?.role === 'Developer') ? (
-                              <label className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                <Upload size={14} /> Upload Stamp/Sig
-                                <input 
-                                  type="file" 
-                                  accept="image/*"
-                                  onChange={(e) => handleUploadSignature(id, e.target.files[0])}
-                                  style={{ display: 'none' }}
-                                />
-                              </label>
-                            ) : (
-                              <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>No signature</span>
-                            )}
-                          </div>
-                        )}
+                          ) : null}
+                          {(user?.role === 'Owner' || user?.role === 'Developer') && (
+                            <label className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+                              <Upload size={14} /> {(u.signaturePath || u.SignaturePath) ? 'Change' : 'Upload Stamp/Sig'}
+                              <input 
+                                type="file" 
+                                accept="image/*"
+                                onChange={(e) => handleUploadSignature(id, e.target.files[0])}
+                                style={{ display: 'none' }}
+                              />
+                            </label>
+                          )}
+                        </div>
                       </td>
                       <td style={{ padding: '16px 24px', color: 'var(--text-secondary)' }}>
                         {createdAt ? new Date(createdAt).toLocaleDateString() : ''}
@@ -3685,12 +4043,7 @@ export default function App() {
             </div>
           )}
 
-          {/* Settings tab (Owner & Developer only) */}
-          {(user.role === 'Owner' || user.role === 'Developer') && (
-            <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
-              <Settings size={20} /> Settings
-            </div>
-          )}
+
 
           <div className="sidebar-divider" style={{ margin: '8px 16px', borderBottom: '1px solid var(--border)' }}></div>
           {hasAccess('manual-checkin') && (
@@ -3701,6 +4054,11 @@ export default function App() {
           {hasAccess('manual-checkout') && (
             <div className={`nav-item ${activeTab === 'manual-checkout' ? 'active' : ''}`} onClick={() => setActiveTab('manual-checkout')}>
               <CheckCircle2 size={20} /> Manual Check-Out
+            </div>
+          )}
+          {hasAccess('settings') && (
+            <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
+              <Settings size={20} /> Settings
             </div>
           )}
         </nav>
@@ -3919,11 +4277,11 @@ const SettingsTab = () => {
   }
 
   return (
-    <div style={{ padding: '24px', maxWidth: '800px' }}>
+    <div style={{ padding: '24px', maxWidth: '1000px' }}>
       <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ margin: '0 0 8px 0', fontWeight: 700, color: 'var(--text-primary)' }}>Meta Integration Settings</h2>
+        <h2 style={{ margin: '0 0 8px 0', fontWeight: 700, color: 'var(--text-primary)' }}>System & API Settings</h2>
         <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>
-          Configure connection parameters for Meta/WhatsApp Business Cloud API. These settings are persisted in the database and applied dynamically without restarting the application.
+          Manage Meta WhatsApp Cloud API credentials, access tokens, webhooks, and system configuration.
         </p>
       </div>
 
@@ -3945,74 +4303,122 @@ const SettingsTab = () => {
         </div>
       )}
 
-      <form onSubmit={handleSave} className="premium-card" style={{ padding: '28px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-          <div className="form-group">
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>WhatsApp Business Account ID (WABA ID)</label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        {/* Meta WhatsApp Settings Card */}
+        <form onSubmit={handleSave} className="premium-card" style={{ padding: '24px', backgroundColor: 'var(--surface-color)', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+            <Send size={22} style={{ color: 'var(--primary)' }} />
+            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Meta WhatsApp Business API Settings</h3>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+            <div className="form-group">
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>WhatsApp Business Account ID (WABA ID)</label>
+              <input
+                type="text"
+                value={settings.WhatsAppBusinessAccountId}
+                onChange={e => setSettings({ ...settings, WhatsAppBusinessAccountId: e.target.value })}
+                placeholder="e.g. 1493788272767952"
+                required
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+              />
+            </div>
+
+            <div className="form-group">
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Phone Number ID</label>
+              <input
+                type="text"
+                value={settings.PhoneNumberId}
+                onChange={e => setSettings({ ...settings, PhoneNumberId: e.target.value })}
+                placeholder="e.g. 1190623417473092"
+                required
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+            <div className="form-group">
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Graph API Version</label>
+              <input
+                type="text"
+                value={settings.ApiVersion}
+                onChange={e => setSettings({ ...settings, ApiVersion: e.target.value })}
+                placeholder="e.g. v25.0"
+                required
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+              />
+            </div>
+
+            <div className="form-group">
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Webhook Verify Token</label>
+              <input
+                type="text"
+                value={settings.VerifyToken}
+                onChange={e => setSettings({ ...settings, VerifyToken: e.target.value })}
+                placeholder="Your custom webhook verification string"
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+              />
+            </div>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Webhook Callback URL</label>
             <input
               type="text"
-              value={settings.WhatsAppBusinessAccountId}
-              onChange={e => setSettings({ ...settings, WhatsAppBusinessAccountId: e.target.value })}
-              placeholder="e.g. 1493788272767952"
-              required
-              style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+              readOnly
+              value={`${window.location.origin}/api/webhooks/whatsapp`}
+              style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.03)', color: 'var(--text-secondary)', fontFamily: 'monospace' }}
             />
           </div>
 
-          <div className="form-group">
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Phone Number ID</label>
-            <input
-              type="text"
-              value={settings.PhoneNumberId}
-              onChange={e => setSettings({ ...settings, PhoneNumberId: e.target.value })}
-              placeholder="e.g. 1190623417473092"
+          <div className="form-group" style={{ marginBottom: '24px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>System User Access Token</label>
+            <textarea
+              value={settings.AccessToken}
+              onChange={e => setSettings({ ...settings, AccessToken: e.target.value })}
+              placeholder="Paste your Meta Permanent Access Token here..."
               required
-              style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
+              rows={4}
+              style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)', resize: 'vertical', fontFamily: 'monospace', fontSize: '13px' }}
             />
+          </div>
+
+          <button type="submit" disabled={saving} className="btn btn-primary" style={{ padding: '10px 24px', borderRadius: '6px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
+        </form>
+
+        {/* PMS Connector Settings Card */}
+        <div className="premium-card" style={{ padding: '24px', backgroundColor: 'var(--surface-color)', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+            <Hotel size={22} style={{ color: 'var(--primary)' }} />
+            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>PMS Integration Settings</h3>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>Active PMS Connector Mode</label>
+              <input
+                type="text"
+                readOnly
+                value="Pdf (Virtual Printer Bridge)"
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.03)', color: 'var(--text-primary)', fontWeight: 600 }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>Virtual Printer Name</label>
+              <input
+                type="text"
+                readOnly
+                value="Scalifts"
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.03)', color: 'var(--text-primary)' }}
+              />
+            </div>
           </div>
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-          <div className="form-group">
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Graph API Version</label>
-            <input
-              type="text"
-              value={settings.ApiVersion}
-              onChange={e => setSettings({ ...settings, ApiVersion: e.target.value })}
-              placeholder="e.g. v25.0"
-              required
-              style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
-            />
-          </div>
-
-          <div className="form-group">
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Webhook Verify Token</label>
-            <input
-              type="text"
-              value={settings.VerifyToken}
-              onChange={e => setSettings({ ...settings, VerifyToken: e.target.value })}
-              placeholder="Your custom webhook verification string"
-              style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
-            />
-          </div>
-        </div>
-
-        <div className="form-group" style={{ marginBottom: '28px' }}>
-          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>System User Access Token</label>
-          <textarea
-            value={settings.AccessToken}
-            onChange={e => setSettings({ ...settings, AccessToken: e.target.value })}
-            placeholder="Paste your Meta Permanent Access Token here..."
-            required
-            rows={4}
-            style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)', resize: 'vertical', fontFamily: 'monospace', fontSize: '13px' }}
-          />
-        </div>
-
-        <button type="submit" disabled={saving} className="btn btn-primary" style={{ padding: '10px 24px', borderRadius: '6px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {saving ? 'Saving...' : 'Save Settings'}
-        </button>
-      </form>
+      </div>
     </div>
   );
 };

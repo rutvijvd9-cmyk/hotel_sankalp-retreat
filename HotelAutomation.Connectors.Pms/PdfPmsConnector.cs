@@ -586,25 +586,40 @@ public sealed class PdfPmsConnector : IPmsEventSource
 
             _logger.LogInformation("PDF Bridge: Overlaying signature '{Path}' on PDF '{Pdf}'.", sigFullPath, filePath);
 
-            using (var document = PdfSharp.Pdf.IO.PdfReader.Open(filePath, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Modify))
-            {
-                if (document.PageCount > 0)
-                {
-                    var page = document.Pages[0];
-                    using (var gfx = PdfSharp.Drawing.XGraphics.FromPdfPage(page))
-                    {
-                        using (var image = PdfSharp.Drawing.XImage.FromFile(sigFullPath))
-                        {
-                            double width = 85;
-                            double height = 85;
-                            double x = page.Width.Point - 200;
-                            double y = page.Height.Point - 170;
+            var tempSigPath = filePath + $".sigtemp_{Guid.NewGuid()}.pdf";
 
-                            gfx.DrawImage(image, x, y, width, height);
+            using (var inputDocument = PdfSharp.Pdf.IO.PdfReader.Open(filePath, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Import))
+            {
+                using (var outputDocument = new PdfSharp.Pdf.PdfDocument())
+                {
+                    for (int i = 0; i < inputDocument.PageCount; i++)
+                    {
+                        var page = outputDocument.AddPage(inputDocument.Pages[i]);
+                        using (var gfx = PdfSharp.Drawing.XGraphics.FromPdfPage(page))
+                        {
+                            using (var image = PdfSharp.Drawing.XImage.FromFile(sigFullPath))
+                            {
+                                double width = 70;
+                                double height = 70;
+                                // Centre the stamp horizontally in the right-side signature column.
+                                // x: ~195pt from right edge keeps it inside the signature box.
+                                double x = page.Width.Point - 195;
+                                // y: 200pt from bottom = ~642pt from top on A4 (842pt page).
+                                // This places the stamp EXACTLY between "For,Hotel Sankalp" (~600pt)
+                                // and "Authorised Signature" (~665pt), without overlapping either.
+                                double y = page.Height.Point - 200;
+
+                                gfx.DrawImage(image, x, y, width, height);
+                            }
                         }
                     }
-                    document.Save(filePath);
+                    outputDocument.Save(tempSigPath);
                 }
+            }
+
+            if (File.Exists(tempSigPath))
+            {
+                File.Move(tempSigPath, filePath, overwrite: true);
             }
         }
         catch (Exception ex)

@@ -179,6 +179,13 @@ builder.Services.AddHostedService<TrayIconService>();
 #endif
 
 var app = builder.Build();
+
+// ── Active-user tracker for PDF signature lookup ──────────────────────────────
+// Stores the username of whoever is currently logged-in (or impersonated).
+// Written on every login / impersonate / stop-impersonate / logout so that
+// the PDF connector always stamps the correct user's signature even when the
+// printer fires outside a normal HTTP request cycle.
+string? _activeSignatureUsername = null;
 app.UseCors();
 
 app.UseAuthentication();
@@ -211,10 +218,16 @@ using (var scope = app.Services.CreateScope())
         pdfConnector.SignaturesDataDir = signaturesDataDir;
         pdfConnector.GetActiveUserSignaturePath = async () =>
         {
+            // Use the in-memory tracked username (set on login/impersonate/logout)
+            // so we always stamp the correct user's signature, even when the printer
+            // fires outside a normal HTTP request cycle.
+            var username = _activeSignatureUsername;
+            if (string.IsNullOrEmpty(username)) return null;
+
             using var lookupScope = app.Services.CreateScope();
             var lookupRepo = lookupScope.ServiceProvider.GetRequiredService<UserRepository>();
-            var lastActive = await lookupRepo.GetLastActiveUserAsync();
-            return lastActive?.SignaturePath;
+            var user = await lookupRepo.GetByUsernameAsync(username);
+            return user?.SignaturePath;
         };
     }
 }
@@ -260,12 +273,14 @@ app.MapPost("/api/auth/login", async (LoginRequest req, UserRepository userRepo,
     var principal = new System.Security.Claims.ClaimsPrincipal(identity);
 
     await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
+    _activeSignatureUsername = user.Username;   // track for PDF signature
 
     return Results.Ok(new { username = user.Username, role = user.Role });
 });
 
 app.MapPost("/api/auth/logout", async (HttpContext context) =>
 {
+    _activeSignatureUsername = null;   // clear on logout
     await context.SignOutAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
     return Results.Ok(new { message = "Logged out successfully" });
 });
@@ -317,6 +332,7 @@ app.MapPost("/api/auth/impersonate/{id:int}", async (int id, UserRepository user
     var principal = new System.Security.Claims.ClaimsPrincipal(identity);
 
     await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
+    _activeSignatureUsername = targetUser.Username;   // track impersonated user for PDF signature
 
     return Results.Ok(new { username = targetUser.Username, role = targetUser.Role, isImpersonating = true });
 }).RequireAuthorization();
@@ -354,6 +370,7 @@ app.MapPost("/api/auth/stop-impersonating", async (UserRepository userRepo, Http
     var principal = new System.Security.Claims.ClaimsPrincipal(identity);
 
     await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
+    _activeSignatureUsername = originalUser.Username;   // restore original user for PDF signature
 
     return Results.Ok(new { username = originalUser.Username, role = originalUser.Role, isImpersonating = false });
 }).RequireAuthorization();
@@ -366,7 +383,7 @@ app.MapGet("/api/users", async (UserRepository userRepo, HttpContext context) =>
         return Results.Forbid();
     }
     var users = await userRepo.GetAllAsync();
-    return Results.Ok(users.Select(u => new { u.Id, u.Username, u.Role, u.IsActive, u.CreatedAt }));
+    return Results.Ok(users.Select(u => new { u.Id, u.Username, u.Role, u.IsActive, u.CreatedAt, u.SignaturePath }));
 }).RequireAuthorization();
 
 // Create User (Owner & Developer can create users)
@@ -1307,6 +1324,42 @@ app.MapGet("/api/rules/{id}/analytics-details", async (int id, SqliteConnectionF
         WHERE o.RuleId = @id 
         ORDER BY o.CreatedAt DESC LIMIT 500", new { id });
     return Results.Ok(details);
+});
+
+app.MapGet("/api/rules/{id}/contacts-log", async (int id, int? page, int? pageSize, string? status, SqliteConnectionFactory factory) =>
+{
+    var pg = page ?? 1;
+    var ps = pageSize ?? 50;
+    var offset = (pg - 1) * ps;
+    using var conn = await factory.OpenAsync();
+
+    string whereClause = "WHERE o.RuleId = @id";
+    if (!string.IsNullOrEmpty(status))
+    {
+        whereClause += " AND o.Status = @status";
+    }
+
+    var total = await conn.ExecuteScalarAsync<int>(
+        $"SELECT COUNT(*) FROM OutboxMessages o {whereClause}", new { id, status });
+
+    var rows = await conn.QueryAsync($@"
+        SELECT 
+            o.Id,
+            o.ToPhoneNumber,
+            COALESCE(c.FirstName || ' ' || c.LastName, c.FirstName, c.LastName, '') as GuestName,
+            o.Status,
+            o.CreatedAt,
+            o.SentAt,
+            COALESCE(o.FailureReason, o.ErrorMessage) as FailureReason,
+            o.RetryCount
+        FROM OutboxMessages o
+        LEFT JOIN Contacts c ON o.ToPhoneNumber = c.PhoneNumber
+        {whereClause}
+        ORDER BY o.CreatedAt DESC
+        LIMIT @ps OFFSET @offset",
+        new { id, status, ps, offset });
+
+    return Results.Ok(new { total, page = pg, pageSize = ps, rows });
 });
 
 app.MapGet("/api/broadcast/analytics-details", async (int templateId, string startedAt, SqliteConnectionFactory factory) => 
@@ -2423,13 +2476,22 @@ app.MapGet("/api/settings/whatsapp", async (AppConfigRepository repo, Microsoft.
     });
 });
 
-app.MapPost("/api/settings/whatsapp", async (AppConfigDto dto, AppConfigRepository repo) =>
+app.MapPost("/api/settings/whatsapp", async (AppConfigDto dto, AppConfigRepository repo, Microsoft.Extensions.Options.IOptions<WhatsAppOptions> options) =>
 {
     await repo.SetValueAsync("WhatsApp_AccessToken", dto.AccessToken ?? "");
     await repo.SetValueAsync("WhatsApp_PhoneNumberId", dto.PhoneNumberId ?? "");
     await repo.SetValueAsync("WhatsApp_ApiVersion", dto.ApiVersion ?? "");
     await repo.SetValueAsync("WhatsApp_VerifyToken", dto.VerifyToken ?? "");
     await repo.SetValueAsync("WhatsApp_WhatsAppBusinessAccountId", dto.WhatsAppBusinessAccountId ?? "");
+
+    // Dynamically update the in-memory singleton options instance
+    var opt = options.Value;
+    opt.AccessToken = dto.AccessToken ?? "";
+    opt.PhoneNumberId = dto.PhoneNumberId ?? "";
+    opt.ApiVersion = dto.ApiVersion ?? "";
+    opt.VerifyToken = dto.VerifyToken ?? "";
+    opt.WhatsAppBusinessAccountId = dto.WhatsAppBusinessAccountId ?? "";
+
     return Results.Ok(new { message = "Settings saved successfully" });
 });
 

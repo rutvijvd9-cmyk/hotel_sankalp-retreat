@@ -22,8 +22,6 @@ public sealed class WhatsAppApiClient
         _httpClient = httpClient;
         _options = options.Value;
         _logger = logger;
-        _httpClient.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", _options.AccessToken);
     }
 
     /// <summary>
@@ -35,7 +33,13 @@ public sealed class WhatsAppApiClient
     {
         try
         {
-            var response = await _httpClient.PostAsJsonAsync(_options.BaseUrl, payload, ct);
+            var request = new HttpRequestMessage(HttpMethod.Post, _options.BaseUrl)
+            {
+                Content = JsonContent.Create(payload)
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.AccessToken);
+
+            var response = await _httpClient.SendAsync(request, ct);
 
             var responseBody = await response.Content.ReadAsStringAsync(ct);
             return (response.IsSuccessStatusCode, responseBody);

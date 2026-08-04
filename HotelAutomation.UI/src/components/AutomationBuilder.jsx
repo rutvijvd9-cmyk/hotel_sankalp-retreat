@@ -516,7 +516,7 @@ function StepCard({ step, onUpdate, onDelete, canDelete = true, allTriggerOption
   );
 }
 
-export default function AutomationBuilder({ onCancel, initialRule }) {
+export default function AutomationBuilder({ onCancel, initialRule, onShowAnalytics }) {
   const [ruleName, setRuleName] = useState(initialRule ? (initialRule.Name || initialRule.name || 'New WhatsApp Rule') : 'New WhatsApp Rule');
   const [ruleDescription, setRuleDescription] = useState(initialRule ? (initialRule.Description || initialRule.description || '') : '');
   const [dynamicHeaders, setDynamicHeaders] = React.useState([]);
@@ -799,6 +799,28 @@ export default function AutomationBuilder({ onCancel, initialRule }) {
               }}>
                 {(initialRule.IsEnabled ?? initialRule.isEnabled) ? 'Active' : 'Paused'}
               </span>
+            )}
+            {initialRule && onShowAnalytics && (
+              <button 
+                onClick={() => onShowAnalytics(initialRule)}
+                style={{ 
+                  marginLeft: '12px', 
+                  padding: '4px 12px', 
+                  borderRadius: '999px', 
+                  fontSize: '0.75rem', 
+                  fontWeight: 600, 
+                  backgroundColor: '#e0f2fe', 
+                  color: '#0369a1',
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+                title="View contacts triggered by this rule"
+              >
+                Triggered Contacts
+              </button>
             )}
             {!initialRule && (
               <span style={{ 

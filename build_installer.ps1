@@ -33,6 +33,7 @@ if (Test-Path $publishOut) { Remove-Item $publishOut -Recurse -Force }
 
 dotnet publish "$Root\HotelAutomation.Worker\HotelAutomation.Worker.csproj" `
     --configuration Release `
+    --framework net10.0-windows10.0.19041.0 `
     --runtime win-x64 `
     --self-contained true `
     --output $publishOut
