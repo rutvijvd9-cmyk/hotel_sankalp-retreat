@@ -92,6 +92,21 @@ public sealed class HotelWorker : BackgroundService
 
             var normalizedEvent = pmsEvent with { EventType = targetEventType };
 
+            // ── Checkout Automation Date Validation ─────────────────────────────
+            // Only send WhatsApp message if the printed bill / checkout date matches TODAY'S date.
+            // Old/past date checkouts are saved to Contacts tab, but WhatsApp messaging is skipped.
+            if (string.Equals(targetEventType, "PMS_CHECKOUT", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsTodayCheckoutDate(pmsEvent, out var detectedDateStr))
+                {
+                    _logger.LogInformation(
+                        "Skipping WhatsApp checkout message for {Guest} ({Phone}): Bill checkout date '{BillDate}' does not match today's date '{TodayDate}'.",
+                        pmsEvent.GuestName, cleanPhoneEarly, detectedDateStr, DateTime.Today.ToString("dd/MM/yyyy"));
+                    await _eventLog.LogAsync(normalizedEvent);
+                    return;
+                }
+            }
+
             var rules = await _ruleRepository.GetEnabledRulesForEventTypeAsync(targetEventType);
             var templates = await _templateRepository.GetAllAsync();
             var match = AutomationRuleMatcher.Match(normalizedEvent, rules, templates);
@@ -490,5 +505,56 @@ public sealed class HotelWorker : BackgroundService
             return match.Value.ValueKind == System.Text.Json.JsonValueKind.Null ? null : match.Value.ToString();
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Checks whether a PMS Checkout event's checkout date matches today's system date.
+    /// Returns true if the checkout date matches today (or if no date could be detected).
+    /// Returns false if the checkout date belongs to a different day (e.g. past checkout date).
+    /// </summary>
+    private static bool IsTodayCheckoutDate(PmsEvent pmsEvent, out string detectedDateStr)
+    {
+        detectedDateStr = pmsEvent.CheckOutDate ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(detectedDateStr) && !string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
+        {
+            try
+            {
+                var rawDict = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(pmsEvent.RawPayload);
+                if (rawDict != null)
+                {
+                    if (rawDict.TryGetValue("Departure date", out var depEl) && !string.IsNullOrWhiteSpace(depEl.GetString()))
+                    {
+                        detectedDateStr = depEl.GetString()!;
+                    }
+                    else if (rawDict.TryGetValue("Invoice Date", out var invEl) && !string.IsNullOrWhiteSpace(invEl.GetString()))
+                    {
+                        detectedDateStr = invEl.GetString()!;
+                    }
+                }
+            }
+            catch { /* ignore raw payload parsing issues */ }
+        }
+
+        if (string.IsNullOrWhiteSpace(detectedDateStr))
+        {
+            return true;
+        }
+
+        string[] formats = new[]
+        {
+            "dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy", "d-M-yyyy",
+            "yyyy-MM-dd", "yyyy/MM/dd", "d MMM yyyy", "dd MMM yyyy",
+            "d MMMM yyyy", "dd MMMM yyyy", "dd.MM.yyyy", "d.M.yyyy"
+        };
+
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        if (DateTime.TryParseExact(detectedDateStr.Trim(), formats, culture, System.Globalization.DateTimeStyles.None, out var parsedDate) ||
+            DateTime.TryParse(detectedDateStr.Trim(), culture, System.Globalization.DateTimeStyles.None, out parsedDate))
+        {
+            return parsedDate.Date == DateTime.Today;
+        }
+
+        return true;
     }
 }

@@ -237,14 +237,29 @@ public sealed class ContactRepository
     public async Task<IReadOnlyList<string>> GetDynamicColumnsAsync(CancellationToken ct = default)
     {
         await using var conn = await _factory.OpenAsync(ct);
+        
+        try
+        {
+            await conn.ExecuteAsync("UPDATE Contacts SET CustomFieldsJson = json_remove(CustomFieldsJson, '$.pdfBase64', '$.billPdfBase64') WHERE CustomFieldsJson LIKE '%pdfBase64%' OR CustomFieldsJson LIKE '%billPdfBase64%'");
+        }
+        catch { }
+
         var results = await conn.QueryAsync<string>("SELECT DISTINCT key FROM Contacts, json_each(CustomFieldsJson)");
-        var list = results.ToList();
+        var list = results
+            .Where(k => !string.Equals(k, "pdfBase64", StringComparison.OrdinalIgnoreCase) && 
+                        !string.Equals(k, "billPdfBase64", StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
         var predefined = new List<string>
         {
             "Registration Number",
             "Invoice Number",
             "Bill No",
+            "Invoice Date",
+            "Recipient No Signature & Stamp",
+            "Supplier No Signature & Stamp",
+            "Recipient Signature & Stamp",
+            "Supplier Signature & Stamp",
             "Arrival Date",
             "Departure date",
             "Arrival Time",
@@ -300,7 +315,15 @@ public sealed class ContactRepository
             }
         }
 
-        return list;
+        var sortedList = list
+            .OrderBy(k =>
+            {
+                var idx = predefined.FindIndex(p => string.Equals(p, k, StringComparison.OrdinalIgnoreCase));
+                return idx >= 0 ? idx : int.MaxValue;
+            })
+            .ToList();
+
+        return sortedList;
     }
 
     public async Task<IReadOnlyList<string>> GetDateColumnsAsync(CancellationToken ct = default)

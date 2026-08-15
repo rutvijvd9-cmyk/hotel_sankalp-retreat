@@ -13,8 +13,19 @@ function Step([string]$msg) {
 Step "Step 1/5 - Generating hotel.ico"
 $iconScript = Join-Path $Root "Setup\create_icon.ps1"
 $userPng = "C:\Users\ASUS\.gemini\antigravity\brain\8d192d3d-ee94-4f86-891d-c26c09a1fe13\media__1785069143711.png"
-& powershell -ExecutionPolicy Bypass -File $iconScript -SourcePngPath $userPng
-if ($LASTEXITCODE -ne 0) { throw "Icon generation failed." }
+if (Test-Path $userPng) {
+    & powershell -ExecutionPolicy Bypass -File $iconScript -SourcePngPath $userPng
+    if ($LASTEXITCODE -ne 0) { throw "Icon generation failed." }
+} else {
+    Write-Host "Using existing hotel.ico in HotelAutomation.Worker" -ForegroundColor Yellow
+}
+
+# Copy hotel.ico to Setup folder for installer.iss
+$setupIco = Join-Path $Root "Setup\hotel.ico"
+$workerIco = Join-Path $Root "HotelAutomation.Worker\hotel.ico"
+if (Test-Path $workerIco) {
+    Copy-Item $workerIco $setupIco -Force
+}
 
 # --- STEP 2: Build React UI ---
 Step "Step 2/5 - Building React UI (npm run build)"
@@ -28,8 +39,10 @@ try {
 
 # --- STEP 3: Publish .NET backend ---
 Step "Step 3/5 - Publishing .NET backend (self-contained, win-x64)"
+Get-Process "HotelAutomation.Worker" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
 $publishOut = Join-Path $Root "publish_output"
-if (Test-Path $publishOut) { Remove-Item $publishOut -Recurse -Force }
+if (Test-Path $publishOut) { Remove-Item $publishOut -Recurse -Force -ErrorAction SilentlyContinue }
 
 dotnet publish "$Root\HotelAutomation.Worker\HotelAutomation.Worker.csproj" `
     --configuration Release `
@@ -52,6 +65,13 @@ Step "Step 4/5 - Applying self-signed certificate"
 $signScript = Join-Path $Root "Setup\sign_and_build.ps1"
 & powershell -ExecutionPolicy Bypass -File $signScript
 if ($LASTEXITCODE -ne 0) { throw "Signing or compilation failed." }
+
+$outSetup = Join-Path $Root "installer_output\Scalifts_Setup.exe"
+$rootSetup = Join-Path $Root "HotelSankalpRetreat_Setup.exe"
+if (Test-Path $outSetup) {
+    Copy-Item $outSetup $rootSetup -Force
+    Write-Host "Copied $outSetup to $rootSetup" -ForegroundColor Green
+}
 
 Write-Host ""
 Write-Host "BUILD COMPLETE!" -ForegroundColor Green

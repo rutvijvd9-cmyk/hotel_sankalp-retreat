@@ -28,7 +28,7 @@ AllowNoIcons=no
 OutputDir=..\installer_output
 OutputBaseFilename=Scalifts_Setup
 ; Icon for the installer exe itself
-SetupIconFile=..\HotelAutomation.Worker\hotel.ico
+SetupIconFile=hotel.ico
 ; Compression
 Compression=lzma2/ultra64
 SolidCompression=yes

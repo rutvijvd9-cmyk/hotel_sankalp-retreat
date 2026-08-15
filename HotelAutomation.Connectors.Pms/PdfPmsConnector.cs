@@ -256,7 +256,14 @@ public sealed class PdfPmsConnector : IPmsEventSource
 
             var baseFileName = BuildGuestFileName(pmsEvent);
             var baseNameWithoutExt = Path.GetFileNameWithoutExtension(baseFileName);
-            var dir = Path.GetDirectoryName(fullPath) ?? _options.ArchiveFolder;
+
+            var dateFolder = GetDateFolderName(pmsEvent);
+            var dateDir = Path.Combine(_options.ArchiveFolder, dateFolder);
+            var noSigDir = Path.Combine(dateDir, "No signature and stamp");
+            var sigDir = Path.Combine(dateDir, "Signature and stamp");
+
+            EnsureDirectory(noSigDir);
+            EnsureDirectory(sigDir);
 
             string targetRecipientPath;
             string? targetSupplierPath = null;
@@ -265,19 +272,41 @@ public sealed class PdfPmsConnector : IPmsEventSource
             {
                 _logger.LogInformation("PDF Bridge: 2-page PDF detected. Splitting into Recipient and Supplier slips.");
 
-                recipientTempPath = Path.Combine(dir, $"recipient_temp_{Guid.NewGuid()}.pdf");
-                supplierTempPath = Path.Combine(dir, $"supplier_temp_{Guid.NewGuid()}.pdf");
+                // Save un-signed split pages to "No signature and stamp"
+                var noSigRecipientPath = EnsureUniqueFilePath(Path.Combine(noSigDir, $"{baseNameWithoutExt}_Recipient.pdf"));
+                var noSigSupplierPath = EnsureUniqueFilePath(Path.Combine(noSigDir, $"{baseNameWithoutExt}_Supplier.pdf"));
 
                 using (var sourceDoc = PdfSharp.Pdf.IO.PdfReader.Open(fullPath, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Import))
                 {
                     using (var recDoc = new PdfSharp.Pdf.PdfDocument())
                     {
-                        recDoc.AddPage(sourceDoc.Pages[0]);
+                        var p0 = recDoc.AddPage(sourceDoc.Pages[0]);
+                        CopyPageBoxes(sourceDoc.Pages[0], p0);
+                        recDoc.Save(noSigRecipientPath);
+                    }
+                    using (var supDoc = new PdfSharp.Pdf.PdfDocument())
+                    {
+                        var p1 = supDoc.AddPage(sourceDoc.Pages[1]);
+                        CopyPageBoxes(sourceDoc.Pages[1], p1);
+                        supDoc.Save(noSigSupplierPath);
+                    }
+                }
+
+                recipientTempPath = Path.Combine(_options.ArchiveFolder, $"recipient_temp_{Guid.NewGuid()}.pdf");
+                supplierTempPath = Path.Combine(_options.ArchiveFolder, $"supplier_temp_{Guid.NewGuid()}.pdf");
+
+                using (var sourceDoc = PdfSharp.Pdf.IO.PdfReader.Open(fullPath, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Import))
+                {
+                    using (var recDoc = new PdfSharp.Pdf.PdfDocument())
+                    {
+                        var p0 = recDoc.AddPage(sourceDoc.Pages[0]);
+                        CopyPageBoxes(sourceDoc.Pages[0], p0);
                         recDoc.Save(recipientTempPath);
                     }
                     using (var supDoc = new PdfSharp.Pdf.PdfDocument())
                     {
-                        supDoc.AddPage(sourceDoc.Pages[1]);
+                        var p1 = supDoc.AddPage(sourceDoc.Pages[1]);
+                        CopyPageBoxes(sourceDoc.Pages[1], p1);
                         supDoc.Save(supplierTempPath);
                     }
                 }
@@ -288,72 +317,74 @@ public sealed class PdfPmsConnector : IPmsEventSource
                 ApplySignatureIfAvailable(recipientTempPath);
                 ApplySignatureIfAvailable(supplierTempPath);
 
-                // Re-extract data from the signed recipient document to get the correct Base64 pdf payload
+                // Re-extract data from the signed recipient document
                 var updatedEvent = _extractor.ExtractFromPdf(recipientTempPath, _options.DefaultEventType);
                 if (updatedEvent != null)
                 {
                     pmsEvent = updatedEvent;
                 }
 
-                // Load bytes of the signed recipient slip and add it to the event payload as Base64
-                if (File.Exists(recipientTempPath))
+                targetRecipientPath = Path.Combine(sigDir, $"{baseNameWithoutExt}_Recipient.pdf");
+                targetSupplierPath = Path.Combine(sigDir, $"{baseNameWithoutExt}_Supplier.pdf");
+
+                var extras = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
                 {
-                    var fileBytes = File.ReadAllBytes(recipientTempPath);
-                    var base64 = Convert.ToBase64String(fileBytes);
-                    
-                    var extras = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
+                    try
                     {
-                        try
+                        var existing = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(pmsEvent.RawPayload);
+                        if (existing != null)
                         {
-                            var existing = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(pmsEvent.RawPayload);
-                            if (existing != null)
-                            {
-                                foreach (var kv in existing)
-                                    extras[kv.Key] = kv.Value;
-                            }
+                            foreach (var kv in existing)
+                                extras[kv.Key] = kv.Value;
                         }
-                        catch { }
                     }
-                    extras["pdfBase64"] = base64;
-                    extras["billPdfBase64"] = base64;
-                    pmsEvent = pmsEvent with { RawPayload = System.Text.Json.JsonSerializer.Serialize(extras) };
+                    catch { }
                 }
 
-                targetRecipientPath = Path.Combine(dir, $"{baseNameWithoutExt}_Recipient.pdf");
-                targetSupplierPath = Path.Combine(dir, $"{baseNameWithoutExt}_Supplier.pdf");
+                extras.Remove("pdfBase64");
+                extras.Remove("billPdfBase64");
+
+                extras["Recipient No Signature & Stamp"] = Path.Combine("PDFs", "Processed", dateFolder, "No signature and stamp", Path.GetFileName(noSigRecipientPath)).Replace('\\', '/');
+                extras["Supplier No Signature & Stamp"] = Path.Combine("PDFs", "Processed", dateFolder, "No signature and stamp", Path.GetFileName(noSigSupplierPath)).Replace('\\', '/');
+                extras["Recipient Signature & Stamp"] = Path.Combine("PDFs", "Processed", dateFolder, "Signature and stamp", Path.GetFileName(targetRecipientPath)).Replace('\\', '/');
+                extras["Supplier Signature & Stamp"] = Path.Combine("PDFs", "Processed", dateFolder, "Signature and stamp", Path.GetFileName(targetSupplierPath)).Replace('\\', '/');
+
+                pmsEvent = pmsEvent with { RawPayload = System.Text.Json.JsonSerializer.Serialize(extras) };
             }
             else
             {
+                // Save un-signed original file to "No signature and stamp"
+                var noSigPath = EnsureUniqueFilePath(Path.Combine(noSigDir, $"{baseNameWithoutExt}.pdf"));
+                File.Copy(fullPath, noSigPath, overwrite: true);
+
                 // For 1-page (or other size) PDFs, apply signature normally
                 ApplySignatureIfAvailable(fullPath);
 
-                // Convert PDF to Base64 to attach on WhatsApp
-                if (File.Exists(fullPath))
-                {
-                    var fileBytes = File.ReadAllBytes(fullPath);
-                    var base64 = Convert.ToBase64String(fileBytes);
+                targetRecipientPath = Path.Combine(sigDir, $"{baseNameWithoutExt}.pdf");
 
-                    var extras = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
+                var extras = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
+                {
+                    try
                     {
-                        try
+                        var existing = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(pmsEvent.RawPayload);
+                        if (existing != null)
                         {
-                            var existing = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(pmsEvent.RawPayload);
-                            if (existing != null)
-                            {
-                                foreach (var kv in existing)
-                                    extras[kv.Key] = kv.Value;
-                            }
+                            foreach (var kv in existing)
+                                extras[kv.Key] = kv.Value;
                         }
-                        catch { }
                     }
-                    extras["pdfBase64"] = base64;
-                    extras["billPdfBase64"] = base64;
-                    pmsEvent = pmsEvent with { RawPayload = System.Text.Json.JsonSerializer.Serialize(extras) };
+                    catch { }
                 }
 
-                targetRecipientPath = Path.Combine(dir, $"{baseNameWithoutExt}.pdf");
+                extras.Remove("pdfBase64");
+                extras.Remove("billPdfBase64");
+
+                extras["Recipient No Signature & Stamp"] = Path.Combine("PDFs", "Processed", dateFolder, "No signature and stamp", Path.GetFileName(noSigPath)).Replace('\\', '/');
+                extras["Recipient Signature & Stamp"] = Path.Combine("PDFs", "Processed", dateFolder, "Signature and stamp", Path.GetFileName(targetRecipientPath)).Replace('\\', '/');
+
+                pmsEvent = pmsEvent with { RawPayload = System.Text.Json.JsonSerializer.Serialize(extras) };
             }
 
             _logger.LogInformation(
@@ -379,14 +410,11 @@ public sealed class PdfPmsConnector : IPmsEventSource
             else
             {
                 targetRecipientPath = EnsureUniqueFilePath(targetRecipientPath);
-                if (archive)
+                if (File.Exists(targetRecipientPath))
                 {
-                    File.Move(fullPath, targetRecipientPath, overwrite: false);
+                    File.Delete(targetRecipientPath);
                 }
-                else
-                {
-                    File.Move(fullPath, targetRecipientPath, overwrite: false);
-                }
+                File.Move(fullPath, targetRecipientPath, overwrite: false);
             }
         }
         catch (Exception ex)
@@ -401,6 +429,49 @@ public sealed class PdfPmsConnector : IPmsEventSource
     }
 
     // ── File helpers ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Extracts the invoice date (or arrival/departure date) from extracted PmsEvent data,
+    /// formatted cleanly for Windows folder names (e.g. "07-08-2026").
+    /// </summary>
+    private static string GetDateFolderName(Core.Models.PmsEvent pmsEvent)
+    {
+        string? rawDate = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(pmsEvent.RawPayload))
+            {
+                var payload = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(pmsEvent.RawPayload);
+                if (payload != null)
+                {
+                    if (payload.TryGetValue("Invoice Date", out var invDate) && !string.IsNullOrWhiteSpace(invDate) && invDate != "-")
+                        rawDate = invDate;
+                    else if (payload.TryGetValue("Arrival Date", out var arrDate) && !string.IsNullOrWhiteSpace(arrDate) && arrDate != "-")
+                        rawDate = arrDate;
+                    else if (payload.TryGetValue("Departure date", out var depDate) && !string.IsNullOrWhiteSpace(depDate) && depDate != "-")
+                        rawDate = depDate;
+                }
+            }
+        }
+        catch { }
+
+        if (string.IsNullOrWhiteSpace(rawDate))
+        {
+            rawDate = !string.IsNullOrWhiteSpace(pmsEvent.CheckOutDate) ? pmsEvent.CheckOutDate : pmsEvent.CheckInDate;
+        }
+
+        if (string.IsNullOrWhiteSpace(rawDate) || rawDate == "-")
+        {
+            return DateTime.Now.ToString("dd-MM-yyyy");
+        }
+
+        // Convert slashes, dots, spaces, backslashes and colons to hyphens (e.g. "07/08/2026" -> "07-08-2026")
+        var cleanDate = rawDate.Trim().Replace('/', '-').Replace('.', '-').Replace('\\', '-').Replace(':', '-');
+        var invalid = Path.GetInvalidFileNameChars();
+        var sanitized = new string(cleanDate.Where(c => !invalid.Contains(c)).ToArray());
+
+        return string.IsNullOrWhiteSpace(sanitized) ? DateTime.Now.ToString("dd-MM-yyyy") : sanitized;
+    }
 
     /// <summary>
     /// Builds a human-readable PDF filename from the extracted guest data.
@@ -557,6 +628,64 @@ public sealed class PdfPmsConnector : IPmsEventSource
         }
     }
 
+    /// <summary>
+    /// Copies MediaBox, CropBox, TrimBox, BleedBox, ArtBox, and Rotate from the
+    /// source page (resolving inherited values from the parent page tree) into the
+    /// destination page's dictionary. This is needed because PdfSharp's AddPage()
+    /// imports the page content but does NOT resolve inherited box attributes, so the
+    /// extracted page ends up with a different size than the original.
+    /// </summary>
+    private static void CopyPageBoxes(PdfSharp.Pdf.PdfPage src, PdfSharp.Pdf.PdfPage dst)
+    {
+        try
+        {
+            if (src.MediaBox != null) dst.MediaBox = src.MediaBox;
+            if (src.CropBox != null) dst.CropBox = src.CropBox;
+            if (src.TrimBox != null) dst.TrimBox = src.TrimBox;
+            dst.Orientation = src.Orientation;
+        }
+        catch { }
+
+        // Helper: look up a key in the page dict, walking up /Parent chain if needed
+        static PdfSharp.Pdf.PdfItem? Resolve(PdfSharp.Pdf.PdfDictionary dict, string key)
+        {
+            var d = dict;
+            while (d != null)
+            {
+                if (d.Elements.ContainsKey(key))
+                    return d.Elements[key];
+
+                if (d.Elements.ContainsKey("/Parent"))
+                {
+                    var parentRef = d.Elements["/Parent"] as PdfSharp.Pdf.Advanced.PdfReference;
+                    d = parentRef?.Value as PdfSharp.Pdf.PdfDictionary;
+                }
+                else break;
+            }
+            return null;
+        }
+
+        // PdfPage exposes its underlying PdfDictionary through the inherited base
+        var srcDict = src as PdfSharp.Pdf.PdfDictionary;
+        var dstDict = dst as PdfSharp.Pdf.PdfDictionary;
+        if (srcDict == null || dstDict == null) return;
+
+        // Copy the standard page boxes
+        foreach (var boxKey in new[] { "/MediaBox", "/CropBox", "/TrimBox", "/BleedBox", "/ArtBox" })
+        {
+            var value = Resolve(srcDict, boxKey);
+            if (value != null)
+            {
+                dstDict.Elements[boxKey] = value;
+            }
+        }
+
+        // Copy /Rotate if present
+        var rotate = Resolve(srcDict, "/Rotate");
+        if (rotate != null)
+            dstDict.Elements["/Rotate"] = rotate;
+    }
+
     private void ApplySignatureIfAvailable(string filePath)
     {
         if (GetActiveUserSignaturePath == null) return;
@@ -564,7 +693,11 @@ public sealed class PdfPmsConnector : IPmsEventSource
         try
         {
             var relativePath = GetActiveUserSignaturePath().GetAwaiter().GetResult();
-            if (string.IsNullOrWhiteSpace(relativePath)) return;
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                _logger.LogWarning("PDF Bridge: GetActiveUserSignaturePath returned null or empty.");
+                return;
+            }
 
             // Resolve from the writable AppData signatures folder (set at startup).
             // Fall back to the old wwwroot path for backward compatibility.
@@ -578,48 +711,60 @@ public sealed class PdfPmsConnector : IPmsEventSource
             {
                 sigFullPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", relativePath.TrimStart('/'));
             }
+
             if (!File.Exists(sigFullPath))
             {
-                _logger.LogWarning("PDF Bridge: Signature file '{Path}' not found on disk.", sigFullPath);
-                return;
+                var wwwrootFallback = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", relativePath.TrimStart('/'));
+                if (File.Exists(wwwrootFallback))
+                {
+                    sigFullPath = wwwrootFallback;
+                }
+                else
+                {
+                    _logger.LogWarning("PDF Bridge: Signature file '{Path}' not found on disk.", sigFullPath);
+                    return;
+                }
             }
 
             _logger.LogInformation("PDF Bridge: Overlaying signature '{Path}' on PDF '{Pdf}'.", sigFullPath, filePath);
 
             var tempSigPath = filePath + $".sigtemp_{Guid.NewGuid()}.pdf";
 
-            using (var inputDocument = PdfSharp.Pdf.IO.PdfReader.Open(filePath, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Import))
+            // Open in Modify mode and append the signature graphic directly to existing pages.
+            // This preserves 100% of original vector layout, text scale, and page dimensions.
+            using (var document = PdfSharp.Pdf.IO.PdfReader.Open(filePath, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Modify))
             {
-                using (var outputDocument = new PdfSharp.Pdf.PdfDocument())
+                for (int i = 0; i < document.PageCount; i++)
                 {
-                    for (int i = 0; i < inputDocument.PageCount; i++)
+                    var page = document.Pages[i];
+                    using (var gfx = PdfSharp.Drawing.XGraphics.FromPdfPage(page, PdfSharp.Drawing.XGraphicsPdfPageOptions.Append))
                     {
-                        var page = outputDocument.AddPage(inputDocument.Pages[i]);
-                        using (var gfx = PdfSharp.Drawing.XGraphics.FromPdfPage(page))
+                        using (var image = PdfSharp.Drawing.XImage.FromFile(sigFullPath))
                         {
-                            using (var image = PdfSharp.Drawing.XImage.FromFile(sigFullPath))
-                            {
-                                double width = 70;
-                                double height = 70;
-                                // Centre the stamp horizontally in the right-side signature column.
-                                // x: ~195pt from right edge keeps it inside the signature box.
-                                double x = page.Width.Point - 195;
-                                // y: 200pt from bottom = ~642pt from top on A4 (842pt page).
-                                // This places the stamp EXACTLY between "For,Hotel Sankalp" (~600pt)
-                                // and "Authorised Signature" (~665pt), without overlapping either.
-                                double y = page.Height.Point - 200;
+                            double pageWidth = page.Width.Point > 0 ? page.Width.Point : 595.275;
+                            double pageHeight = page.Height.Point > 0 ? page.Height.Point : 841.89;
 
-                                gfx.DrawImage(image, x, y, width, height);
-                            }
+                            double width = 80;
+                            double height = 80;
+                            // Centre the stamp horizontally in the right-side signature column.
+                            // x: ~195pt from right edge keeps it inside the signature box.
+                            double x = pageWidth - 195;
+                            // y: 200pt from bottom = ~642pt from top on A4 (842pt page).
+                            // This places the stamp EXACTLY between "For,Hotel Sankalp" (~600pt)
+                            // and "Authorised Signature" (~665pt), without overlapping either.
+                            double y = pageHeight - 200;
+
+                            gfx.DrawImage(image, x, y, width, height);
                         }
                     }
-                    outputDocument.Save(tempSigPath);
                 }
+                document.Save(tempSigPath);
             }
 
             if (File.Exists(tempSigPath))
             {
                 File.Move(tempSigPath, filePath, overwrite: true);
+                _logger.LogInformation("PDF Bridge: Successfully applied signature stamp to '{Pdf}'.", filePath);
             }
         }
         catch (Exception ex)

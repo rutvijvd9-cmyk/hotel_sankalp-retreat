@@ -195,6 +195,7 @@ app.Use(async (context, next) =>
 {
     if (context.User.Identity?.IsAuthenticated == true && !string.IsNullOrEmpty(context.User.Identity.Name))
     {
+        _activeSignatureUsername = context.User.Identity.Name;
         var userRepo = context.RequestServices.GetRequiredService<UserRepository>();
         await userRepo.UpdateLastActiveAsync(context.User.Identity.Name);
     }
@@ -218,16 +219,32 @@ using (var scope = app.Services.CreateScope())
         pdfConnector.SignaturesDataDir = signaturesDataDir;
         pdfConnector.GetActiveUserSignaturePath = async () =>
         {
-            // Use the in-memory tracked username (set on login/impersonate/logout)
-            // so we always stamp the correct user's signature, even when the printer
-            // fires outside a normal HTTP request cycle.
-            var username = _activeSignatureUsername;
-            if (string.IsNullOrEmpty(username)) return null;
-
             using var lookupScope = app.Services.CreateScope();
             var lookupRepo = lookupScope.ServiceProvider.GetRequiredService<UserRepository>();
-            var user = await lookupRepo.GetByUsernameAsync(username);
-            return user?.SignaturePath;
+
+            // 1. Check in-memory tracked username (set on login/impersonate/HTTP middleware)
+            var username = _activeSignatureUsername;
+            if (!string.IsNullOrEmpty(username))
+            {
+                var user = await lookupRepo.GetByUsernameAsync(username);
+                if (!string.IsNullOrWhiteSpace(user?.SignaturePath))
+                    return user.SignaturePath;
+            }
+
+            // 2. Fall back to last active user in DB
+            var lastActiveUser = await lookupRepo.GetLastActiveUserAsync();
+            if (!string.IsNullOrWhiteSpace(lastActiveUser?.SignaturePath))
+            {
+                return lastActiveUser.SignaturePath;
+            }
+
+            // 3. Fall back to any active user with a signature uploaded (preferring Manager -> Owner -> Employer -> Developer)
+            var allUsers = await lookupRepo.GetAllAsync();
+            var userWithSig = allUsers.FirstOrDefault(u => u.IsActive && !string.IsNullOrWhiteSpace(u.SignaturePath) && u.Role == "Manager")
+                           ?? allUsers.FirstOrDefault(u => u.IsActive && !string.IsNullOrWhiteSpace(u.SignaturePath) && u.Role == "Owner")
+                           ?? allUsers.FirstOrDefault(u => u.IsActive && !string.IsNullOrWhiteSpace(u.SignaturePath));
+
+            return userWithSig?.SignaturePath;
         };
     }
 }
@@ -2345,6 +2362,99 @@ app.MapDelete("/api/contacts/columns/{columnName}", async (string columnName, Co
 {
     var updatedRows = await repo.DeleteCustomFieldColumnAsync(columnName);
     return Results.Ok(new { message = $"Column '{columnName}' deleted from {updatedRows} contacts." });
+});
+
+app.MapGet("/api/pdf-file", (string path) =>
+{
+    if (string.IsNullOrWhiteSpace(path)) return Results.NotFound();
+    var cleanPath = path.TrimStart('/', '\\').Replace('/', Path.DirectorySeparatorChar);
+    
+    var fullPath = Path.Combine(Directory.GetCurrentDirectory(), cleanPath);
+    if (File.Exists(fullPath)) return Results.File(fullPath, "application/pdf");
+
+    var appDataDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+    var appDataPath = Path.Combine(appDataDir, "HotelSankalpRetreat", cleanPath);
+    if (File.Exists(appDataPath)) return Results.File(appDataPath, "application/pdf");
+
+    return Results.NotFound();
+});
+
+app.MapGet("/api/contacts/{id:int}/pdf-file", async (int id, string columnKey, ContactRepository repo) =>
+{
+    var (contacts, _) = await repo.GetAllAsync(limit: 5000);
+    var contact = contacts.FirstOrDefault(c => c.Id == id);
+    if (contact == null) return Results.NotFound();
+
+    var fields = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(contact.CustomFieldsJson ?? "{}") ?? new();
+
+    if (fields.TryGetValue(columnKey, out var relObj) && relObj != null)
+    {
+        var relPath = relObj.ToString()?.TrimStart('/', '\\').Replace('/', Path.DirectorySeparatorChar);
+        if (!string.IsNullOrWhiteSpace(relPath))
+        {
+            var p1 = Path.Combine(Directory.GetCurrentDirectory(), relPath);
+            if (File.Exists(p1)) return Results.File(p1, "application/pdf");
+
+            var appDataDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var p2 = Path.Combine(appDataDir, "HotelSankalpRetreat", relPath);
+            if (File.Exists(p2)) return Results.File(p2, "application/pdf");
+        }
+    }
+
+    // Dynamic fallback search in Processed directory
+    var rawDate = fields.TryGetValue("Invoice Date", out var invObj) ? invObj?.ToString()
+                : (fields.TryGetValue("Arrival Date", out var arrObj) ? arrObj?.ToString() : null);
+
+    var dateFolder = !string.IsNullOrWhiteSpace(rawDate) 
+        ? rawDate.Trim().Replace('/', '-').Replace('.', '-').Replace('\\', '-') 
+        : DateTime.Now.ToString("dd-MM-yyyy");
+
+    var regNo = fields.TryGetValue("Registration Number", out var regObj) ? regObj?.ToString() : null;
+    var fullNameClean = $"{contact.FirstName}{contact.LastName}".Replace(" ", "");
+
+    var searchDirs = new[]
+    {
+        Path.Combine(Directory.GetCurrentDirectory(), "PDFs", "Processed", dateFolder),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HotelSankalpRetreat", "PDFs", "Processed", dateFolder)
+    };
+
+    bool isSigFolder = columnKey.Contains("Signature & Stamp", StringComparison.OrdinalIgnoreCase) && 
+                      !columnKey.Contains("No Signature", StringComparison.OrdinalIgnoreCase);
+    bool isSupplier = columnKey.StartsWith("Supplier", StringComparison.OrdinalIgnoreCase);
+
+    foreach (var baseDir in searchDirs)
+    {
+        if (!Directory.Exists(baseDir)) continue;
+
+        var subfolderNames = isSigFolder 
+            ? new[] { "Signature and stamp", "2. Signature and stamp" }
+            : new[] { "No signature and stamp", "1. No signature and stamp" };
+
+        foreach (var sub in subfolderNames)
+        {
+            var subDir = Path.Combine(baseDir, sub);
+            if (!Directory.Exists(subDir)) continue;
+
+            var pdfFiles = Directory.GetFiles(subDir, "*.pdf");
+            var match = pdfFiles.FirstOrDefault(f =>
+            {
+                var fname = Path.GetFileName(f);
+                bool nameOrRegMatch = fname.Contains(fullNameClean, StringComparison.OrdinalIgnoreCase) ||
+                                     (!string.IsNullOrWhiteSpace(regNo) && fname.Contains(regNo, StringComparison.OrdinalIgnoreCase));
+                if (!nameOrRegMatch) return false;
+
+                if (isSupplier) return fname.Contains("Supplier", StringComparison.OrdinalIgnoreCase);
+                return fname.Contains("Recipient", StringComparison.OrdinalIgnoreCase) || !fname.Contains("Supplier", StringComparison.OrdinalIgnoreCase);
+            });
+
+            if (match != null && File.Exists(match))
+            {
+                return Results.File(match, "application/pdf");
+            }
+        }
+    }
+
+    return Results.NotFound();
 });
 
 app.MapPost("/api/contacts/import/chunk", async (List<HotelAutomation.Core.Models.Contact> contacts, ContactRepository repo) => 

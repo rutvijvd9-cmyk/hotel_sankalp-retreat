@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Papa from 'papaparse';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download, TrendingUp, Activity, Calendar, UserPlus, Eye, LogOut, Lock, Shield, UserCheck, ShieldAlert } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download, TrendingUp, Activity, Calendar, UserPlus, Eye, EyeOff, LogOut, Lock, Shield, UserCheck, ShieldAlert, Printer } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import AutomationBuilder from './components/AutomationBuilder';
 import PreferenceCenter from './components/PreferenceCenter';
@@ -11,10 +11,22 @@ import ManualCheckOut from './components/ManualCheckOut';
 
 const API_BASE = '/api';
 
+const PDF_COLUMN_KEYS = [
+  'Recipient No Signature & Stamp',
+  'Supplier No Signature & Stamp',
+  'Recipient Signature & Stamp',
+  'Supplier Signature & Stamp'
+];
+
 const PERMANENT_CUSTOM_FIELDS = [
   'Registration Number',
   'Invoice Number',
   'Bill No',
+  'Invoice Date',
+  'Recipient No Signature & Stamp',
+  'Supplier No Signature & Stamp',
+  'Recipient Signature & Stamp',
+  'Supplier Signature & Stamp',
   'Arrival Date',
   'Departure date',
   'Arrival Time',
@@ -70,6 +82,18 @@ const parseDateSafe = (dateStr) => {
   return isNaN(parsed.getTime()) ? new Date(dateStr) : parsed;
 };
 
+const sortColumnsByPredefined = (cols) => {
+  if (!Array.isArray(cols)) return [];
+  return [...cols].sort((a, b) => {
+    const idxA = PERMANENT_CUSTOM_FIELDS.findIndex(p => p.toLowerCase() === a.toLowerCase());
+    const idxB = PERMANENT_CUSTOM_FIELDS.findIndex(p => p.toLowerCase() === b.toLowerCase());
+    if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+    if (idxA !== -1) return -1;
+    if (idxB !== -1) return 1;
+    return 0;
+  });
+};
+
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const prefContactId = params.get('preferences_for');
@@ -79,6 +103,7 @@ export default function App() {
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState('');
 
   // User management states
@@ -108,12 +133,30 @@ export default function App() {
     return match ? match.isEnabled : true;
   };
 
-  // Reset password states
   const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
   const [resetPasswordUserId, setResetPasswordUserId] = useState(null);
   const [resetPasswordUsername, setResetPasswordUsername] = useState('');
   const [newPasswordForUser, setNewPasswordForUser] = useState('');
   const [resetPasswordError, setResetPasswordError] = useState('');
+
+  // PDF Preview & Print Modal state
+  const [pdfModalData, setPdfModalData] = useState(null);
+  const pdfIframeRef = React.useRef(null);
+
+  const handleOpenPdfPreview = (contact, columnKey, pathValue) => {
+    let pdfUrl = '';
+    if (pathValue && typeof pathValue === 'string' && pathValue.trim() !== '' && pathValue !== '-') {
+      pdfUrl = `${API_BASE}/pdf-file?path=${encodeURIComponent(pathValue)}`;
+    } else {
+      pdfUrl = `${API_BASE}/contacts/${contact.Id || contact.id}/pdf-file?columnKey=${encodeURIComponent(columnKey)}`;
+    }
+
+    const name = `${contact.FirstName || contact.firstName || ''} ${contact.LastName || contact.lastName || ''}`.trim() || 'Guest';
+    setPdfModalData({
+      title: `${columnKey} — ${name}`,
+      pdfUrl
+    });
+  };
 
   const [activeTab, setActiveTab] = useState(() => {
     const tab = localStorage.getItem('hotelAuto_activeTab');
@@ -539,7 +582,7 @@ export default function App() {
       
       const colRes = await fetch(`${API_BASE}/contacts/columns/all`).catch(() => null);
       if (colRes && colRes.ok) {
-        setDynamicHeaders(await colRes.json());
+        setDynamicHeaders(sortColumnsByPredefined(await colRes.json()));
       }
 
 
@@ -1211,7 +1254,7 @@ export default function App() {
                         {!hiddenColumns.includes('Prefix') && <th>Prefix</th>}
                         {!hiddenColumns.includes('Full Name') && <th>Full Name</th>}
                         {(Array.isArray(dynamicHeaders) ? dynamicHeaders : [])
-                          .filter(h => h !== 'Prefix')
+                          .filter(h => h !== 'Prefix' && h !== 'pdfBase64' && h !== 'billPdfBase64')
                           .filter(h => !hiddenColumns.includes(h))
                           .map(h => <th key={h}>{h}</th>)}
                         {!hiddenColumns.includes('Added Date') && <th>Added Date</th>}
@@ -1232,9 +1275,39 @@ export default function App() {
                               <td>{`${c.FirstName || c.firstName || ''} ${c.LastName || c.lastName || ''}`.trim() || '-'}</td>
                             )}
                             {(Array.isArray(dynamicHeaders) ? dynamicHeaders : [])
-                              .filter(h => h !== 'Prefix')
+                              .filter(h => h !== 'Prefix' && h !== 'pdfBase64' && h !== 'billPdfBase64')
                               .filter(h => !hiddenColumns.includes(h))
-                              .map(h => <td key={h}>{fields[h] || '-'}</td>)}
+                              .map(h => {
+                                if (PDF_COLUMN_KEYS.includes(h)) {
+                                  return (
+                                    <td key={h}>
+                                      <button
+                                        className="btn btn-sm"
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '6px',
+                                          padding: '5px 12px',
+                                          borderRadius: '6px',
+                                          fontSize: '12px',
+                                          fontWeight: 600,
+                                          backgroundColor: '#2563eb',
+                                          color: '#ffffff',
+                                          border: 'none',
+                                          cursor: 'pointer',
+                                          boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)',
+                                          whiteSpace: 'nowrap'
+                                        }}
+                                        onClick={() => handleOpenPdfPreview(c, h, fields[h])}
+                                        title={`Print ${h}`}
+                                      >
+                                        <Printer size={14} /> Print
+                                      </button>
+                                    </td>
+                                  );
+                                }
+                                return <td key={h}>{fields[h] || '-'}</td>;
+                              })}
                             {!hiddenColumns.includes('Added Date') && <td>{new Date(c.CreatedAt || c.createdAt).toLocaleDateString()}</td>}
                             {!hiddenColumns.includes('Updated Date') && <td>{c.UpdatedAt || c.updatedAt ? new Date(c.UpdatedAt || c.updatedAt).toLocaleDateString() : '-'}</td>}
                             {!hiddenColumns.includes('Updates') && (
@@ -1296,7 +1369,7 @@ export default function App() {
             )}
           </div>
           
-          {showEditContactModal && createPortal((
+          {showEditContactModal && createPortal(
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
               {(() => {
                 let fields = {};
@@ -1436,6 +1509,58 @@ export default function App() {
                   </div>
                 );
               })()}
+            </div>, document.body)}
+
+          {pdfModalData && createPortal((
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, backdropFilter: 'blur(5px)' }}>
+              <div className="premium-analytics-modal" style={{ width: '880px', maxWidth: '95vw', height: '88vh', display: 'flex', flexDirection: 'column', padding: '24px', borderRadius: '12px', backgroundColor: '#ffffff', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #e2e8f0' }}>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Printer size={22} style={{ color: '#2563eb' }} /> {pdfModalData.title}
+                  </h3>
+                  <button className="btn btn-secondary" onClick={() => setPdfModalData(null)} style={{ padding: '6px 12px', cursor: 'pointer' }}>
+                    ✕ Close
+                  </button>
+                </div>
+
+                <div style={{ flex: 1, position: 'relative', width: '100%', height: '100%', minHeight: 0, borderRadius: '8px', overflow: 'hidden', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc' }}>
+                  <iframe
+                    ref={pdfIframeRef}
+                    src={pdfModalData.pdfUrl}
+                    style={{ width: '100%', height: '100%', border: 'none' }}
+                    title="PDF Document Preview"
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
+                  <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 500 }}>
+                    🖨️ Ready to print to <strong>Canon G3010 series</strong> printer
+                  </span>
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <button className="btn btn-secondary" onClick={() => setPdfModalData(null)}>
+                      Cancel
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 24px', backgroundColor: '#2563eb', color: '#ffffff', fontWeight: 600, borderRadius: '6px', border: 'none', cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.3)' }}
+                      onClick={() => {
+                        if (pdfIframeRef.current && pdfIframeRef.current.contentWindow) {
+                          try {
+                            pdfIframeRef.current.contentWindow.focus();
+                            pdfIframeRef.current.contentWindow.print();
+                          } catch {
+                            window.open(pdfModalData.pdfUrl, '_blank');
+                          }
+                        } else {
+                          window.open(pdfModalData.pdfUrl, '_blank');
+                        }
+                      }}
+                    >
+                      <Printer size={18} /> Print Document
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           ), document.body)}
 
@@ -3962,14 +4087,35 @@ export default function App() {
 
             <div className="form-group" style={{ marginBottom: '28px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>Password</label>
-              <input 
-                type="password" 
-                value={loginPassword} 
-                onChange={e => setLoginPassword(e.target.value)} 
-                required 
-                placeholder="Enter password"
-                style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }} 
-              />
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <input 
+                  type={showPassword ? 'text' : 'password'} 
+                  value={loginPassword} 
+                  onChange={e => setLoginPassword(e.target.value)} 
+                  required 
+                  placeholder="Enter password"
+                  style={{ width: '100%', padding: '10px 42px 10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }} 
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  style={{
+                    position: 'absolute',
+                    right: '10px',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-secondary)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justify: 'center',
+                    padding: '4px'
+                  }}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px', borderRadius: '6px', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
