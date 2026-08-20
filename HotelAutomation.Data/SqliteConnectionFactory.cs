@@ -43,6 +43,13 @@ public sealed class SqliteConnectionFactory
         var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct);
 
+        // Apply per-connection PRAGMAs for reliability and performance.
+        // WAL mode: readers and writers don't block each other — critical for 24/7 multi-threaded operation.
+        // busy_timeout: automatically retry on a brief lock (up to 5 s) instead of throwing immediately.
+        // foreign_keys: enforce referential integrity.
+        // cache_size: keep 2 000 pages (≈8 MB) in memory to reduce disk reads.
+        await SetupConnectionAsync(connection, ct);
+
         if (!_schemaEnsured)
         {
             await _lock.WaitAsync(ct);
@@ -61,6 +68,19 @@ public sealed class SqliteConnectionFactory
         }
 
         return connection;
+    }
+
+    private static async Task SetupConnectionAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            PRAGMA journal_mode  = WAL;
+            PRAGMA busy_timeout  = 5000;
+            PRAGMA foreign_keys  = ON;
+            PRAGMA cache_size    = -2000;
+            PRAGMA synchronous   = NORMAL;
+            """;
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task EnsureSchemaAsync(SqliteConnection connection, CancellationToken ct)

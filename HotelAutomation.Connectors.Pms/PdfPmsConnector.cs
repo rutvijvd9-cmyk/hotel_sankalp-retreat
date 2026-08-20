@@ -272,7 +272,7 @@ public sealed class PdfPmsConnector : IPmsEventSource
             {
                 _logger.LogInformation("PDF Bridge: 2-page PDF detected. Splitting into Recipient and Supplier slips.");
 
-                // Save un-signed split pages to "No signature and stamp"
+                // Save un-signed split pages to "No signature and stamp" (normalized & centered)
                 var noSigRecipientPath = EnsureUniqueFilePath(Path.Combine(noSigDir, $"{baseNameWithoutExt}_Recipient.pdf"));
                 var noSigSupplierPath = EnsureUniqueFilePath(Path.Combine(noSigDir, $"{baseNameWithoutExt}_Supplier.pdf"));
 
@@ -291,6 +291,9 @@ public sealed class PdfPmsConnector : IPmsEventSource
                         supDoc.Save(noSigSupplierPath);
                     }
                 }
+
+                NormalizeAndScalePdfFile(noSigRecipientPath);
+                NormalizeAndScalePdfFile(noSigSupplierPath);
 
                 recipientTempPath = Path.Combine(_options.ArchiveFolder, $"recipient_temp_{Guid.NewGuid()}.pdf");
                 supplierTempPath = Path.Combine(_options.ArchiveFolder, $"supplier_temp_{Guid.NewGuid()}.pdf");
@@ -313,7 +316,10 @@ public sealed class PdfPmsConnector : IPmsEventSource
 
                 isSplit = true;
 
-                // Apply signature to both Recipient and Supplier pages
+                // Scale and align pages first, then stamp signature
+                NormalizeAndScalePdfFile(recipientTempPath);
+                NormalizeAndScalePdfFile(supplierTempPath);
+
                 ApplySignatureIfAvailable(recipientTempPath);
                 ApplySignatureIfAvailable(supplierTempPath);
 
@@ -357,8 +363,10 @@ public sealed class PdfPmsConnector : IPmsEventSource
                 // Save un-signed original file to "No signature and stamp"
                 var noSigPath = EnsureUniqueFilePath(Path.Combine(noSigDir, $"{baseNameWithoutExt}.pdf"));
                 File.Copy(fullPath, noSigPath, overwrite: true);
+                NormalizeAndScalePdfFile(noSigPath);
 
-                // For 1-page (or other size) PDFs, apply signature normally
+                // For 1-page (or other size) PDFs, scale & center first then apply signature
+                NormalizeAndScalePdfFile(fullPath);
                 ApplySignatureIfAvailable(fullPath);
 
                 targetRecipientPath = Path.Combine(sigDir, $"{baseNameWithoutExt}.pdf");
@@ -686,6 +694,68 @@ public sealed class PdfPmsConnector : IPmsEventSource
             dstDict.Elements["/Rotate"] = rotate;
     }
 
+    /// <summary>
+    /// Scales and centers the printed PDF pages on standard A4 (595.28 x 841.89 pt) so that
+    /// left and right margins are completely even, and content fills the page with balanced gaps.
+    /// </summary>
+    private void NormalizeAndScalePdfFile(string pdfPath)
+    {
+        try
+        {
+            var tempScaledPath = pdfPath + $".scaled_{Guid.NewGuid():N}.pdf";
+            const double standardWidth = 595.27559;  // A4 width in pt
+            const double standardHeight = 841.88976; // A4 height in pt
+
+            using (var xForm = PdfSharp.Drawing.XPdfForm.FromFile(pdfPath))
+            {
+                if (xForm.PageCount == 0) return;
+
+                using (var destDoc = new PdfSharp.Pdf.PdfDocument())
+                {
+                    for (int i = 0; i < xForm.PageCount; i++)
+                    {
+                        xForm.PageNumber = i + 1;
+                        double originalWidth = xForm.PixelWidth > 0 ? xForm.PointWidth : standardWidth;
+                        double originalHeight = xForm.PixelHeight > 0 ? xForm.PointHeight : standardHeight;
+
+                        var newPage = destDoc.AddPage();
+                        newPage.Width = PdfSharp.Drawing.XUnit.FromPoint(standardWidth);
+                        newPage.Height = PdfSharp.Drawing.XUnit.FromPoint(standardHeight);
+
+                        using (var gfx = PdfSharp.Drawing.XGraphics.FromPdfPage(newPage))
+                        {
+                            // Scale factor: 0.98 scale ensures content is nicely proportioned without touching borders
+                            double scaleX = (standardWidth / originalWidth) * 0.98;
+                            double scaleY = (standardHeight / originalHeight) * 0.98;
+                            double scale = Math.Min(scaleX, scaleY);
+
+                            double scaledWidth = originalWidth * scale;
+                            double scaledHeight = originalHeight * scale;
+
+                            // Center the scaled content on the new A4 page with equal left/right/top/bottom margins
+                            double offsetX = (standardWidth - scaledWidth) / 2.0;
+                            double offsetY = (standardHeight - scaledHeight) / 2.0;
+
+                            gfx.DrawImage(xForm, offsetX, offsetY, scaledWidth, scaledHeight);
+                        }
+                    }
+
+                    destDoc.Save(tempScaledPath);
+                }
+            }
+
+            if (File.Exists(tempScaledPath))
+            {
+                File.Move(tempScaledPath, pdfPath, overwrite: true);
+                _logger.LogInformation("PDF Bridge: Normalized and auto-aligned PDF pages for '{File}'.", Path.GetFileName(pdfPath));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "PDF Bridge: Could not auto-scale PDF '{File}' (using original layout).", Path.GetFileName(pdfPath));
+        }
+    }
+
     private void ApplySignatureIfAvailable(string filePath)
     {
         if (GetActiveUserSignaturePath == null) return;
@@ -744,17 +814,29 @@ public sealed class PdfPmsConnector : IPmsEventSource
                             double pageWidth = page.Width.Point > 0 ? page.Width.Point : 595.275;
                             double pageHeight = page.Height.Point > 0 ? page.Height.Point : 841.89;
 
-                            double width = 80;
-                            double height = 80;
-                            // Centre the stamp horizontally in the right-side signature column.
-                            // x: ~195pt from right edge keeps it inside the signature box.
-                            double x = pageWidth - 195;
-                            // y: 200pt from bottom = ~642pt from top on A4 (842pt page).
-                            // This places the stamp EXACTLY between "For,Hotel Sankalp" (~600pt)
-                            // and "Authorised Signature" (~665pt), without overlapping either.
-                            double y = pageHeight - 200;
+                            // Stamp dimensions: Maintain true aspect ratio of the uploaded image
+                            double targetSize = 95;
+                            double imgAspect = (image.PixelHeight > 0) ? ((double)image.PixelWidth / image.PixelHeight) : 1.0;
+                            double stampWidth = targetSize;
+                            double stampHeight = targetSize;
 
-                            gfx.DrawImage(image, x, y, width, height);
+                            if (imgAspect > 1.0)
+                            {
+                                stampWidth = targetSize;
+                                stampHeight = targetSize / imgAspect;
+                            }
+                            else if (imgAspect > 0)
+                            {
+                                stampHeight = targetSize;
+                                stampWidth = targetSize * imgAspect;
+                            }
+                            
+                            // Align horizontally over the right signature area
+                            double x = pageWidth - 215;
+                            // Position vertically down from "For, Hotel Sankalp" so bottom part overlaps "Authorised Signature"
+                            double y = pageHeight - 205;
+
+                            gfx.DrawImage(image, x, y, stampWidth, stampHeight);
                         }
                     }
                 }

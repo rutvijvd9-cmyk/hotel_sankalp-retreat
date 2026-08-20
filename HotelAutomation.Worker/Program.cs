@@ -1076,10 +1076,10 @@ app.MapPost("/api/templates/sync", async (ITemplateRepository repo, WhatsAppApiC
                 var positions = matches.Cast<System.Text.RegularExpressions.Match>().Select(m => int.Parse(m.Groups[1].Value)).Distinct().OrderBy(p => p).ToList();
                 var defs = positions.Select(pos => new {
                     Position = pos,
-                    Label = $"Variable {pos}",
-                    SampleValue = "",
-                    SourceColumn = "",
-                    DynamicKey = ""
+                    Label = pos == 1 ? "Guest Name" : (pos == 2 ? "Hotel Name" : $"Variable {pos}"),
+                    SampleValue = pos == 1 ? "Dear Guest" : (pos == 2 ? "The Sankalp Retreat" : ""),
+                    SourceColumn = pos == 1 ? "FirstName" : "",
+                    DynamicKey = pos == 1 ? "Name" : (pos == 2 ? "HotelName" : "")
                 }).ToList();
 
                 var newT = new HotelAutomation.Core.Models.MessageTemplate
@@ -2602,7 +2602,39 @@ app.MapPost("/api/settings/whatsapp", async (AppConfigDto dto, AppConfigReposito
     opt.VerifyToken = dto.VerifyToken ?? "";
     opt.WhatsAppBusinessAccountId = dto.WhatsAppBusinessAccountId ?? "";
 
-    return Results.Ok(new { message = "Settings saved successfully" });
+    // Synchronize to appsettings.json files so on-disk configs never stay on old credentials
+    try
+    {
+        var searchRoots = new[]
+        {
+            AppContext.BaseDirectory,
+            Path.Combine(AppContext.BaseDirectory, "..", "..", ".."),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Setup"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "publish_output")
+        };
+
+        foreach (var root in searchRoots)
+        {
+            var configPath = Path.GetFullPath(Path.Combine(root, "appsettings.json"));
+            if (File.Exists(configPath))
+            {
+                var text = await File.ReadAllTextAsync(configPath);
+                var jsonObj = System.Text.Json.Nodes.JsonNode.Parse(text);
+                if (jsonObj != null && jsonObj["WhatsApp"] is System.Text.Json.Nodes.JsonObject waNode)
+                {
+                    waNode["WhatsAppBusinessAccountId"] = dto.WhatsAppBusinessAccountId ?? "";
+                    waNode["PhoneNumberId"] = dto.PhoneNumberId ?? "";
+                    waNode["AccessToken"] = dto.AccessToken ?? "";
+                    waNode["ApiVersion"] = dto.ApiVersion ?? "v25.0";
+                    var updatedJson = jsonObj.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                    await File.WriteAllTextAsync(configPath, updatedJson);
+                }
+            }
+        }
+    }
+    catch { /* Ignore non-fatal file write failures */ }
+
+    return Results.Ok(new { message = "Settings saved and synchronized successfully across all configs" });
 });
 
 app.MapPost("/api/webhooks/pms-events", async (

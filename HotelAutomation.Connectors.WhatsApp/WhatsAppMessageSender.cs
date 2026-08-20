@@ -72,7 +72,7 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                         .OrderBy(d => d.Position)
                         .Select(d =>
                         {
-                            // Priority 1: DynamicKey — live event/API payload (e.g. CheckInDate)
+                            // Priority 1: DynamicKey — live event/API payload (e.g. CheckInDate, Name)
                             if (!string.IsNullOrEmpty(d.DynamicKey))
                             {
                                 var val = GetValueWithFallback(eventDict, d.DynamicKey);
@@ -97,6 +97,19 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                                 if (!string.IsNullOrWhiteSpace(val)) return val;
                             }
 
+                            // Priority 5: Smart positional deduction when definitions are unmapped (fresh install / new sync)
+                            if (d.Position == 1)
+                            {
+                                var val = GetValueWithFallback(eventDict, "Name");
+                                if (string.IsNullOrWhiteSpace(val)) val = GetValueWithFallback(eventDict, "FirstName");
+                                if (!string.IsNullOrWhiteSpace(val)) return val;
+                            }
+                            else if (d.Position == 2)
+                            {
+                                var val = GetValueWithFallback(eventDict, "HotelName");
+                                if (!string.IsNullOrWhiteSpace(val)) return val;
+                            }
+
                             return " "; // Meta requires non-empty strings
                         })
                         .ToList();
@@ -108,19 +121,43 @@ public sealed class WhatsAppMessageSender : IMessageChannel
             }
         }
 
-        // Fallback: if no defs, use values from the event dict in insertion order
-        if (!resolvedByDefs)
+        // Fallback: if no defs or empty list, build from event dict
+        if (!resolvedByDefs || parameterValues.Count == 0)
         {
             try
             {
                 // Try as ordered list first
                 var list = JsonSerializer.Deserialize<List<string>>(message.ParametersJson);
-                if (list != null) parameterValues = list;
+                if (list != null && list.Count > 0) parameterValues = list;
             }
-            catch
+            catch { }
+
+            if (parameterValues.Count == 0)
             {
-                parameterValues = eventDict.Values.ToList();
+                var nameVal = GetValueWithFallback(eventDict, "Name");
+                if (string.IsNullOrWhiteSpace(nameVal)) nameVal = GetValueWithFallback(eventDict, "FirstName");
+                if (string.IsNullOrWhiteSpace(nameVal)) nameVal = "Guest";
+
+                var hotelVal = GetValueWithFallback(eventDict, "HotelName");
+                if (string.IsNullOrWhiteSpace(hotelVal)) hotelVal = "The Sankalp Retreat";
+
+                parameterValues = new List<string> { nameVal, hotelVal };
             }
+        }
+
+        // Post-processing sanity check: ensure any blank/space-only parameter gets resolved to a real value
+        if (parameterValues.Count > 0 && string.IsNullOrWhiteSpace(parameterValues[0]))
+        {
+            var nameVal = GetValueWithFallback(eventDict, "Name");
+            if (string.IsNullOrWhiteSpace(nameVal)) nameVal = GetValueWithFallback(eventDict, "FirstName");
+            if (string.IsNullOrWhiteSpace(nameVal)) nameVal = "Guest";
+            parameterValues[0] = nameVal;
+        }
+        if (parameterValues.Count > 1 && string.IsNullOrWhiteSpace(parameterValues[1]))
+        {
+            var hotelVal = GetValueWithFallback(eventDict, "HotelName");
+            if (string.IsNullOrWhiteSpace(hotelVal)) hotelVal = "The Sankalp Retreat";
+            parameterValues[1] = hotelVal;
         }
 
         // Trim to BodyParamCount to avoid Meta error #132000
@@ -199,20 +236,57 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                 }
                 else
                 {
-                    // Generate PDF using dummy ScheduledJob constructed from Outbox message
-                    var guestName = eventDict.TryGetValue("Name", out var name) && !string.IsNullOrWhiteSpace(name) ? name : 
-                                    (eventDict.TryGetValue("FirstName", out var fn) ? fn : "Guest");
-                    var job = new ScheduledJob 
-                    { 
-                        ParametersJson = message.ParametersJson,
-                        GuestName = guestName
-                    };
-                    
-                    var pdfBytes = await _pdfGenerator.GenerateInvoicePdfAsync(job, ct);
-                    
+                    byte[]? pdfBytes = null;
+                    string pdfFileName = $"Invoice_{DateTime.Now:yyyyMMdd}.pdf";
+
+                    // ── Priority: Use the real stamped PDF saved by PdfPmsConnector ──
+                    // Keys checked: "Recipient Signature & Stamp", then "Recipient No Signature & Stamp"
+                    string? relPdfPath = null;
+                    if (eventDict.TryGetValue("Recipient Signature & Stamp", out var rss) && !string.IsNullOrWhiteSpace(rss))
+                        relPdfPath = rss;
+                    else if (eventDict.TryGetValue("Recipient No Signature & Stamp", out var rnss) && !string.IsNullOrWhiteSpace(rnss))
+                        relPdfPath = rnss;
+
+                    if (!string.IsNullOrWhiteSpace(relPdfPath))
+                    {
+                        // Resolve relative path against the application's base directory
+                        // e.g. "PDFs/Processed/18-08-2026/Signature and stamp/RUTVIJ_1313_20260818.pdf"
+                        var normalised = relPdfPath.Replace('/', Path.DirectorySeparatorChar);
+                        var absPath = Path.IsPathRooted(normalised)
+                            ? normalised
+                            : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, normalised));
+
+                        _logger.LogInformation("WhatsApp sender: real PDF path resolved to '{AbsPath}'", absPath);
+
+                        if (File.Exists(absPath))
+                        {
+                            pdfBytes = await File.ReadAllBytesAsync(absPath, ct);
+                            pdfFileName = Path.GetFileName(absPath);
+                            _logger.LogInformation("WhatsApp sender: loaded real PDF '{File}' ({Bytes} bytes)", pdfFileName, pdfBytes.Length);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("WhatsApp sender: real PDF not found at '{AbsPath}', falling back to generated invoice.", absPath);
+                        }
+                    }
+
+                    // ── Fallback: generate a QuestPDF invoice if the real file wasn't found ──
+                    if (pdfBytes == null)
+                    {
+                        _logger.LogWarning("WhatsApp sender: no real PDF path in event — generating fallback invoice for OutboxMessage {Id}.", message.Id);
+                        var guestName = eventDict.TryGetValue("Name", out var name) && !string.IsNullOrWhiteSpace(name) ? name :
+                                        (eventDict.TryGetValue("FirstName", out var fn) ? fn : "Guest");
+                        var job = new ScheduledJob
+                        {
+                            ParametersJson = message.ParametersJson,
+                            GuestName = guestName
+                        };
+                        pdfBytes = await _pdfGenerator.GenerateInvoicePdfAsync(job, ct);
+                    }
+
                     // Upload to Meta
-                    var (uploadSuccess, mediaId, uploadError) = await _apiClient.UploadMediaAsync(pdfBytes, $"Invoice_{DateTime.Now:yyyyMMdd}.pdf", "application/pdf", ct);
-                    
+                    var (uploadSuccess, mediaId, uploadError) = await _apiClient.UploadMediaAsync(pdfBytes, pdfFileName, "application/pdf", ct);
+
                     if (!uploadSuccess || string.IsNullOrEmpty(mediaId))
                     {
                         _logger.LogError("Failed to upload PDF invoice for OutboxMessage {Id}: {Error}", message.Id, uploadError);
@@ -230,7 +304,7 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                                 document = new
                                 {
                                     id = mediaId,
-                                    filename = $"Invoice_{DateTime.Now:yyyyMMdd}.pdf"
+                                    filename = pdfFileName
                                 }
                             }
                         }
@@ -427,7 +501,15 @@ public sealed class WhatsAppMessageSender : IMessageChannel
         var candidates = new List<string>();
         var normalizedKey = key.Replace("_", "").Replace("-", "").ToLowerInvariant();
         
-        if (normalizedKey == "roomnumber" || normalizedKey == "room" || normalizedKey == "room_number")
+        if (normalizedKey == "name" || normalizedKey == "guestname" || normalizedKey == "fullname" || normalizedKey == "firstname" || normalizedKey == "guest")
+        {
+            candidates.AddRange(new[] { "Name", "FirstName", "First Name", "GuestName", "FullName", "LastName", "name", "guest_name" });
+        }
+        else if (normalizedKey == "hotelname" || normalizedKey == "hotel")
+        {
+            candidates.AddRange(new[] { "HotelName", "Hotel", "hotel_name", "hotel" });
+        }
+        else if (normalizedKey == "roomnumber" || normalizedKey == "room" || normalizedKey == "room_number")
         {
             candidates.AddRange(new[] { "RoomNumber", "Room", "room_number", "room" });
         }

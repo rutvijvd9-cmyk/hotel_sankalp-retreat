@@ -67,8 +67,9 @@ public sealed class HotelWorker : BackgroundService
             _logger.LogInformation("Event received: {EventType} for {Guest}",
                 pmsEvent.EventType, pmsEvent.GuestName);
 
-            // ── Compute name parts (needed for contact save below) ────────────
-            var guestNameEarly = pmsEvent.GuestName?.Trim() ?? "";
+            // Normalize name to Title Case — PDF scanner stores names in ALL CAPS (e.g. "RUTVIJ DHAMELIYA")
+            var guestNameEarly = System.Globalization.CultureInfo.CurrentCulture.TextInfo
+                .ToTitleCase((pmsEvent.GuestName?.Trim() ?? "").ToLower());
             var namePartsEarly = guestNameEarly.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             var firstNameEarly = namePartsEarly.Length > 0 ? namePartsEarly[0] : "";
             var lastNameEarly  = namePartsEarly.Length > 1 ? string.Join(" ", namePartsEarly.Skip(1)) : "";
@@ -207,7 +208,7 @@ public sealed class HotelWorker : BackgroundService
             
             paramDict["Room"] = pmsEvent.RoomNumber ?? "";
             paramDict["Amount"] = pmsEvent.Amount?.ToString("N2") ?? "0.00";
-            paramDict["HotelName"] = !string.IsNullOrWhiteSpace(pmsEvent.HotelName) ? pmsEvent.HotelName : "Sankalp Retreat";
+            paramDict["HotelName"] = !string.IsNullOrWhiteSpace(pmsEvent.HotelName) ? pmsEvent.HotelName : "The Sankalp Retreat";
             paramDict["CheckInDate"] = !string.IsNullOrWhiteSpace(pmsEvent.CheckInDate) ? pmsEvent.CheckInDate : DateTimeOffset.UtcNow.ToString("d MMM yyyy");
             paramDict["CheckOutDate"] = !string.IsNullOrWhiteSpace(pmsEvent.CheckOutDate) ? pmsEvent.CheckOutDate : DateTimeOffset.UtcNow.AddDays(1).ToString("d MMM yyyy");
             paramDict["WifiPassword"] = !string.IsNullOrWhiteSpace(pmsEvent.WifiPassword) ? pmsEvent.WifiPassword : "SankalpGuest@2026";

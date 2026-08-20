@@ -73,9 +73,9 @@ public sealed class TrayIconService : IHostedService, IDisposable
             _trayIcon = new NotifyIcon
             {
                 Icon = appIcon,
-                Text = "Scalifts",
+                Text = "TheSankalpRetreat",
                 Visible = true,
-                BalloonTipTitle = "Scalifts",
+                BalloonTipTitle = "TheSankalpRetreat",
                 BalloonTipText = "Running on http://localhost:8000\nDouble-click to open Dashboard.",
                 BalloonTipIcon = ToolTipIcon.Info
             };
@@ -87,7 +87,7 @@ public sealed class TrayIconService : IHostedService, IDisposable
             var menu = new ContextMenuStrip();
             menu.Font = new System.Drawing.Font("Segoe UI", 9f);
 
-            var headerItem = new ToolStripMenuItem("Scalifts")
+            var headerItem = new ToolStripMenuItem("TheSankalpRetreat")
             {
                 Enabled = false,
                 Font = new System.Drawing.Font("Segoe UI", 9f, System.Drawing.FontStyle.Bold)

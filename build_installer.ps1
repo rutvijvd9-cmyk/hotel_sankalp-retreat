@@ -66,7 +66,7 @@ $signScript = Join-Path $Root "Setup\sign_and_build.ps1"
 & powershell -ExecutionPolicy Bypass -File $signScript
 if ($LASTEXITCODE -ne 0) { throw "Signing or compilation failed." }
 
-$outSetup = Join-Path $Root "installer_output\Scalifts_Setup.exe"
+$outSetup = Join-Path $Root "installer_output\TheSankalpRetreat_Setup.exe"
 $rootSetup = Join-Path $Root "HotelSankalpRetreat_Setup.exe"
 if (Test-Path $outSetup) {
     Copy-Item $outSetup $rootSetup -Force

@@ -4464,7 +4464,7 @@ const SettingsTab = () => {
                 type="text"
                 value={settings.WhatsAppBusinessAccountId}
                 onChange={e => setSettings({ ...settings, WhatsAppBusinessAccountId: e.target.value })}
-                placeholder="e.g. 1493788272767952"
+                placeholder="e.g. 1964387864360271"
                 required
                 style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
               />
@@ -4476,7 +4476,7 @@ const SettingsTab = () => {
                 type="text"
                 value={settings.PhoneNumberId}
                 onChange={e => setSettings({ ...settings, PhoneNumberId: e.target.value })}
-                placeholder="e.g. 1190623417473092"
+                placeholder="e.g. 787260811145630"
                 required
                 style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'var(--surface-color)', color: 'var(--text-primary)' }}
               />
@@ -4558,7 +4558,7 @@ const SettingsTab = () => {
               <input
                 type="text"
                 readOnly
-                value="Scalifts"
+                value="TheSankalpRetreat"
                 style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.03)', color: 'var(--text-primary)' }}
               />
             </div>

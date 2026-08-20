@@ -1,7 +1,7 @@
 # install_printer.ps1
-# Installs the "Scalifts" virtual printer using the built-in Microsoft Print To PDF driver.
+# Installs the "TheSankalpRetreat" virtual printer using the built-in Microsoft Print To PDF driver.
 # This script is run by the installer with admin privileges.
-# Usage: .\install_printer.ps1 -InstallDir "C:\Program Files (x86)\Scalifts"
+# Usage: .\install_printer.ps1 -InstallDir "C:\Program Files\TheSankalpRetreat"
 
 param(
     [string]$InstallDir = (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -9,12 +9,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$PrinterName = "Scalifts"
+$PrinterName = "TheSankalpRetreat"
 $DriverName  = "Microsoft Print To PDF"
 $PdfDir      = Join-Path $InstallDir "PDFs"
 $PortPath    = Join-Path $PdfDir "sankalp_bill.pdf"
 
-Write-Host "Scalifts Printer Installer"
+Write-Host "TheSankalpRetreat Printer Installer"
 Write-Host "  Install Dir : $InstallDir"
 Write-Host "  PDF Folder  : $PdfDir"
 Write-Host "  Port (file) : $PortPath"
@@ -39,11 +39,15 @@ icacls "$PortPath" /grant "Everyone:M"
 icacls "$PortPath" /grant "Users:M"
 
 
-# 3. Remove any existing Scalifts printer (clean slate)
+# 3. Remove any existing TheSankalpRetreat or Scalifts printer (clean slate)
 $existing = Get-Printer -Name $PrinterName -ErrorAction SilentlyContinue
 if ($existing) {
     Remove-Printer -Name $PrinterName -ErrorAction SilentlyContinue
     Write-Host "Removed existing printer."
+}
+$oldScalifts = Get-Printer -Name "Scalifts" -ErrorAction SilentlyContinue
+if ($oldScalifts) {
+    Remove-Printer -Name "Scalifts" -ErrorAction SilentlyContinue
 }
 
 # 4. Check if the port already exists
@@ -57,5 +61,5 @@ if (-not $existingPort) {
 }
 
 # 6. Install the printer
-Add-Printer -Name $PrinterName -DriverName $DriverName -PortName $PortPath -Comment "Scalifts - prints bills directly to PDF"
-Write-Host "SUCCESS: Scalifts printer installed!"
+Add-Printer -Name $PrinterName -DriverName $DriverName -PortName $PortPath -Comment "TheSankalpRetreat - prints bills directly to PDF"
+Write-Host "SUCCESS: TheSankalpRetreat printer installed!"
