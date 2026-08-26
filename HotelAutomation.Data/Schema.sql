@@ -161,3 +161,27 @@ CREATE TABLE IF NOT EXISTS RolePermissions (
     PRIMARY KEY (Role, Module)
 );
 
+CREATE TABLE IF NOT EXISTS ActivityLog (
+    Id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    Username   TEXT    NOT NULL,
+    Action     TEXT    NOT NULL,
+    Details    TEXT    NULL,
+    IpAddress  TEXT    NULL,
+    OccurredAt TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS SystemLogs (
+    Id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    Timestamp    TEXT    NOT NULL,
+    LogLevel     TEXT    NOT NULL,
+    Category     TEXT    NOT NULL,
+    Source       TEXT    NOT NULL,
+    Message      TEXT    NOT NULL,
+    Details      TEXT    NULL,
+    Exception    TEXT    NULL
+);
+
+CREATE INDEX IF NOT EXISTS IX_SystemLogs_Timestamp ON SystemLogs(Timestamp DESC);
+CREATE INDEX IF NOT EXISTS IX_SystemLogs_Category ON SystemLogs(Category);
+CREATE INDEX IF NOT EXISTS IX_SystemLogs_LogLevel ON SystemLogs(LogLevel);
+

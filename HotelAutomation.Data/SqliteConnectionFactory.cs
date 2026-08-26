@@ -74,14 +74,16 @@ public sealed class SqliteConnectionFactory
     {
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            PRAGMA journal_mode  = WAL;
-            PRAGMA busy_timeout  = 5000;
-            PRAGMA foreign_keys  = ON;
-            PRAGMA cache_size    = -2000;
-            PRAGMA synchronous   = NORMAL;
+            PRAGMA journal_mode       = WAL;
+            PRAGMA busy_timeout       = 5000;
+            PRAGMA foreign_keys       = ON;
+            PRAGMA cache_size         = -2000;
+            PRAGMA synchronous        = FULL;
+            PRAGMA wal_autocheckpoint = 100;
             """;
         await cmd.ExecuteNonQueryAsync(ct);
     }
+
 
     private static async Task EnsureSchemaAsync(SqliteConnection connection, CancellationToken ct)
     {
@@ -393,7 +395,7 @@ public sealed class SqliteConnectionFactory
         }
         catch { }
 
-        // RuleExecutionCounts table — tracks per-step-type execution counts per rule
+        // Per-step execution counts for automation rules
         try
         {
             await using var migCmd = connection.CreateCommand();
@@ -405,6 +407,45 @@ public sealed class SqliteConnectionFactory
                     LastAt    TEXT    NULL,
                     PRIMARY KEY (RuleId, StepType)
                 );";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // ActivityLog table — tracks user logins, logouts, and key actions for audit trail
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS ActivityLog (
+                    Id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Username   TEXT    NOT NULL,
+                    Action     TEXT    NOT NULL,
+                    Details    TEXT    NULL,
+                    IpAddress  TEXT    NULL,
+                    OccurredAt TEXT    NOT NULL
+                );";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        // SystemLogs table — captures all crashes, WhatsApp API responses, PMS events, and debug traces
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS SystemLogs (
+                    Id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Timestamp    TEXT    NOT NULL,
+                    LogLevel     TEXT    NOT NULL,
+                    Category     TEXT    NOT NULL,
+                    Source       TEXT    NOT NULL,
+                    Message      TEXT    NOT NULL,
+                    Details      TEXT    NULL,
+                    Exception    TEXT    NULL
+                );
+                CREATE INDEX IF NOT EXISTS IX_SystemLogs_Timestamp ON SystemLogs(Timestamp DESC);
+                CREATE INDEX IF NOT EXISTS IX_SystemLogs_Category ON SystemLogs(Category);
+                CREATE INDEX IF NOT EXISTS IX_SystemLogs_LogLevel ON SystemLogs(LogLevel);";
             await migCmd.ExecuteNonQueryAsync(ct);
         }
         catch { }

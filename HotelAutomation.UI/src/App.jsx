@@ -113,9 +113,26 @@ export default function App() {
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRole, setNewUserRole] = useState('Employer');
   const [createUserError, setCreateUserError] = useState('');
-  const [userSubTab, setUserSubTab] = useState('list'); // 'list' or 'permissions'
+  const [userSubTab, setUserSubTab] = useState('list'); // 'list', 'permissions', or 'activitylogs'
 
   const [permissions, setPermissions] = useState([]);
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [activityLogsFilter, setActivityLogsFilter] = useState('');
+
+  // ── System Diagnostics & Log States ─────────────────────────────────────────
+  const [systemLogs, setSystemLogs] = useState([]);
+  const [systemLogStats, setSystemLogStats] = useState({ Total: 0, FatalCount: 0, ErrorCount: 0, WarnCount: 0, InfoCount: 0, Categories: [] });
+  const [sysLogCategory, setSysLogCategory] = useState('All');
+  const [sysLogLevel, setSysLogLevel] = useState('All');
+  const [sysLogSearch, setSysLogSearch] = useState('');
+  const [sysLogExpandedId, setSysLogExpandedId] = useState(null);
+  const [sysLogAutoRefresh, setSysLogAutoRefresh] = useState(false);
+  const [sysLogLoading, setSysLogLoading] = useState(false);
+  const [crashFilesList, setCrashFilesList] = useState([]);
+  const [showCrashModal, setShowCrashModal] = useState(false);
+  const [selectedCrashFile, setSelectedCrashFile] = useState(null);
+  const [selectedCrashContent, setSelectedCrashContent] = useState('');
+  const [copySuccessMessage, setCopySuccessMessage] = useState('');
 
   const fetchPermissions = async () => {
     try {
@@ -124,6 +141,72 @@ export default function App() {
         setPermissions(await res.json());
       }
     } catch (e) {}
+  };
+
+  const fetchActivityLogs = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/activity-logs?limit=300`);
+      if (res.ok) {
+        setActivityLogs(await res.json());
+      }
+    } catch (e) {}
+  };
+
+  const fetchSystemLogs = async () => {
+    setSysLogLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (sysLogCategory && sysLogCategory !== 'All') params.append('category', sysLogCategory);
+      if (sysLogLevel && sysLogLevel !== 'All') params.append('level', sysLogLevel);
+      if (sysLogSearch && sysLogSearch.trim()) params.append('search', sysLogSearch.trim());
+      params.append('limit', '300');
+
+      const [logsRes, statsRes] = await Promise.all([
+        fetch(`${API_BASE}/system-logs?${params.toString()}`),
+        fetch(`${API_BASE}/system-logs/stats`)
+      ]);
+
+      if (logsRes.ok) setSystemLogs(await logsRes.json());
+      if (statsRes.ok) setSystemLogStats(await statsRes.json());
+    } catch (e) {
+    } finally {
+      setSysLogLoading(false);
+    }
+  };
+
+  const fetchCrashFiles = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/system-logs/crash-files`);
+      if (res.ok) setCrashFilesList(await res.json());
+    } catch (e) {}
+  };
+
+  const handleViewCrashFile = async (filename) => {
+    try {
+      const res = await fetch(`${API_BASE}/system-logs/crash-files/${encodeURIComponent(filename)}`);
+      if (res.ok) {
+        setSelectedCrashFile(filename);
+        setSelectedCrashContent(await res.text());
+        setShowCrashModal(true);
+      }
+    } catch (e) {}
+  };
+
+  const handleClearLogs = async () => {
+    if (!window.confirm("Are you sure you want to clear system logs older than 30 days?")) return;
+    try {
+      const res = await fetch(`${API_BASE}/system-logs/clear?olderThanDays=30`, { method: 'POST' });
+      if (res.ok) {
+        alert("Logs older than 30 days cleared.");
+        fetchSystemLogs();
+      }
+    } catch (e) {}
+  };
+
+  const handleCopyText = (text, msg = 'Copied to clipboard!') => {
+    navigator.clipboard.writeText(text);
+    setCopySuccessMessage(msg);
+    setTimeout(() => setCopySuccessMessage(''), 2500);
   };
 
   const hasAccess = (moduleKey) => {
@@ -247,6 +330,25 @@ export default function App() {
       fetchUsers();
     }
   }, [activeTab, user]);
+
+  useEffect(() => {
+    if (user && activeTab === 'system-logs' && (user.role === 'Owner' || user.role === 'Developer')) {
+      fetchSystemLogs();
+      fetchCrashFiles();
+    }
+  }, [activeTab, sysLogCategory, sysLogLevel, user]);
+
+  useEffect(() => {
+    let interval = null;
+    if (activeTab === 'system-logs' && sysLogAutoRefresh) {
+      interval = setInterval(() => {
+        fetchSystemLogs();
+      }, 5000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [activeTab, sysLogAutoRefresh, sysLogCategory, sysLogLevel, sysLogSearch]);
 
   const handleToggleUserStatus = async (id, isActive) => {
     try {
@@ -3815,7 +3917,25 @@ export default function App() {
             >
               Role Permissions Access
             </button>
+            {(user?.role === 'Owner' || user?.role === 'Developer') && (
+              <button 
+                onClick={() => { setUserSubTab('activitylogs'); fetchActivityLogs(); }}
+                style={{
+                  padding: '10px 16px',
+                  border: 'none',
+                  background: 'none',
+                  fontSize: '15px',
+                  fontWeight: 600,
+                  color: userSubTab === 'activitylogs' ? 'var(--primary)' : 'var(--text-secondary)',
+                  borderBottom: userSubTab === 'activitylogs' ? '2px solid var(--primary)' : '2px solid transparent',
+                  cursor: 'pointer'
+                }}
+              >
+                📋 Activity Logs
+              </button>
+            )}
           </div>
+
 
           {userSubTab === 'list' ? (
             <div className="premium-card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -3977,6 +4097,78 @@ export default function App() {
             </table>
           </div>
         </div>
+          ) : userSubTab === 'activitylogs' ? (
+            <div className="premium-card" style={{ padding: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontWeight: 700, fontSize: '16px' }}>📋 User Activity Log</h3>
+                  <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '13px' }}>All user logins, logouts, and management actions are recorded here.</p>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    placeholder="Filter by username or action..."
+                    value={activityLogsFilter}
+                    onChange={e => setActivityLogsFilter(e.target.value)}
+                    style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '13px', background: 'var(--surface-color)', color: 'var(--text-primary)', minWidth: '240px' }}
+                  />
+                  <button className="btn btn-secondary" style={{ padding: '8px 14px', fontSize: '13px' }} onClick={fetchActivityLogs}>🔄 Refresh</button>
+                </div>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.02)' }}>
+                      <th style={{ padding: '12px 16px', fontWeight: 600, textAlign: 'left' }}>Username</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 600, textAlign: 'left' }}>Action</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 600, textAlign: 'left' }}>Details</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 600, textAlign: 'left' }}>IP Address</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 600, textAlign: 'left', whiteSpace: 'nowrap' }}>Occurred At</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activityLogs
+                      .filter(log => {
+                        if (!activityLogsFilter) return true;
+                        const f = activityLogsFilter.toLowerCase();
+                        return (log.Username || log.username || '').toLowerCase().includes(f)
+                          || (log.Action || log.action || '').toLowerCase().includes(f)
+                          || (log.Details || log.details || '').toLowerCase().includes(f);
+                      })
+                      .map((log, i) => {
+                        const username = log.Username || log.username || '';
+                        const action = log.Action || log.action || '';
+                        const details = log.Details || log.details || '';
+                        const ip = log.IpAddress || log.ipAddress || '';
+                        const ts = log.OccurredAt || log.occurredAt || '';
+                        const isSRK = username === 'SRKadmin';
+                        const actionColor = action.includes('DELETED') || action.includes('FAILED') ? 'var(--danger)'
+                          : action.includes('LOGIN') && !action.includes('FAILED') ? 'var(--success)'
+                          : action.includes('LOGOUT') ? 'var(--text-secondary)'
+                          : 'var(--primary)';
+                        return (
+                          <tr key={i} style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: isSRK ? 'rgba(59,130,246,0.06)' : 'transparent' }}>
+                            <td style={{ padding: '10px 16px', fontWeight: 600, color: isSRK ? 'var(--primary)' : 'var(--text-primary)' }}>
+                              {isSRK ? '🔑 ' : ''}{username}
+                            </td>
+                            <td style={{ padding: '10px 16px' }}>
+                              <span style={{ padding: '3px 8px', borderRadius: '8px', background: actionColor + '18', color: actionColor, fontWeight: 600, fontSize: '12px', whiteSpace: 'nowrap' }}>{action}</span>
+                            </td>
+                            <td style={{ padding: '10px 16px', color: 'var(--text-secondary)', maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{details}</td>
+                            <td style={{ padding: '10px 16px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{ip}</td>
+                            <td style={{ padding: '10px 16px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                              {ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    {activityLogs.length === 0 && (
+                      <tr><td colSpan={5} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)' }}>No activity logs yet. Logs will appear after user logins and actions.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           ) : (
             <div className="premium-card" style={{ padding: '24px', overflow: 'hidden' }}>
               <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
@@ -4018,6 +4210,418 @@ export default function App() {
               </table>
             </div>
           </div>
+          )}
+
+        </div>
+      );
+    }
+
+    if (activeTab === 'system-logs') {
+      const getLevelBadgeStyle = (level) => {
+        const l = (level || 'INFO').toUpperCase();
+        if (l === 'FATAL') return { background: '#ef4444', color: '#fff', fontWeight: 700, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', display: 'inline-block' };
+        if (l === 'ERROR') return { background: '#dc2626', color: '#fff', fontWeight: 600, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', display: 'inline-block' };
+        if (l === 'WARN') return { background: '#f59e0b', color: '#fff', fontWeight: 600, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', display: 'inline-block' };
+        if (l === 'DEBUG') return { background: '#64748b', color: '#fff', fontWeight: 500, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', display: 'inline-block' };
+        return { background: '#2563eb', color: '#fff', fontWeight: 500, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', display: 'inline-block' };
+      };
+
+      const getCategoryBadgeStyle = (cat) => {
+        const c = (cat || 'General').toLowerCase();
+        if (c.includes('crash')) return { background: 'rgba(239, 68, 68, 0.15)', color: '#b91c1c', border: '1px solid rgba(239, 68, 68, 0.3)' };
+        if (c.includes('whatsapp')) return { background: 'rgba(16, 185, 129, 0.15)', color: '#047857', border: '1px solid rgba(16, 185, 129, 0.3)' };
+        if (c.includes('pdf') || c.includes('pms')) return { background: 'rgba(99, 102, 241, 0.15)', color: '#4338ca', border: '1px solid rgba(99, 102, 241, 0.3)' };
+        if (c.includes('template')) return { background: 'rgba(6, 182, 212, 0.15)', color: '#0e7490', border: '1px solid rgba(6, 182, 212, 0.3)' };
+        if (c.includes('auth')) return { background: 'rgba(139, 92, 246, 0.15)', color: '#6d28d9', border: '1px solid rgba(139, 92, 246, 0.3)' };
+        if (c.includes('database')) return { background: 'rgba(217, 119, 6, 0.15)', color: '#b45309', border: '1px solid rgba(217, 119, 6, 0.3)' };
+        return { background: 'rgba(100, 116, 139, 0.15)', color: '#334155', border: '1px solid rgba(100, 116, 139, 0.3)' };
+      };
+
+      return (
+        <div style={{ padding: '24px', maxWidth: '100%', overflow: 'hidden' }}>
+          {/* Header & Action Bar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
+            <div>
+              <h2 style={{ margin: '0 0 4px 0', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Activity size={24} style={{ color: 'var(--primary)' }} /> System Diagnostics & Audit Logs
+              </h2>
+              <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>
+                Live crash reporting, WhatsApp message transmission traces, PDF extraction events, and software lifecycle diagnostics.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', background: 'var(--card-bg, #fff)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                <input 
+                  type="checkbox" 
+                  checked={sysLogAutoRefresh} 
+                  onChange={(e) => setSysLogAutoRefresh(e.target.checked)} 
+                  style={{ cursor: 'pointer' }}
+                />
+                Auto-Refresh (5s)
+              </label>
+
+              <button 
+                className="btn btn-secondary" 
+                onClick={fetchSystemLogs} 
+                disabled={sysLogLoading}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '8px 14px' }}
+              >
+                <Clock size={15} /> {sysLogLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
+
+              <a 
+                href={`${API_BASE}/system-logs/download`} 
+                download 
+                className="btn btn-secondary" 
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '8px 14px', textDecoration: 'none' }}
+              >
+                <Download size={15} /> Download .log File
+              </a>
+
+              <button 
+                className="btn btn-secondary" 
+                onClick={() => { fetchCrashFiles(); setShowCrashModal(true); }}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '8px 14px' }}
+              >
+                <AlertCircle size={15} style={{ color: '#ef4444' }} /> Crash Dumps ({crashFilesList.length})
+              </button>
+
+              <button 
+                className="btn btn-secondary" 
+                onClick={handleClearLogs}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '8px 14px', color: '#b91c1c' }}
+              >
+                <Trash2 size={15} /> Clear Old Logs
+              </button>
+            </div>
+          </div>
+
+          {copySuccessMessage && (
+            <div style={{ background: '#10b981', color: '#fff', padding: '10px 16px', borderRadius: '6px', marginBottom: '16px', fontWeight: 600, fontSize: '14px', animation: 'fadeIn 0.3s' }}>
+              ✓ {copySuccessMessage}
+            </div>
+          )}
+
+          {/* Diagnostic Metric Summary Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+            <div className="premium-card" style={{ padding: '16px 20px', borderLeft: '4px solid #3b82f6' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Total Events</div>
+              <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)' }}>{systemLogStats.Total || 0}</div>
+            </div>
+
+            <div className="premium-card" style={{ padding: '16px 20px', borderLeft: `4px solid ${systemLogStats.FatalCount > 0 ? '#ef4444' : '#10b981'}` }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Fatal Crashes</div>
+              <div style={{ fontSize: '24px', fontWeight: 700, color: systemLogStats.FatalCount > 0 ? '#ef4444' : '#10b981' }}>{systemLogStats.FatalCount || 0}</div>
+            </div>
+
+            <div className="premium-card" style={{ padding: '16px 20px', borderLeft: `4px solid ${systemLogStats.ErrorCount > 0 ? '#dc2626' : '#10b981'}` }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Errors</div>
+              <div style={{ fontSize: '24px', fontWeight: 700, color: systemLogStats.ErrorCount > 0 ? '#dc2626' : '#10b981' }}>{systemLogStats.ErrorCount || 0}</div>
+            </div>
+
+            <div className="premium-card" style={{ padding: '16px 20px', borderLeft: '4px solid #f59e0b' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Warnings</div>
+              <div style={{ fontSize: '24px', fontWeight: 700, color: '#f59e0b' }}>{systemLogStats.WarnCount || 0}</div>
+            </div>
+
+            <div className="premium-card" style={{ padding: '16px 20px', borderLeft: '4px solid #10b981' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Info / Success</div>
+              <div style={{ fontSize: '24px', fontWeight: 700, color: '#10b981' }}>{systemLogStats.InfoCount || 0}</div>
+            </div>
+          </div>
+
+          {/* Filters & Search Row */}
+          <div className="premium-card" style={{ padding: '16px 20px', marginBottom: '20px', display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ flex: '1 1 250px' }}>
+              <input 
+                type="text" 
+                placeholder="Search error message, stack trace, phone, payload, or source..." 
+                value={sysLogSearch}
+                onChange={(e) => setSysLogSearch(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') fetchSystemLogs(); }}
+                className="input" 
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '6px' }}
+              />
+            </div>
+
+            <div style={{ width: '180px' }}>
+              <select 
+                value={sysLogCategory} 
+                onChange={(e) => setSysLogCategory(e.target.value)}
+                className="input"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: '6px' }}
+              >
+                <option value="All">All Categories</option>
+                <option value="System Crash">💥 System Crash</option>
+                <option value="WhatsApp">💬 WhatsApp Sending</option>
+                <option value="PDF & PMS">📄 PDF & PMS</option>
+                <option value="Template Sync">🔄 Template Sync</option>
+                <option value="Authentication">🔐 Authentication</option>
+                <option value="Database">🗄️ Database</option>
+                <option value="Outbox">📬 Outbox Processor</option>
+                <option value="Campaigns">📣 Campaigns</option>
+                <option value="General">⚙️ General</option>
+              </select>
+            </div>
+
+            <div style={{ width: '160px' }}>
+              <select 
+                value={sysLogLevel} 
+                onChange={(e) => setSysLogLevel(e.target.value)}
+                className="input"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: '6px' }}
+              >
+                <option value="All">All Levels</option>
+                <option value="FATAL">🔴 FATAL Only</option>
+                <option value="ERROR">❌ ERROR Only</option>
+                <option value="WARN">⚠️ WARN Only</option>
+                <option value="INFO">ℹ️ INFO Only</option>
+                <option value="DEBUG">🔍 DEBUG Only</option>
+              </select>
+            </div>
+
+            <button 
+              className="btn btn-primary" 
+              onClick={fetchSystemLogs}
+              style={{ padding: '10px 20px', fontSize: '14px', borderRadius: '6px' }}
+            >
+              Filter Logs
+            </button>
+          </div>
+
+          {/* Logs Table */}
+          <div className="premium-card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.01)' }}>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '15px' }}>
+                Showing {systemLogs.length} Recent Log Entries
+              </div>
+              <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                Click any row to view full stack trace, payload, and failure details
+              </div>
+            </div>
+
+            {systemLogs.length === 0 ? (
+              <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                {sysLogLoading ? 'Loading system logs...' : 'No log entries found matching current filter criteria.'}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.02)' }}>
+                      <th style={{ padding: '12px 16px', fontWeight: 600, width: '160px' }}>Timestamp (IST)</th>
+                      <th style={{ padding: '12px 12px', fontWeight: 600, width: '90px' }}>Level</th>
+                      <th style={{ padding: '12px 14px', fontWeight: 600, width: '130px' }}>Category</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 600, width: '180px' }}>Source / Subsystem</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 600 }}>Message & Diagnostics</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 600, width: '90px', textAlign: 'center' }}>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {systemLogs.map((log) => {
+                      const isExpanded = sysLogExpandedId === log.Id;
+                      const hasExtra = !!(log.Exception || log.Details);
+                      const dt = new Date(log.Timestamp);
+                      const timeStr = isNaN(dt.getTime()) ? log.Timestamp : dt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });
+
+                      return (
+                        <React.Fragment key={log.Id}>
+                          <tr 
+                            onClick={() => setSysLogExpandedId(isExpanded ? null : log.Id)}
+                            style={{ 
+                              borderBottom: '1px solid var(--border-color)', 
+                              cursor: 'pointer',
+                              backgroundColor: isExpanded ? 'rgba(59, 130, 246, 0.05)' : log.LogLevel === 'FATAL' ? 'rgba(239, 68, 68, 0.06)' : log.LogLevel === 'ERROR' ? 'rgba(220, 38, 38, 0.03)' : 'transparent',
+                              transition: 'background-color 0.15s'
+                            }}
+                          >
+                            <td style={{ padding: '12px 16px', whiteSpace: 'nowrap', fontFamily: 'monospace', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                              {timeStr}
+                            </td>
+                            <td style={{ padding: '12px 12px' }}>
+                              <span style={getLevelBadgeStyle(log.LogLevel)}>
+                                {log.LogLevel}
+                              </span>
+                            </td>
+                            <td style={{ padding: '12px 14px' }}>
+                              <span style={{ ...getCategoryBadgeStyle(log.Category), padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, display: 'inline-block' }}>
+                                {log.Category}
+                              </span>
+                            </td>
+                            <td style={{ padding: '12px 16px', color: 'var(--text-secondary)', fontSize: '12px', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                              {(log.Source || '').split('.').slice(-2).join('.')}
+                            </td>
+                            <td style={{ padding: '12px 16px', color: 'var(--text-primary)', fontWeight: log.LogLevel === 'FATAL' || log.LogLevel === 'ERROR' ? 600 : 400 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span>{log.Message}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                              {hasExtra ? (
+                                <span style={{ fontSize: '11px', color: 'var(--primary)', fontWeight: 600 }}>
+                                  {isExpanded ? '▲ Hide' : '▼ View'}
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>-</span>
+                              )}
+                            </td>
+                          </tr>
+
+                          {isExpanded && (
+                            <tr style={{ backgroundColor: 'rgba(59, 130, 246, 0.03)', borderBottom: '2px solid var(--border-color)' }}>
+                              <td colSpan={6} style={{ padding: '16px 24px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                  <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
+                                    Technical Diagnostics & Root Cause Details (Log #{log.Id})
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button 
+                                      className="btn btn-secondary" 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const fullDump = `[${log.Timestamp}] [${log.LogLevel}] [${log.Category}] [${log.Source}]\nMessage: ${log.Message}\nDetails: ${log.Details || 'None'}\nException:\n${log.Exception || 'None'}`;
+                                        handleCopyText(fullDump, 'Error details and stack trace copied to clipboard!');
+                                      }}
+                                      style={{ fontSize: '12px', padding: '6px 12px' }}
+                                    >
+                                      📋 Copy Error & Stack Trace
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px', marginBottom: '12px', fontSize: '13px' }}>
+                                  <div><strong>Full Source:</strong> <code style={{ color: 'var(--primary)' }}>{log.Source}</code></div>
+                                  <div><strong>Timestamp:</strong> <code>{log.Timestamp}</code></div>
+                                  <div><strong>Category:</strong> <code>{log.Category}</code></div>
+                                </div>
+
+                                {log.Details && (
+                                  <div style={{ marginBottom: '12px' }}>
+                                    <div style={{ fontWeight: 600, fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '4px' }}>Payload / Context Details:</div>
+                                    <pre style={{ margin: 0, padding: '12px', background: '#1e293b', color: '#f8fafc', borderRadius: '6px', fontSize: '12px', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'Consolas, Monaco, monospace' }}>
+                                      {log.Details}
+                                    </pre>
+                                  </div>
+                                )}
+
+                                {log.Exception ? (
+                                  <div>
+                                    <div style={{ fontWeight: 600, fontSize: '12px', textTransform: 'uppercase', color: '#ef4444', marginBottom: '4px' }}>Exception Stack Trace:</div>
+                                    <pre style={{ margin: 0, padding: '14px', background: '#0f172a', color: '#fca5a5', borderRadius: '6px', fontSize: '12px', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'Consolas, Monaco, monospace', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                                      {log.Exception}
+                                    </pre>
+                                  </div>
+                                ) : (
+                                  !log.Details && (
+                                    <div style={{ color: 'var(--text-secondary)', fontSize: '13px', fontStyle: 'italic' }}>
+                                      No extra stack trace or metadata attached to this log entry.
+                                    </div>
+                                  )
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Crash Files Modal */}
+          {showCrashModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '20px' }}>
+              <div className="premium-card" style={{ width: '850px', maxWidth: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0f172a', color: '#fff' }}>
+                  <div style={{ fontWeight: 700, fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <AlertCircle size={20} style={{ color: '#ef4444' }} /> Fatal Crash Dumps on Disk
+                  </div>
+                  <button 
+                    onClick={() => { setShowCrashModal(false); setSelectedCrashFile(null); setSelectedCrashContent(''); }}
+                    style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '20px', cursor: 'pointer' }}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+                  {crashFilesList.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--text-secondary)' }}>
+                      <CheckCircle2 size={40} style={{ color: '#10b981', margin: '0 auto 12px auto' }} />
+                      <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>No Fatal Crash Dumps Found!</div>
+                      <div style={{ fontSize: '13px', marginTop: '4px' }}>The software has been running cleanly without unhandled crashes.</div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                        The following fatal crash dumps were recorded synchronously to <code>%AppData%\HotelSankalpRetreat\logs\</code>:
+                      </div>
+
+                      <div style={{ display: 'grid', gap: '8px', marginBottom: '20px' }}>
+                        {crashFilesList.map(file => (
+                          <div 
+                            key={file.filename}
+                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: selectedCrashFile === file.filename ? 'rgba(59, 130, 246, 0.1)' : 'rgba(0,0,0,0.03)', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                          >
+                            <div>
+                              <strong style={{ color: '#ef4444', marginRight: '8px' }}>🚨 {file.filename}</strong>
+                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>({(file.sizeBytes / 1024).toFixed(1)} KB — {file.lastModified})</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button 
+                                className="btn btn-secondary"
+                                onClick={() => handleViewCrashFile(file.filename)}
+                                style={{ fontSize: '12px', padding: '4px 10px' }}
+                              >
+                                View Trace
+                              </button>
+                              <a 
+                                href={`${API_BASE}/system-logs/crash-files/${encodeURIComponent(file.filename)}`}
+                                download
+                                className="btn btn-primary"
+                                style={{ fontSize: '12px', padding: '4px 10px', textDecoration: 'none' }}
+                              >
+                                Download
+                              </a>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {selectedCrashContent && (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <strong>Contents of {selectedCrashFile}:</strong>
+                            <button 
+                              className="btn btn-secondary" 
+                              onClick={() => handleCopyText(selectedCrashContent, 'Crash log copied!')}
+                              style={{ fontSize: '12px', padding: '4px 10px' }}
+                            >
+                              📋 Copy Log
+                            </button>
+                          </div>
+                          <pre style={{ margin: 0, padding: '14px', background: '#0f172a', color: '#fca5a5', borderRadius: '6px', fontSize: '12px', maxHeight: '350px', overflowY: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'Consolas, Monaco, monospace' }}>
+                            {selectedCrashContent}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ padding: '12px 24px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0,0,0,0.02)' }}>
+                  <button 
+                    className="btn btn-secondary" 
+                    onClick={() => { setShowCrashModal(false); setSelectedCrashFile(null); setSelectedCrashContent(''); }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       );
@@ -4189,7 +4793,12 @@ export default function App() {
             </div>
           )}
 
-
+          {/* Owner & Developer system logs & diagnostics tab */}
+          {(user.role === 'Owner' || user.role === 'Developer') && (
+            <div className={`nav-item ${activeTab === 'system-logs' ? 'active' : ''}`} onClick={() => setActiveTab('system-logs')}>
+              <Activity size={20} /> Diagnostics & Logs
+            </div>
+          )}
 
           <div className="sidebar-divider" style={{ margin: '8px 16px', borderBottom: '1px solid var(--border)' }}></div>
           {hasAccess('manual-checkin') && (
@@ -4217,7 +4826,7 @@ export default function App() {
               <Menu size={20} />
             </button>
             <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>
-              {activeTab === 'rules' ? 'Automation' : activeTab === 'users' ? 'User Accounts' : activeTab === 'settings' ? 'Settings' : activeTab.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+              {activeTab === 'rules' ? 'Automation' : activeTab === 'users' ? 'User Accounts' : activeTab === 'system-logs' ? 'Diagnostics & System Logs' : activeTab === 'settings' ? 'Settings' : activeTab.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
             </h2>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>

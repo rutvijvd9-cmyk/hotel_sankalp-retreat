@@ -80,6 +80,19 @@ public sealed class HotelWorker : BackgroundService
             // so the Contacts tab is always populated from scanned PDFs.
             await UpsertContactAsync(pmsEvent, cleanPhoneEarly, firstNameEarly, lastNameEarly);
 
+            // ── Early scan notification: always notify when a PDF/event is received ──
+            // This fires even if the checkout date is old or no rule matches,
+            // so staff always know a bill was scanned / event received.
+            var eventLabel = pmsEvent.EventType switch
+            {
+                "PMS_CHECKOUT" or "CheckOut" or "Check-out" => "Check-Out",
+                "PMS_CHECKIN"  or "CheckIn"  or "Check-in"  => "Check-In",
+                _ => pmsEvent.EventType
+            };
+            TrayIconService.ShowNotification(
+                $"📄 {eventLabel} Scanned",
+                $"Guest: {guestNameEarly}\n📱 {cleanPhoneEarly}");
+
             // Normalize trigger event types so that scanned PDF events (CheckIn, CheckOut) match the rule database event types (PMS_CHECKIN, PMS_CHECKOUT)
             var targetEventType = pmsEvent.EventType;
             if (string.Equals(targetEventType, "CheckIn", StringComparison.OrdinalIgnoreCase) || string.Equals(targetEventType, "Check-in", StringComparison.OrdinalIgnoreCase))
@@ -103,10 +116,15 @@ public sealed class HotelWorker : BackgroundService
                     _logger.LogInformation(
                         "Skipping WhatsApp checkout message for {Guest} ({Phone}): Bill checkout date '{BillDate}' does not match today's date '{TodayDate}'.",
                         pmsEvent.GuestName, cleanPhoneEarly, detectedDateStr, DateTime.Today.ToString("dd/MM/yyyy"));
+                    // Show a specific notification so staff know WHY the WhatsApp was skipped
+                    TrayIconService.ShowNotification(
+                        "⚠️ WhatsApp Skipped",
+                        $"Checkout date '{detectedDateStr}' ≠ today.\nContact saved. No WhatsApp sent.");
                     await _eventLog.LogAsync(normalizedEvent);
                     return;
                 }
             }
+
 
             var rules = await _ruleRepository.GetEnabledRulesForEventTypeAsync(targetEventType);
             var templates = await _templateRepository.GetAllAsync();

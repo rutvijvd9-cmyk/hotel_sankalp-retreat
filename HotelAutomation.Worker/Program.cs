@@ -5,12 +5,39 @@ using HotelAutomation.Core.Models;
 using HotelAutomation.Data;
 using HotelAutomation.Data.Repositories;
 using HotelAutomation.Worker;
+using HotelAutomation.Worker.Logging;
 using HotelAutomation.Worker.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.Logging;
 using Dapper;
+
+// ── App Data & Logs Directory Initialization ─────────────────────────────────
+var appDataDir = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+    "HotelSankalpRetreat");
+Directory.CreateDirectory(appDataDir);
+
+var logsDir = Path.Combine(appDataDir, "logs");
+Directory.CreateDirectory(logsDir);
+
+// Initialize synchronous crash logger immediately before anything else
+CrashLogger.Initialize(logsDir);
+
+// ── Global Unhandled Exception Handlers (captures all fatal crashes to disk) ──
+AppDomain.CurrentDomain.UnhandledException += (sender, eventArgs) =>
+{
+    var ex = eventArgs.ExceptionObject as Exception;
+    CrashLogger.LogCrash("AppDomain.UnhandledException", ex, $"IsTerminating: {eventArgs.IsTerminating}");
+};
+
+TaskScheduler.UnobservedTaskException += (sender, eventArgs) =>
+{
+    CrashLogger.LogCrash("TaskScheduler.UnobservedTaskException", eventArgs.Exception);
+    eventArgs.SetObserved();
+};
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -27,6 +54,12 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(optio
     options.MultipartBodyLengthLimit = 250_000_000; // 250 MB
 });
 
+// ── Unified Logging Pipeline (Console + Disk Rolling Files + Database) ────────
+var unifiedLoggerProvider = new UnifiedLoggerProvider(logsDir);
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddProvider(unifiedLoggerProvider);
+
 // Enable CORS for the React UI
 builder.Services.AddCors(options => {
     options.AddDefaultPolicy(policy => {
@@ -35,13 +68,6 @@ builder.Services.AddCors(options => {
 });
 
 // ── Database ──────────────────────────────────────────────────────────────────
-// When installed to Program Files, the exe has no write access to its own directory.
-// We store the live database in %AppData%\HotelSankalpRetreat\ which is always writable.
-var appDataDir = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-    "HotelSankalpRetreat");
-Directory.CreateDirectory(appDataDir);
-
 var dbDestPath = Path.Combine(appDataDir, "hotel_automation.db");
 
 // On first install, copy the seed database shipped with the app
@@ -76,6 +102,7 @@ builder.Services.AddSingleton<IRuleRepository, RuleRepository>();
 builder.Services.AddSingleton<IOutboxRepository, OutboxRepository>();
 builder.Services.AddSingleton<LinkShortenerService>();
 builder.Services.AddSingleton<EventLogRepository>();
+builder.Services.AddSingleton<SystemLogRepository>();
 builder.Services.AddSingleton<JobRepository>();
 builder.Services.AddSingleton<CategoryRepository>();
 builder.Services.AddSingleton<AppConfigRepository>();
@@ -87,14 +114,22 @@ builder.Services.AddSingleton<ContactConsentRepository>();
 builder.Services.AddSingleton<PmsMappingRepository>();
 builder.Services.AddSingleton<TemplateVariantRepository>();
 builder.Services.AddSingleton<HotelAutomation.Worker.Services.VariantSelector>();
+builder.Services.AddSingleton<HotelAutomation.Worker.Services.TemplateSyncService>();
 
 // ── Security & Authentication ──────────────────────────────────────────────────
 builder.Services.AddSingleton<HotelAutomation.Core.Security.PasswordHasher>();
 builder.Services.AddSingleton<UserRepository>();
+builder.Services.AddSingleton<ActivityLogRepository>();
 builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
-        options.Cookie.Name = "HotelAuth";
+        options.Cookie.Name        = "HotelAuth";
+        options.Cookie.IsEssential = true;
+        options.Cookie.SecurePolicy = Microsoft.AspNetCore.Http.CookieSecurePolicy.None; // localhost HTTP
+        // Persist cookie for 30 days so sessions survive server restarts (e.g. after power cuts)
+        options.ExpireTimeSpan     = TimeSpan.FromDays(30);
+        options.SlidingExpiration  = true;
+        options.Cookie.MaxAge      = TimeSpan.FromDays(30);
         options.Events.OnRedirectToLogin = context =>
         {
             context.Response.StatusCode = Microsoft.AspNetCore.Http.StatusCodes.Status401Unauthorized;
@@ -173,12 +208,67 @@ builder.Services.AddHostedService<JobProcessor>();
 builder.Services.AddHostedService<CampaignProcessor>();
 builder.Services.AddHostedService<DateTriggerProcessor>();
 builder.Services.AddHostedService<WebhookRelayPoller>();
+builder.Services.AddHostedService<HotelAutomation.Worker.Services.TemplateSyncScheduler>();
 
 #if WINDOWS
 builder.Services.AddHostedService<TrayIconService>();
 #endif
 
 var app = builder.Build();
+
+// Connect the repository to the UnifiedLoggerProvider for database log streaming
+var sysLogRepository = app.Services.GetRequiredService<SystemLogRepository>();
+unifiedLoggerProvider.SetRepository(sysLogRepository);
+
+// Log application startup details
+var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+startupLogger.LogInformation("=================================================");
+startupLogger.LogInformation("Hotel Automation System starting up on {Url}", "http://localhost:8000");
+startupLogger.LogInformation("AppData: {AppDataDir} | Logs: {LogsDir}", appDataDir, logsDir);
+startupLogger.LogInformation("OS: {OS} | Process ID: {PID} | CLR: {Version}", Environment.OSVersion, Environment.ProcessId, Environment.Version);
+startupLogger.LogInformation("=================================================");
+
+// ── Global Exception Middleware (Captures all unhandled API request crashes) ──
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Unhandled API exception on {Method} {Path}", context.Request.Method, context.Request.Path);
+
+        CrashLogger.LogCrash($"API.{context.Request.Method}_{context.Request.Path}", ex,
+            $"Query: {context.Request.QueryString} | ClientIP: {context.Connection.RemoteIpAddress}");
+
+        try
+        {
+            var sysLog = context.RequestServices.GetService<SystemLogRepository>();
+            if (sysLog != null)
+            {
+                await sysLog.LogAsync(
+                    "FATAL",
+                    "System Crash",
+                    $"API {context.Request.Method} {context.Request.Path}",
+                    $"Unhandled HTTP error: {ex.Message}",
+                    $"Query: {context.Request.QueryString} | User: {context.User.Identity?.Name ?? "Anonymous"}",
+                    ex.ToString());
+            }
+        }
+        catch { }
+
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = "An internal system error occurred.",
+            message = ex.Message,
+            path = context.Request.Path.Value
+        });
+    }
+});
 
 // ── Active-user tracker for PDF signature lookup ──────────────────────────────
 // Stores the username of whoever is currently logged-in (or impersonated).
@@ -208,9 +298,19 @@ using (var scope = app.Services.CreateScope())
     var userRepo = scope.ServiceProvider.GetRequiredService<UserRepository>();
     var hasher = scope.ServiceProvider.GetRequiredService<HotelAutomation.Core.Security.PasswordHasher>();
     var defaultHash = hasher.HashPassword("AdminPassword123");
-    var srkHash = hasher.HashPassword("Srk@1990");
+    var srkHash = hasher.HashPassword("Scalifts$789!");
     // Seed default accounts
     userRepo.SeedDefaultOwnerAsync(defaultHash, srkHash).GetAwaiter().GetResult();
+
+    // ── Force-update SRKadmin password on every startup ──────────────────────
+    // This ensures the password is always current even if the account already existed.
+    var srkUser = userRepo.GetByUsernameAsync("SRKadmin").GetAwaiter().GetResult();
+    if (srkUser != null && !hasher.VerifyPassword("Scalifts$789!", srkUser.PasswordHash))
+    {
+        srkUser.PasswordHash = srkHash;
+        userRepo.UpdateAsync(srkUser).GetAwaiter().GetResult();
+    }
+
 
     // Bind signature path callback on the PDF connector
     var pdfConnector = scope.ServiceProvider.GetService<HotelAutomation.Connectors.Pms.PdfPmsConnector>();
@@ -271,11 +371,15 @@ app.UseStaticFiles(new StaticFileOptions
 // ── API Endpoints for UI ──────────────────────────────────────────────────────
 
 // Auth endpoints
-app.MapPost("/api/auth/login", async (LoginRequest req, UserRepository userRepo, HotelAutomation.Core.Security.PasswordHasher hasher, HttpContext context) =>
+app.MapPost("/api/auth/login", async (LoginRequest req, UserRepository userRepo, HotelAutomation.Core.Security.PasswordHasher hasher, ActivityLogRepository activityLog, HttpContext context) =>
 {
+    var ip = context.Connection.RemoteIpAddress?.ToString();
     var user = await userRepo.GetByUsernameAsync(req.Username);
     if (user == null || !user.IsActive || !hasher.VerifyPassword(req.Password, user.PasswordHash))
     {
+        // Log failed login attempt
+        _ = activityLog.LogAsync(req.Username ?? "unknown", "LOGIN_FAILED",
+            $"Failed login attempt — user not found, inactive, or wrong password", ip);
         return Results.Json(new { error = "Invalid username or password" }, statusCode: 400);
     }
 
@@ -292,15 +396,21 @@ app.MapPost("/api/auth/login", async (LoginRequest req, UserRepository userRepo,
     await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
     _activeSignatureUsername = user.Username;   // track for PDF signature
 
+    _ = activityLog.LogAsync(user.Username, "LOGIN", $"Logged in as {user.Role}", ip);
+
     return Results.Ok(new { username = user.Username, role = user.Role });
 });
 
-app.MapPost("/api/auth/logout", async (HttpContext context) =>
+app.MapPost("/api/auth/logout", async (ActivityLogRepository activityLog, HttpContext context) =>
 {
+    var username = context.User.Identity?.Name ?? "unknown";
+    var ip = context.Connection.RemoteIpAddress?.ToString();
     _activeSignatureUsername = null;   // clear on logout
     await context.SignOutAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
+    _ = activityLog.LogAsync(username, "LOGOUT", null, ip);
     return Results.Ok(new { message = "Logged out successfully" });
 });
+
 
 app.MapGet("/api/auth/me", (HttpContext context) =>
 {
@@ -314,7 +424,7 @@ app.MapGet("/api/auth/me", (HttpContext context) =>
 });
 
 // Impersonate another user (Owner and Developer only)
-app.MapPost("/api/auth/impersonate/{id:int}", async (int id, UserRepository userRepo, HttpContext context) =>
+app.MapPost("/api/auth/impersonate/{id:int}", async (int id, UserRepository userRepo, ActivityLogRepository activityLog, HttpContext context) =>
 {
     var isAuthorized = context.User.IsInRole("Owner") || context.User.IsInRole("Developer") || 
                        (context.User.HasClaim(c => c.Type == "OriginalRole") && 
@@ -335,7 +445,6 @@ app.MapPost("/api/auth/impersonate/{id:int}", async (int id, UserRepository user
     var originalUsername = context.User.FindFirst("OriginalUsername")?.Value ?? context.User.Identity?.Name ?? "";
     var originalRole = context.User.FindFirst("OriginalRole")?.Value ?? context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? "Owner";
 
-
     var claims = new List<System.Security.Claims.Claim>
     {
         new(System.Security.Claims.ClaimTypes.Name, targetUser.Username),
@@ -351,11 +460,15 @@ app.MapPost("/api/auth/impersonate/{id:int}", async (int id, UserRepository user
     await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
     _activeSignatureUsername = targetUser.Username;   // track impersonated user for PDF signature
 
+    _ = activityLog.LogAsync(originalUsername, "IMPERSONATE",
+        $"Started impersonating user '{targetUser.Username}' (Role: {targetUser.Role})",
+        context.Connection.RemoteIpAddress?.ToString());
+
     return Results.Ok(new { username = targetUser.Username, role = targetUser.Role, isImpersonating = true });
 }).RequireAuthorization();
 
 // Stop impersonation and restore original Owner session
-app.MapPost("/api/auth/stop-impersonating", async (UserRepository userRepo, HttpContext context) =>
+app.MapPost("/api/auth/stop-impersonating", async (UserRepository userRepo, ActivityLogRepository activityLog, HttpContext context) =>
 {
     if (!context.User.HasClaim(c => c.Type == "OriginalUsername"))
     {
@@ -364,6 +477,7 @@ app.MapPost("/api/auth/stop-impersonating", async (UserRepository userRepo, Http
 
     var originalUsername = context.User.FindFirst("OriginalUsername")?.Value;
     var originalRole = context.User.FindFirst("OriginalRole")?.Value;
+    var currentUsername = context.User.Identity?.Name ?? "unknown";
 
     if (string.IsNullOrEmpty(originalUsername) || string.IsNullOrEmpty(originalRole))
     {
@@ -389,8 +503,13 @@ app.MapPost("/api/auth/stop-impersonating", async (UserRepository userRepo, Http
     await context.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal);
     _activeSignatureUsername = originalUser.Username;   // restore original user for PDF signature
 
+    _ = activityLog.LogAsync(originalUsername, "STOP_IMPERSONATE",
+        $"Stopped impersonating '{currentUsername}', restored own session",
+        context.Connection.RemoteIpAddress?.ToString());
+
     return Results.Ok(new { username = originalUser.Username, role = originalUser.Role, isImpersonating = false });
 }).RequireAuthorization();
+
 
 // User Management (Owner & Developer can view users)
 app.MapGet("/api/users", async (UserRepository userRepo, HttpContext context) =>
@@ -404,7 +523,7 @@ app.MapGet("/api/users", async (UserRepository userRepo, HttpContext context) =>
 }).RequireAuthorization();
 
 // Create User (Owner & Developer can create users)
-app.MapPost("/api/users", async (CreateUserRequest req, UserRepository userRepo, HotelAutomation.Core.Security.PasswordHasher hasher, HttpContext context) =>
+app.MapPost("/api/users", async (CreateUserRequest req, UserRepository userRepo, HotelAutomation.Core.Security.PasswordHasher hasher, ActivityLogRepository activityLog, HttpContext context) =>
 {
     if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
     {
@@ -438,11 +557,14 @@ app.MapPost("/api/users", async (CreateUserRequest req, UserRepository userRepo,
     };
 
     await userRepo.AddAsync(newUser);
+    _ = activityLog.LogAsync(context.User.Identity?.Name ?? "unknown", "USER_CREATED",
+        $"Created user '{req.Username}' with role '{normalizedRole}'",
+        context.Connection.RemoteIpAddress?.ToString());
     return Results.Ok(new { message = "User created successfully" });
 }).RequireAuthorization();
 
 // Toggle user status (Owner & Developer)
-app.MapPut("/api/users/{id:int}/status", async (int id, ToggleStatusRequest req, UserRepository userRepo, HttpContext context) =>
+app.MapPut("/api/users/{id:int}/status", async (int id, ToggleStatusRequest req, UserRepository userRepo, ActivityLogRepository activityLog, HttpContext context) =>
 {
     if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
     {
@@ -463,11 +585,14 @@ app.MapPut("/api/users/{id:int}/status", async (int id, ToggleStatusRequest req,
 
     user.IsActive = req.IsActive;
     await userRepo.UpdateAsync(user);
+    _ = activityLog.LogAsync(context.User.Identity?.Name ?? "unknown", "USER_STATUS_CHANGED",
+        $"Set user '{user.Username}' IsActive = {req.IsActive}",
+        context.Connection.RemoteIpAddress?.ToString());
     return Results.Ok(new { message = "User status updated successfully" });
 }).RequireAuthorization();
 
 // Update user role (Owner & Developer: promote or demote)
-app.MapPut("/api/users/{id:int}/role", async (int id, UpdateRoleRequest req, UserRepository userRepo, HttpContext context) =>
+app.MapPut("/api/users/{id:int}/role", async (int id, UpdateRoleRequest req, UserRepository userRepo, ActivityLogRepository activityLog, HttpContext context) =>
 {
     if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
     {
@@ -497,13 +622,17 @@ app.MapPut("/api/users/{id:int}/role", async (int id, UpdateRoleRequest req, Use
         return Results.BadRequest(new { error = "Cannot change your own role. Have another administrator update your role." });
     }
 
+    var oldRole = user.Role;
     user.Role = normalizedRole;
     await userRepo.UpdateAsync(user);
+    _ = activityLog.LogAsync(context.User.Identity?.Name ?? "unknown", "USER_ROLE_CHANGED",
+        $"Changed role of '{user.Username}' from '{oldRole}' to '{normalizedRole}'",
+        context.Connection.RemoteIpAddress?.ToString());
     return Results.Ok(new { message = $"User role updated to {normalizedRole} successfully" });
 }).RequireAuthorization();
 
 // Reset a user's password (Owner & Developer)
-app.MapPut("/api/users/{id:int}/reset-password", async (int id, ResetPasswordRequest req, UserRepository userRepo, HotelAutomation.Core.Security.PasswordHasher hasher, HttpContext context) =>
+app.MapPut("/api/users/{id:int}/reset-password", async (int id, ResetPasswordRequest req, UserRepository userRepo, HotelAutomation.Core.Security.PasswordHasher hasher, ActivityLogRepository activityLog, HttpContext context) =>
 {
     if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
     {
@@ -523,11 +652,14 @@ app.MapPut("/api/users/{id:int}/reset-password", async (int id, ResetPasswordReq
 
     user.PasswordHash = hasher.HashPassword(req.Password);
     await userRepo.UpdateAsync(user);
+    _ = activityLog.LogAsync(context.User.Identity?.Name ?? "unknown", "USER_PASSWORD_RESET",
+        $"Reset password for user '{user.Username}'",
+        context.Connection.RemoteIpAddress?.ToString());
     return Results.Ok(new { message = "User password reset successfully" });
 }).RequireAuthorization();
 
 // Delete a user (Owner & Developer)
-app.MapDelete("/api/users/{id:int}", async (int id, UserRepository userRepo, HttpContext context) =>
+app.MapDelete("/api/users/{id:int}", async (int id, UserRepository userRepo, ActivityLogRepository activityLog, HttpContext context) =>
 {
     if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
     {
@@ -547,8 +679,12 @@ app.MapDelete("/api/users/{id:int}", async (int id, UserRepository userRepo, Htt
     }
 
     await userRepo.DeleteAsync(id);
+    _ = activityLog.LogAsync(context.User.Identity?.Name ?? "unknown", "USER_DELETED",
+        $"Deleted user '{user.Username}' (Role: {user.Role})",
+        context.Connection.RemoteIpAddress?.ToString());
     return Results.Ok(new { message = "User deleted successfully" });
 }).RequireAuthorization();
+
 
 // Upload user signature & stamp (Owner & Developer only)
 app.MapPost("/api/users/{id:int}/signature", async (int id, HttpContext context, UserRepository userRepo) =>
@@ -592,11 +728,122 @@ app.MapPost("/api/users/{id:int}/signature", async (int id, HttpContext context,
 }).RequireAuthorization();
 
 // Get all role permissions (for sidebar dynamic loading)
+// ── Activity Log Endpoints (Owner & Developer) ───────────────────────────────
+app.MapGet("/api/activity-logs", async (ActivityLogRepository activityLog, HttpContext context, int limit = 200) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+        return Results.Forbid();
+    var logs = await activityLog.GetRecentLogsAsync(limit);
+    return Results.Ok(logs);
+}).RequireAuthorization();
+
+app.MapGet("/api/activity-logs/user/{username}", async (string username, ActivityLogRepository activityLog, HttpContext context, int limit = 100) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+        return Results.Forbid();
+    var logs = await activityLog.GetLogsByUserAsync(username, limit);
+    return Results.Ok(logs);
+}).RequireAuthorization();
+
+// ── System Diagnostics & Crash Log Endpoints (Owner & Developer) ─────────────
+app.MapGet("/api/system-logs", async (
+    SystemLogRepository logRepo,
+    HttpContext context,
+    string? category = null,
+    string? level = null,
+    string? search = null,
+    int limit = 100,
+    int offset = 0) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+        return Results.Forbid();
+
+    var logs = await logRepo.GetLogsAsync(category, level, search, limit, offset);
+    return Results.Ok(logs);
+}).RequireAuthorization();
+
+app.MapGet("/api/system-logs/stats", async (SystemLogRepository logRepo, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+        return Results.Forbid();
+
+    var stats = await logRepo.GetStatsAsync();
+    return Results.Ok(stats);
+}).RequireAuthorization();
+
+app.MapGet("/api/system-logs/download", async (HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+        return Results.Forbid();
+
+    var logsDirectory = Path.Combine(appDataDir, "logs");
+    var todayLog = Path.Combine(logsDirectory, $"app-{DateTime.Now:yyyy-MM-dd}.log");
+    if (!File.Exists(todayLog) && Directory.Exists(logsDirectory))
+    {
+        var latestLog = Directory.GetFiles(logsDirectory, "app-*.log").OrderByDescending(f => f).FirstOrDefault();
+        if (latestLog != null) todayLog = latestLog;
+    }
+
+    if (!File.Exists(todayLog))
+        return Results.NotFound(new { error = "No log files found on disk." });
+
+    var bytes = await File.ReadAllBytesAsync(todayLog);
+    return Results.File(bytes, "text/plain", Path.GetFileName(todayLog));
+}).RequireAuthorization();
+
+app.MapGet("/api/system-logs/crash-files", (HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+        return Results.Forbid();
+
+    var logsDirectory = Path.Combine(appDataDir, "logs");
+    if (!Directory.Exists(logsDirectory)) return Results.Ok(Array.Empty<object>());
+
+    var files = Directory.GetFiles(logsDirectory, "crash-*.log")
+        .Select(f => new
+        {
+            filename = Path.GetFileName(f),
+            sizeBytes = new FileInfo(f).Length,
+            lastModified = File.GetLastWriteTime(f).ToString("yyyy-MM-dd HH:mm:ss")
+        })
+        .OrderByDescending(f => f.lastModified)
+        .ToList();
+
+    return Results.Ok(files);
+}).RequireAuthorization();
+
+app.MapGet("/api/system-logs/crash-files/{filename}", async (string filename, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+        return Results.Forbid();
+
+    var logsDirectory = Path.Combine(appDataDir, "logs");
+    var safeFilename = Path.GetFileName(filename);
+    var targetFile = Path.Combine(logsDirectory, safeFilename);
+
+    if (!File.Exists(targetFile) || !safeFilename.StartsWith("crash-", StringComparison.OrdinalIgnoreCase))
+        return Results.NotFound(new { error = "Crash log not found." });
+
+    var bytes = await File.ReadAllBytesAsync(targetFile);
+    return Results.File(bytes, "text/plain", safeFilename);
+}).RequireAuthorization();
+
+app.MapPost("/api/system-logs/clear", async (SystemLogRepository logRepo, HttpContext context, int olderThanDays = 30) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+        return Results.Forbid();
+
+    var deleted = await logRepo.ClearLogsAsync(olderThanDays);
+    return Results.Ok(new { message = $"Successfully cleared {deleted} logs older than {olderThanDays} days." });
+}).RequireAuthorization();
+
+
 app.MapGet("/api/permissions", async (UserRepository userRepo) =>
 {
     var perms = await userRepo.GetPermissionsAsync();
     return Results.Ok(perms.Select(p => new { role = p.Role, module = p.Module, isEnabled = p.IsEnabled == 1 }));
 }).RequireAuthorization();
+
 
 // Save role permissions (Owner & Developer only)
 app.MapPost("/api/permissions", async (SavePermissionRequest req, UserRepository userRepo, HttpContext context) =>
@@ -984,131 +1231,15 @@ app.MapDelete("/api/templates/{id}", async (int id, ITemplateRepository repo, Wh
     }
 });
 
-app.MapPost("/api/templates/sync", async (ITemplateRepository repo, WhatsAppApiClient whatsappClient) => 
+app.MapPost("/api/templates/sync", async (HotelAutomation.Worker.Services.TemplateSyncService syncService, HttpContext context) => 
 {
-    try
-    {
-        var (success, content, error) = await whatsappClient.GetTemplatesAsync();
-        if (!success || string.IsNullOrEmpty(content))
-        {
-            return Results.BadRequest(new { message = $"Meta Sync Error: {error ?? "Unknown error"}" });
-        }
-
-        using var doc = System.Text.Json.JsonDocument.Parse(content);
-        if (!doc.RootElement.TryGetProperty("data", out var dataProp) || dataProp.ValueKind != System.Text.Json.JsonValueKind.Array)
-        {
-            return Results.Ok(new { message = "No templates found in Meta WABA" });
-        }
-
-        var localTemplates = await repo.GetAllAsync();
-        var localNames = localTemplates.Select(t => t.ExternalTemplateName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        int added = 0;
-
-        foreach (var item in dataProp.EnumerateArray())
-        {
-            if (item.TryGetProperty("name", out var nameProp))
-            {
-                var name = nameProp.GetString();
-                if (string.IsNullOrEmpty(name) || localNames.Contains(name)) continue;
-
-                var category = item.TryGetProperty("category", out var catProp) ? catProp.GetString() ?? "Utility" : "Utility";
-                var lang = item.TryGetProperty("language", out var langProp) ? langProp.GetString() ?? "en" : "en";
-                
-                string bodyText = "";
-                string headerText = "";
-                string headerType = "None";
-                string footerText = "";
-                string buttonsJson = "[]";
-
-                if (item.TryGetProperty("components", out var compsProp) && compsProp.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    foreach (var comp in compsProp.EnumerateArray())
-                    {
-                        var type = comp.TryGetProperty("type", out var typeP) ? typeP.GetString() : "";
-                        if (type == "BODY")
-                        {
-                            bodyText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
-                        }
-                        else if (type == "HEADER")
-                        {
-                            headerType = comp.TryGetProperty("format", out var fmtP) ? fmtP.GetString() ?? "Text" : "Text";
-                            if (headerType == "TEXT")
-                            {
-                                headerText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
-                            }
-                        }
-                        else if (type == "FOOTER")
-                        {
-                            footerText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
-                        }
-                        else if (type == "BUTTONS")
-                        {
-                            var btns = new List<object>();
-                            if (comp.TryGetProperty("buttons", out var btnsP) && btnsP.ValueKind == System.Text.Json.JsonValueKind.Array)
-                            {
-                                foreach (var b in btnsP.EnumerateArray())
-                                {
-                                    var bType = b.TryGetProperty("type", out var btP) ? btP.GetString() : "";
-                                    var bText = b.TryGetProperty("text", out var btTxt) ? btTxt.GetString() ?? "" : "";
-                                    if (bType == "QUICK_REPLY")
-                                    {
-                                        btns.Add(new { type = "QUICK_REPLY", text = bText });
-                                    }
-                                    else if (bType == "URL")
-                                    {
-                                        var bUrl = b.TryGetProperty("url", out var btUrl) ? btUrl.GetString() ?? "" : "";
-                                        btns.Add(new { type = "URL", text = bText, url = bUrl });
-                                    }
-                                    else if (bType == "PHONE_NUMBER")
-                                    {
-                                        var bPhone = b.TryGetProperty("phone_number", out var btPhone) ? btPhone.GetString() ?? "" : "";
-                                        btns.Add(new { type = "PHONE_NUMBER", text = bText, phone_number = bPhone });
-                                    }
-                                }
-                            }
-                            buttonsJson = System.Text.Json.JsonSerializer.Serialize(btns);
-                        }
-                    }
-                }
-
-                // Parse parameter definitions from bodyText
-                var matches = System.Text.RegularExpressions.Regex.Matches(bodyText, @"\{\{(\d+)\}\}");
-                var positions = matches.Cast<System.Text.RegularExpressions.Match>().Select(m => int.Parse(m.Groups[1].Value)).Distinct().OrderBy(p => p).ToList();
-                var defs = positions.Select(pos => new {
-                    Position = pos,
-                    Label = pos == 1 ? "Guest Name" : (pos == 2 ? "Hotel Name" : $"Variable {pos}"),
-                    SampleValue = pos == 1 ? "Dear Guest" : (pos == 2 ? "The Sankalp Retreat" : ""),
-                    SourceColumn = pos == 1 ? "FirstName" : "",
-                    DynamicKey = pos == 1 ? "Name" : (pos == 2 ? "HotelName" : "")
-                }).ToList();
-
-                var newT = new HotelAutomation.Core.Models.MessageTemplate
-                {
-                    Name = name,
-                    ExternalTemplateName = name,
-                    LanguageCode = lang,
-                    Category = category,
-                    HeaderType = headerType,
-                    BodyText = bodyText,
-                    HeaderText = string.IsNullOrEmpty(headerText) ? null : headerText,
-                    FooterText = string.IsNullOrEmpty(footerText) ? null : footerText,
-                    ButtonsJson = buttonsJson,
-                    ParameterDefinitionsJson = System.Text.Json.JsonSerializer.Serialize(defs),
-                    BodyParamCount = defs.Count
-                };
-
-                await repo.AddAsync(newT);
-                added++;
-            }
-        }
-
-        return Results.Ok(new { message = "Sync completed successfully", addedCount = added });
-    }
-    catch (Exception ex)
-    {
-        return Results.BadRequest(new { message = $"Sync failed: {ex.Message}" });
-    }
+    var triggeredBy = context.User.Identity?.Name ?? "Manual";
+    var (success, count, message) = await syncService.SyncTemplatesAsync(triggeredBy);
+    return success 
+        ? Results.Ok(new { message, addedCount = count }) 
+        : Results.BadRequest(new { message });
 });
+
 
 // ── Template Variants API (A/B Testing) ──────────────────────────────────────
 app.MapGet("/api/templates/{templateId}/variants", async (int templateId, TemplateVariantRepository repo) => 
@@ -2272,8 +2403,27 @@ app.Lifetime.ApplicationStarted.Register(() =>
             cmd.ExecuteNonQuery();
         }
 
+        // ── Startup DB Backup (Power-cut failsafe) ────────────────────────────
+        // Copy the live database to a timestamped .bak file on each clean startup.
+        // If power is lost, the .bak from the previous startup can be used to recover.
+        try
+        {
+            var dbPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "HotelSankalpRetreat", "hotel_automation.db");
+            if (File.Exists(dbPath))
+            {
+                var bakPath = Path.ChangeExtension(dbPath, ".db.bak");
+                File.Copy(dbPath, bakPath, overwrite: true);
+                app.Logger.LogInformation("Startup DB backup written to {BakPath}", bakPath);
+            }
+        }
+        catch (Exception backupEx)
+        {
+            app.Logger.LogWarning(backupEx, "Startup DB backup failed (non-fatal).");
+        }
 
-        
+
         // Open browser automatically
         var url = app.Urls.FirstOrDefault() ?? "http://localhost:5000";
         var processStartInfo = new System.Diagnostics.ProcessStartInfo

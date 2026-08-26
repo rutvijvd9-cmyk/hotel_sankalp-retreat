@@ -422,6 +422,9 @@ public sealed class WhatsAppMessageSender : IMessageChannel
             };
         }
 
+        _logger.LogInformation("Sending WhatsApp message to {Phone} with template '{Template}' (Params: {Params})",
+            message.ToPhoneNumber, template.ExternalTemplateName, JsonSerializer.Serialize(parameterValues));
+
         var (success, responseBody) = await _apiClient.PostAsync(templatePayload, ct);
 
         string? externalId = null;
@@ -429,9 +432,6 @@ public sealed class WhatsAppMessageSender : IMessageChannel
 
         if (!success)
         {
-            _logger.LogWarning("WhatsApp send failed for OutboxMessage {Id}: {Error}",
-                message.Id, responseBody);
-            
             if (!string.IsNullOrEmpty(responseBody))
             {
                 try
@@ -441,6 +441,7 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                     {
                         var errorMsg = errorEl.TryGetProperty("message", out var mProp) ? mProp.GetString() : null;
                         var errorCode = errorEl.TryGetProperty("code", out var cProp) ? cProp.GetInt32() : 0;
+                        var errorSubcode = errorEl.TryGetProperty("error_subcode", out var scProp) ? scProp.GetInt32() : 0;
                         var details = errorEl.TryGetProperty("error_data", out var edProp) && edProp.TryGetProperty("details", out var dProp) ? dProp.GetString() : null;
 
                         if (errorCode == 131030 || details == "Recipient phone number not in allowed list" || errorMsg?.Contains("allowed list") == true)
@@ -451,21 +452,34 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                         {
                             failureReason = "The access token has expired or is invalid. Please update the Meta Token in Settings.";
                         }
+                        else if (errorCode == 132000 || errorMsg?.Contains("number of parameters") == true)
+                        {
+                            failureReason = $"Template parameter count mismatch: Meta expects a different number of parameters. {errorMsg}";
+                        }
+                        else if (errorCode == 131026 || errorMsg?.Contains("Message Undeliverable") == true)
+                        {
+                            failureReason = "Message Undeliverable: The recipient number cannot receive WhatsApp messages or has blocked the business.";
+                        }
                         else
                         {
-                            failureReason = details ?? errorMsg ?? "API request rejected by WhatsApp.";
+                            failureReason = details ?? errorMsg ?? $"API request rejected by Meta (Code: {errorCode}, Subcode: {errorSubcode}).";
                         }
+
+                        _logger.LogError("WhatsApp API error for {Phone}. Code: {Code}, Subcode: {Subcode}, Reason: {Reason}, Raw: {Response}",
+                            message.ToPhoneNumber, errorCode, errorSubcode, failureReason, responseBody);
                     }
                 }
                 catch
                 {
                     failureReason = "Invalid response from WhatsApp API server.";
+                    _logger.LogError("Failed to parse WhatsApp API response for {Phone}: {Response}", message.ToPhoneNumber, responseBody);
                 }
             }
             
             if (string.IsNullOrEmpty(failureReason))
             {
                 failureReason = "Failed to connect to Meta WhatsApp API server.";
+                _logger.LogError("WhatsApp connection error for {Phone} (Outbox ID: {Id})", message.ToPhoneNumber, message.Id);
             }
         }
         else if (!string.IsNullOrEmpty(responseBody))
@@ -478,6 +492,13 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                     messagesArray[0].TryGetProperty("id", out var idProp))
                 {
                     externalId = idProp.GetString();
+                    _logger.LogInformation("WhatsApp message sent successfully to {Phone}. Meta Message ID: {Wamid}",
+                        message.ToPhoneNumber, externalId);
+                }
+                else
+                {
+                    _logger.LogInformation("WhatsApp message accepted by Meta for {Phone}. Response: {Response}",
+                        message.ToPhoneNumber, responseBody);
                 }
             }
             catch (Exception ex)

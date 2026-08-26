@@ -9,27 +9,23 @@ class Program
         using var conn = new SqliteConnection($"Data Source={dbPath}");
         conn.Open();
         
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            SELECT 'TemplateVariants' as tbl, COUNT(*) as c FROM TemplateVariants WHERE TemplateId IN (SELECT Id FROM MessageTemplates WHERE Name IN ('Spa Up-sell Drip Variant A', 'Spa Up-sell Drip Variant B', 'Checkout Billing'))
-            UNION ALL
-            SELECT 'AutomationRules' as tbl, COUNT(*) as c FROM AutomationRules WHERE TemplateId IN (SELECT Id FROM MessageTemplates WHERE Name IN ('Spa Up-sell Drip Variant A', 'Spa Up-sell Drip Variant B', 'Checkout Billing'))
-            UNION ALL
-            SELECT 'Campaigns' as tbl, COUNT(*) as c FROM Campaigns WHERE TemplateId IN (SELECT Id FROM MessageTemplates WHERE Name IN ('Spa Up-sell Drip Variant A', 'Spa Up-sell Drip Variant B', 'Checkout Billing'))
-            UNION ALL
-            SELECT 'CampaignSteps' as tbl, COUNT(*) as c FROM CampaignSteps WHERE TemplateId IN (SELECT Id FROM MessageTemplates WHERE Name IN ('Spa Up-sell Drip Variant A', 'Spa Up-sell Drip Variant B', 'Checkout Billing'))
-            UNION ALL
-            SELECT 'ScheduledJobs' as tbl, COUNT(*) as c FROM ScheduledJobs WHERE TemplateId IN (SELECT Id FROM MessageTemplates WHERE Name IN ('Spa Up-sell Drip Variant A', 'Spa Up-sell Drip Variant B', 'Checkout Billing'))
-            UNION ALL
-            SELECT 'OutboxMessages' as tbl, COUNT(*) as c FROM OutboxMessages WHERE TemplateId IN (SELECT Id FROM MessageTemplates WHERE Name IN ('Spa Up-sell Drip Variant A', 'Spa Up-sell Drip Variant B', 'Checkout Billing'))
-        ";
-        try {
-            using var reader = cmd.ExecuteReader();
-            while(reader.Read()) {
-                Console.WriteLine($"{reader.GetString(0)}: {reader.GetInt32(1)}");
-            }
-        } catch (Exception ex) {
-            Console.WriteLine("Query failed: " + ex.Message);
+        var settings = new (string Key, string Value)[]
+        {
+            ("WhatsApp_AccessToken", "EAAOZCdNFpqucBSB9Iaf1aLZBocJvsA8POrPOdEGJ4lDhefeCPB4j9xvRoDpnL8pZC6Oi4dRcfBJck9nwwp9ZAQjsYsZCPs0ig4wfFnuOciyoazus3tiPZCt4ZCaL4e5ZCnem5GdricfGSgUEr4cfmx97LCue3zq2YPhdmtpZBHtiMXjYlDO1pmNa6rsZAnhDcp15MDXAZDZD"),
+            ("WhatsApp_PhoneNumberId", "787260811145630"),
+            ("WhatsApp_ApiVersion", "v25.0"),
+            ("WhatsApp_VerifyToken", "sankalp_retreat_webhook_secret"),
+            ("WhatsApp_WhatsAppBusinessAccountId", "1964387864360271")
+        };
+
+        foreach (var (k, v) in settings)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "INSERT INTO AppConfig (Key, Value) VALUES (@k, @v) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value";
+            cmd.Parameters.AddWithValue("@k", k);
+            cmd.Parameters.AddWithValue("@v", v);
+            cmd.ExecuteNonQuery();
+            Console.WriteLine($"Updated seed DB key: {k}");
         }
     }
 }
