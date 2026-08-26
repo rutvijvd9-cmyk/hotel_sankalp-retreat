@@ -86,6 +86,23 @@ public sealed class UnifiedLoggerProvider : ILoggerProvider, IAsyncDisposable
         );
 
         _channel.Writer.TryWrite(item);
+
+        // 3. Queue for email alert notification if ERROR or FATAL
+        if (logLevel == LogLevel.Error || logLevel == LogLevel.Critical)
+        {
+            try
+            {
+                HotelAutomation.Worker.Services.EmailAlertService.Instance?.EnqueueAlert(
+                    levelStr,
+                    category,
+                    source,
+                    message,
+                    null,
+                    exString
+                );
+            }
+            catch { }
+        }
     }
 
     private void WriteToFile(string level, string category, string source, string message, string? exception)

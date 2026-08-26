@@ -85,6 +85,10 @@ Directory.CreateDirectory(uploadsDataDir);
 var signaturesDataDir = Path.Combine(appDataDir, "signatures");
 Directory.CreateDirectory(signaturesDataDir);
 
+// Redirect backup_date folder to AppData
+var backupDateDir = Path.Combine(appDataDir, "backup_date");
+Directory.CreateDirectory(backupDateDir);
+
 var rawConnString = builder.Configuration.GetConnectionString("Sqlite")
     ?? "Data Source=hotel_automation.db";
 
@@ -115,6 +119,13 @@ builder.Services.AddSingleton<PmsMappingRepository>();
 builder.Services.AddSingleton<TemplateVariantRepository>();
 builder.Services.AddSingleton<HotelAutomation.Worker.Services.VariantSelector>();
 builder.Services.AddSingleton<HotelAutomation.Worker.Services.TemplateSyncService>();
+builder.Services.AddSingleton<HotelAutomation.Worker.Services.DatabaseBackupService>();
+
+// ── Email Alert System ────────────────────────────────────────────────────────
+builder.Services.Configure<HotelAutomation.Worker.Services.EmailAlertOptions>(
+    builder.Configuration.GetSection(HotelAutomation.Worker.Services.EmailAlertOptions.SectionName));
+builder.Services.AddSingleton<HotelAutomation.Worker.Services.EmailAlertService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<HotelAutomation.Worker.Services.EmailAlertService>());
 
 // ── Security & Authentication ──────────────────────────────────────────────────
 builder.Services.AddSingleton<HotelAutomation.Core.Security.PasswordHasher>();
@@ -209,6 +220,7 @@ builder.Services.AddHostedService<CampaignProcessor>();
 builder.Services.AddHostedService<DateTriggerProcessor>();
 builder.Services.AddHostedService<WebhookRelayPoller>();
 builder.Services.AddHostedService<HotelAutomation.Worker.Services.TemplateSyncScheduler>();
+builder.Services.AddHostedService<HotelAutomation.Worker.Services.DatabaseBackupScheduler>();
 
 #if WINDOWS
 builder.Services.AddHostedService<TrayIconService>();
@@ -835,6 +847,56 @@ app.MapPost("/api/system-logs/clear", async (SystemLogRepository logRepo, HttpCo
 
     var deleted = await logRepo.ClearLogsAsync(olderThanDays);
     return Results.Ok(new { message = $"Successfully cleared {deleted} logs older than {olderThanDays} days." });
+}).RequireAuthorization();
+
+// ── Email Alert Endpoints (Owner & Developer) ─────────────────────────────────
+app.MapGet("/api/alerts/config", (HotelAutomation.Worker.Services.EmailAlertService alertService, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+        return Results.Forbid();
+
+    var opts = alertService.Options;
+    return Results.Ok(new
+    {
+        enabled = opts.Enabled,
+        senderEmail = opts.SenderEmail,
+        senderName = opts.SenderName,
+        smtpHost = opts.SmtpHost,
+        smtpPort = opts.SmtpPort,
+        recipients = opts.Recipients,
+        deduplicationMinutes = opts.DeduplicationWindowMinutes
+    });
+}).RequireAuthorization();
+
+app.MapPost("/api/alerts/test", async (HotelAutomation.Worker.Services.EmailAlertService alertService, HttpContext context) =>
+{
+    if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
+        return Results.Forbid();
+
+    var user = context.User.Identity?.Name ?? "Admin";
+    var result = await alertService.SendDirectAlertAsync(
+        "TEST",
+        "Diagnostics Verification",
+        "Web UI Manual Test",
+        $"This is a test alert notification triggered manually by user '{user}'.",
+        $"Triggered from IP: {context.Connection.RemoteIpAddress} at {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}. All 4 recipient mailboxes should receive this notification.",
+        null
+    );
+
+    if (result.Success)
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            message = $"Test alert successfully sent to {alertService.Options.Recipients.Count} recipients ({string.Join(", ", alertService.Options.Recipients)})"
+        });
+    }
+
+    return Results.BadRequest(new
+    {
+        success = false,
+        error = $"Failed to send test alert: {result.ErrorMessage}"
+    });
 }).RequireAuthorization();
 
 
@@ -2890,6 +2952,72 @@ app.MapPost("/api/pdf-bridge/scan", (IPmsEventSource pmsSource, ILogger<Program>
         return Results.Ok(new { status = "success", message = "Scan triggered. Check logs for results." });
     }
     return Results.BadRequest(new { status = "error", message = "PDF Bridge connector is not active." });
+});
+
+// ── Database Backup Endpoints ────────────────────────────────────────────────
+app.MapGet("/api/database/backup-status", (HotelAutomation.Worker.Services.DatabaseBackupService backupService) =>
+{
+    var istOffset = TimeSpan.FromHours(5.5);
+    var nowIst = DateTimeOffset.UtcNow.ToOffset(istOffset);
+    var backups = backupService.GetAllBackups();
+    var lastBackup = backups.FirstOrDefault();
+    var hasTodayBackup = backupService.HasBackupForDate(nowIst);
+
+    return Results.Ok(new
+    {
+        backupFolder = backupService.BackupFolderPath,
+        scheduleWindow = "Every day between 02:00 PM to 04:00 PM IST",
+        currentTimeIst = nowIst.ToString("yyyy-MM-dd HH:mm:ss"),
+        hasBackupToday = hasTodayBackup,
+        totalBackups = backups.Count,
+        lastBackupTimeIst = lastBackup?.CreatedAtIst.ToString("yyyy-MM-dd HH:mm:ss"),
+        lastBackupFileName = lastBackup?.FileName
+    });
+});
+
+app.MapGet("/api/database/backups", (HotelAutomation.Worker.Services.DatabaseBackupService backupService) =>
+{
+    var backups = backupService.GetAllBackups();
+    return Results.Ok(backups);
+});
+
+app.MapPost("/api/database/backup-now", async (HotelAutomation.Worker.Services.DatabaseBackupService backupService, HttpContext context) =>
+{
+    var username = context.User.Identity?.Name ?? "Manual_Admin";
+    var result = await backupService.CreateBackupAsync($"Manual_Trigger_by_{username}");
+    if (result.Success)
+    {
+        return Results.Ok(new
+        {
+            success = true,
+            message = result.Message,
+            fileName = result.FileName,
+            sizeBytes = result.SizeBytes
+        });
+    }
+    return Results.BadRequest(new { success = false, message = result.Message });
+});
+
+app.MapGet("/api/database/backups/download/{fileName}", (string fileName, HotelAutomation.Worker.Services.DatabaseBackupService backupService) =>
+{
+    var safeName = Path.GetFileName(fileName);
+    var filePath = Path.Combine(backupService.BackupFolderPath, safeName);
+    if (!File.Exists(filePath))
+    {
+        return Results.NotFound(new { error = "Backup file not found." });
+    }
+    var fileBytes = File.ReadAllBytes(filePath);
+    return Results.File(fileBytes, "application/x-sqlite3", safeName);
+});
+
+app.MapDelete("/api/database/backups/{fileName}", (string fileName, HotelAutomation.Worker.Services.DatabaseBackupService backupService) =>
+{
+    var deleted = backupService.DeleteBackup(fileName);
+    if (deleted)
+    {
+        return Results.Ok(new { success = true, message = $"Backup {fileName} deleted successfully." });
+    }
+    return Results.NotFound(new { error = "Backup file not found or could not be deleted." });
 });
 
 // ── Open browser when server is ready ────────────────────────────────────────

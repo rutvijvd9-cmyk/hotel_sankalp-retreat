@@ -79,6 +79,13 @@ public static class CrashLogger
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.Error.WriteLine(crashContent);
                 Console.ResetColor();
+
+                // Dispatch instant email alert to administrators
+                try
+                {
+                    HotelAutomation.Worker.Services.EmailAlertService.SendCrashAlertDirect(crashType, ex, customMessage);
+                }
+                catch { }
             }
             catch (Exception writeEx)
             {

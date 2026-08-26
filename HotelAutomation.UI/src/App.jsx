@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Papa from 'papaparse';
-import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download, TrendingUp, Activity, Calendar, UserPlus, Eye, EyeOff, LogOut, Lock, Shield, UserCheck, ShieldAlert, Printer } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, Workflow, ScrollText, Send, Hotel, CheckCircle2, AlertCircle, Clock, Users, Upload, Plus, Megaphone, Edit2, Trash2, Settings, XCircle, BarChart2, UserX, Layers, FileText, Menu, Download, TrendingUp, Activity, Calendar, UserPlus, Eye, EyeOff, LogOut, Lock, Shield, UserCheck, ShieldAlert, Printer, Database, HardDrive, RefreshCw, Mail } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import AutomationBuilder from './components/AutomationBuilder';
 import PreferenceCenter from './components/PreferenceCenter';
@@ -133,6 +133,38 @@ export default function App() {
   const [selectedCrashFile, setSelectedCrashFile] = useState(null);
   const [selectedCrashContent, setSelectedCrashContent] = useState('');
   const [copySuccessMessage, setCopySuccessMessage] = useState('');
+
+  // ── Email Alert States ──────────────────────────────────────────────────────
+  const [emailAlertInfo, setEmailAlertInfo] = useState(null);
+  const [sendingTestAlert, setSendingTestAlert] = useState(false);
+  const [testAlertMessage, setTestAlertMessage] = useState(null);
+
+  const fetchAlertConfig = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/alerts/config`);
+      if (res.ok) {
+        setEmailAlertInfo(await res.json());
+      }
+    } catch (e) {}
+  };
+
+  const handleSendTestAlert = async () => {
+    setSendingTestAlert(true);
+    setTestAlertMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/alerts/test`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setTestAlertMessage({ type: 'success', text: data.message || 'Test alert email sent successfully!' });
+      } else {
+        setTestAlertMessage({ type: 'error', text: data.error || 'Failed to send test alert email.' });
+      }
+    } catch (e) {
+      setTestAlertMessage({ type: 'error', text: e.message || 'Network error while triggering test alert.' });
+    } finally {
+      setSendingTestAlert(false);
+    }
+  };
 
   const fetchPermissions = async () => {
     try {
@@ -335,6 +367,7 @@ export default function App() {
     if (user && activeTab === 'system-logs' && (user.role === 'Owner' || user.role === 'Developer')) {
       fetchSystemLogs();
       fetchCrashFiles();
+      fetchAlertConfig();
     }
   }, [activeTab, sysLogCategory, sysLogLevel, user]);
 
@@ -4331,6 +4364,69 @@ export default function App() {
             </div>
           </div>
 
+          {/* Email Alert System Status & Test Card */}
+          <div className="premium-card" style={{ padding: '18px 22px', marginBottom: '22px', borderLeft: '4px solid #6366f1', background: 'var(--card-bg, #fff)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+              <div style={{ flex: '1 1 360px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <Mail size={20} style={{ color: '#6366f1' }} />
+                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    Automated Email Alert System
+                  </h3>
+                  <span style={{ background: '#dcfce7', color: '#15803d', fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '12px', border: '1px solid #bbf7d0' }}>
+                    ● ACTIVE
+                  </span>
+                </div>
+                <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  Dispatches real-time email notifications for Fatal Crashes, HTTP 500 Unhandled Exceptions, and Worker Failures with full stack traces.
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', fontSize: '12px' }}>
+                  <div>
+                    <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Sender: </span>
+                    <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', color: '#0f172a' }}>
+                      {emailAlertInfo?.senderEmail || 'rutvijpatel0709@gmail.com'}
+                    </code>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Recipients: </span>
+                    {(emailAlertInfo?.recipients || ['rutvijpatel0709@gmail.com', 'rutvijsk@outlook.com', 'info@scalifts.com', 'support@scalifts.com']).map((email, idx) => (
+                      <span key={idx} style={{ background: '#e0e7ff', color: '#3730a3', padding: '2px 8px', borderRadius: '10px', marginRight: '6px', fontSize: '11px', fontWeight: 600, display: 'inline-block', marginTop: '2px' }}>
+                        {email}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <button 
+                  className="btn btn-primary"
+                  onClick={handleSendTestAlert}
+                  disabled={sendingTestAlert}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 18px', fontSize: '13px', borderRadius: '6px', background: '#6366f1', borderColor: '#6366f1' }}
+                >
+                  <Send size={14} /> {sendingTestAlert ? 'Sending Test...' : 'Send Test Alert Email'}
+                </button>
+              </div>
+            </div>
+
+            {testAlertMessage && (
+              <div style={{ 
+                marginTop: '12px', 
+                padding: '10px 14px', 
+                borderRadius: '6px', 
+                fontSize: '13px', 
+                fontWeight: 600,
+                background: testAlertMessage.type === 'success' ? '#f0fdf4' : '#fef2f2',
+                color: testAlertMessage.type === 'success' ? '#15803d' : '#b91c1c',
+                border: `1px solid ${testAlertMessage.type === 'success' ? '#bbf7d0' : '#fecaca'}`
+              }}>
+                {testAlertMessage.type === 'success' ? '✓ ' : '✕ '}
+                {testAlertMessage.text}
+              </div>
+            )}
+          </div>
+
           {/* Filters & Search Row */}
           <div className="premium-card" style={{ padding: '16px 20px', marginBottom: '20px', display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
             <div style={{ flex: '1 1 250px' }}>
@@ -4979,25 +5075,84 @@ const SettingsTab = () => {
   const [saving, setSaving] = React.useState(false);
   const [message, setMessage] = React.useState(null);
 
+  // Database Backup States
+  const [backups, setBackups] = React.useState([]);
+  const [backupStatus, setBackupStatus] = React.useState(null);
+  const [isBackingUp, setIsBackingUp] = React.useState(false);
+  const [backupMessage, setBackupMessage] = React.useState(null);
+
+  const fetchBackups = async () => {
+    try {
+      const [bRes, sRes] = await Promise.all([
+        fetch('/api/database/backups'),
+        fetch('/api/database/backup-status')
+      ]);
+      if (bRes.ok) setBackups(await bRes.json());
+      if (sRes.ok) setBackupStatus(await sRes.json());
+    } catch (e) {
+      console.error('Failed to load backups:', e);
+    }
+  };
+
+  const handleBackupNow = async () => {
+    setIsBackingUp(true);
+    setBackupMessage(null);
+    try {
+      const res = await fetch('/api/database/backup-now', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setBackupMessage({ type: 'success', text: data.message || 'Database backup created successfully!' });
+        await fetchBackups();
+      } else {
+        setBackupMessage({ type: 'error', text: data.message || 'Failed to create database backup.' });
+      }
+    } catch (e) {
+      console.error(e);
+      setBackupMessage({ type: 'error', text: 'Error connecting to server for database backup.' });
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
+  const handleDeleteBackup = async (fileName) => {
+    if (!window.confirm(`Are you sure you want to delete backup "${fileName}"?`)) return;
+    try {
+      const res = await fetch(`/api/database/backups/${encodeURIComponent(fileName)}`, { method: 'DELETE' });
+      if (res.ok) {
+        setBackupMessage({ type: 'success', text: `Backup "${fileName}" deleted.` });
+        await fetchBackups();
+      } else {
+        setBackupMessage({ type: 'error', text: 'Failed to delete backup file.' });
+      }
+    } catch (e) {
+      console.error(e);
+      setBackupMessage({ type: 'error', text: 'Error deleting backup file.' });
+    }
+  };
+
   React.useEffect(() => {
-    fetch('/api/settings/whatsapp')
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to load settings');
-        return res.json();
-      })
-      .then(data => {
-        setSettings({
-          AccessToken: data.AccessToken || data.accessToken || '',
-          PhoneNumberId: data.PhoneNumberId || data.phoneNumberId || '',
-          ApiVersion: data.ApiVersion || data.apiVersion || 'v25.0',
-          VerifyToken: data.VerifyToken || data.verifyToken || '',
-          WhatsAppBusinessAccountId: data.WhatsAppBusinessAccountId || data.whatsAppBusinessAccountId || ''
-        });
-        setLoading(false);
-      })
+    Promise.all([
+      fetch('/api/settings/whatsapp')
+        .then(res => {
+          if (!res.ok) throw new Error('Failed to load settings');
+          return res.json();
+        })
+        .then(data => {
+          setSettings({
+            AccessToken: data.AccessToken || data.accessToken || '',
+            PhoneNumberId: data.PhoneNumberId || data.phoneNumberId || '',
+            ApiVersion: data.ApiVersion || data.apiVersion || 'v25.0',
+            VerifyToken: data.VerifyToken || data.verifyToken || '',
+            WhatsAppBusinessAccountId: data.WhatsAppBusinessAccountId || data.whatsAppBusinessAccountId || ''
+          });
+        }),
+      fetchBackups()
+    ])
       .catch(err => {
         console.error(err);
         setMessage({ type: 'error', text: 'Error loading settings from server.' });
+      })
+      .finally(() => {
         setLoading(false);
       });
   }, []);
@@ -5036,7 +5191,7 @@ const SettingsTab = () => {
       <div style={{ marginBottom: '24px' }}>
         <h2 style={{ margin: '0 0 8px 0', fontWeight: 700, color: 'var(--text-primary)' }}>System & API Settings</h2>
         <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>
-          Manage Meta WhatsApp Cloud API credentials, access tokens, webhooks, and system configuration.
+          Manage Meta WhatsApp Cloud API credentials, database backups, and system configuration.
         </p>
       </div>
 
@@ -5059,6 +5214,164 @@ const SettingsTab = () => {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        {/* Database Backup & Maintenance Card */}
+        <div className="premium-card" style={{ padding: '24px', backgroundColor: 'var(--surface-color)', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <Database size={22} style={{ color: 'var(--primary)' }} />
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Database Backup & Storage</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  Automated daily backups stored in the <code style={{ backgroundColor: 'rgba(0,0,0,0.06)', padding: '2px 6px', borderRadius: '4px' }}>backup_date</code> folder.
+                </p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={fetchBackups}
+                className="btn btn-secondary"
+                title="Refresh backup list"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderRadius: '6px', fontSize: '13px' }}
+              >
+                <RefreshCw size={15} /> Refresh
+              </button>
+              <button
+                type="button"
+                onClick={handleBackupNow}
+                disabled={isBackingUp}
+                className="btn btn-primary"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, fontSize: '13px' }}
+              >
+                <HardDrive size={15} /> {isBackingUp ? 'Backing Up...' : 'Backup Database Now'}
+              </button>
+            </div>
+          </div>
+
+          {backupMessage && (
+            <div style={{
+              padding: '10px 14px',
+              borderRadius: '6px',
+              marginBottom: '16px',
+              fontSize: '13px',
+              border: '1px solid',
+              backgroundColor: backupMessage.type === 'success' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              color: backupMessage.type === 'success' ? '#10b981' : '#ef4444',
+              borderColor: backupMessage.type === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              {backupMessage.type === 'success' ? '✅' : '❌'} {backupMessage.text}
+            </div>
+          )}
+
+          {/* Backup Schedule & Folder Status Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+            <div style={{ padding: '12px 16px', backgroundColor: 'var(--bg-color)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Clock size={14} /> Schedule Window
+              </div>
+              <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
+                Daily 02:00 PM – 04:00 PM IST
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 16px', backgroundColor: 'var(--bg-color)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <HardDrive size={14} /> Target Folder
+              </div>
+              <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)', wordBreak: 'break-all' }}>
+                backup_date
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 16px', backgroundColor: 'var(--bg-color)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <CheckCircle2 size={14} /> Today's Status
+              </div>
+              <div>
+                {backupStatus?.hasBackupToday ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#10b981', fontWeight: 600, fontSize: '13px' }}>
+                    <CheckCircle2 size={14} /> Backed Up
+                  </span>
+                ) : (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#f59e0b', fontWeight: 600, fontSize: '13px' }}>
+                    <Clock size={14} /> Scheduled for 02:00 PM – 04:00 PM IST
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 16px', backgroundColor: 'var(--bg-color)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Layers size={14} /> Total Backups
+              </div>
+              <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
+                {backups.length} file{backups.length === 1 ? '' : 's'}
+              </div>
+            </div>
+          </div>
+
+          {/* Backup History Table */}
+          <div style={{ marginTop: '12px' }}>
+            <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: 600 }}>Backup Archive ({backups.length})</h4>
+            {backups.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px', backgroundColor: 'var(--bg-color)', borderRadius: '8px', border: '1px dashed var(--border-color)', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                No backups found in <code style={{ backgroundColor: 'rgba(0,0,0,0.06)', padding: '2px 4px', borderRadius: '3px' }}>backup_date</code> yet. Click <strong>"Backup Database Now"</strong> or wait for the scheduled 02:00 PM – 04:00 PM IST window.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: 'var(--bg-color)', borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
+                      <th style={{ padding: '10px 14px', fontWeight: 600 }}>File Name</th>
+                      <th style={{ padding: '10px 14px', fontWeight: 600 }}>Size</th>
+                      <th style={{ padding: '10px 14px', fontWeight: 600 }}>Created (IST)</th>
+                      <th style={{ padding: '10px 14px', fontWeight: 600, textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backups.map(b => (
+                      <tr key={b.fileName || b.FileName} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                        <td style={{ padding: '10px 14px', fontFamily: 'monospace', fontWeight: 500 }}>
+                          {b.fileName || b.FileName}
+                        </td>
+                        <td style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>
+                          {b.formattedSize || b.FormattedSize}
+                        </td>
+                        <td style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>
+                          {new Date(b.createdAtIst || b.CreatedAtIst).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                        </td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                            <a
+                              href={b.downloadUrl || b.DownloadUrl}
+                              download={b.fileName || b.FileName}
+                              className="btn btn-secondary"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', fontSize: '12px', textDecoration: 'none' }}
+                            >
+                              <Download size={13} /> Download
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteBackup(b.fileName || b.FileName)}
+                              className="btn btn-danger"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', fontSize: '12px', backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Meta WhatsApp Settings Card */}
         <form onSubmit={handleSave} className="premium-card" style={{ padding: '24px', backgroundColor: 'var(--surface-color)', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
