@@ -57,5 +57,7 @@ HotelSankalpRetreat_Setup.exe
 PDFs/
 contacts/
 publish/
+publish_win64/
+.local/
 replacements.json
 Scalifts_Setup.exe

@@ -1,7 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-
-  <PropertyGroup>
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <TargetFrameworks>net10.0;net10.0-windows10.0.19041.0</TargetFrameworks>
+  </PropertyGroup>
+  <PropertyGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <PropertyGroup>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
@@ -16,6 +21,8 @@
     <UseWindowsForms Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">true</UseWindowsForms>
     <!-- Embed hotel.ico as the exe icon shown in Explorer / taskbar -->
     <ApplicationIcon>hotel.ico</ApplicationIcon>
+    <!-- Embed all native C++ DLLs (QuestPdfSkia, e_sqlite3, qpdf) into single-file exe -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">

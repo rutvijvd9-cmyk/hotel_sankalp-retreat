@@ -1,3 +1,17 @@
+# Free port 8000 and stop any previous worker instances
+Write-Host "Freeing port 8000 and stopping existing worker..." -ForegroundColor Yellow
+Get-Process -Name "HotelAutomation.Worker" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+try {
+    $connections = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
+    foreach ($conn in $connections) {
+        if ($conn.OwningProcess -gt 0) {
+            Write-Host "Terminating process $($conn.OwningProcess) listening on port 8000..." -ForegroundColor Yellow
+            Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
+    }
+} catch {}
+Start-Sleep -Milliseconds 800
+
 # Start HotelAutomation Worker (Backend API + Background Services)
 Write-Host "Starting Worker (dotnet)..." -ForegroundColor Cyan
 $worker = Start-Process -FilePath "dotnet" -ArgumentList "run --project HotelAutomation.Worker\HotelAutomation.Worker.csproj" -WorkingDirectory $PSScriptRoot -NoNewWindow -PassThru
@@ -8,7 +22,7 @@ $ui = Start-Process -FilePath "npm" -ArgumentList "run dev" -WorkingDirectory (J
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "  Worker API: http://localhost:59725" -ForegroundColor Yellow
+Write-Host "  Worker API: http://localhost:8000" -ForegroundColor Yellow
 Write-Host "  UI (Vite):  http://localhost:5173" -ForegroundColor Yellow
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""

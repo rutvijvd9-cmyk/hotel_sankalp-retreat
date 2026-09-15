@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Logging;
 using Dapper;
+using System.Runtime.InteropServices;
 
 // ── App Data & Logs Directory Initialization ─────────────────────────────────
 var appDataDir = Path.Combine(
@@ -38,6 +39,9 @@ TaskScheduler.UnobservedTaskException += (sender, eventArgs) =>
     CrashLogger.LogCrash("TaskScheduler.UnobservedTaskException", eventArgs.Exception);
     eventArgs.SetObserved();
 };
+
+// ── Free Port 8000 and Stop Any Stuck/Duplicate Worker Instances ──────────────
+PortAndProcessManager.EnsurePortAndProcessAvailable(8000);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -201,8 +205,50 @@ if (pmsType != "Database" && pmsType != "Pdf")
 }
 
 // ── PDF Generation ─────────────────────────────────────────────────────────────
-QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
-builder.Services.AddSingleton<IPdfGenerator, HotelAutomation.Worker.Services.InvoicePdfGenerator>();
+try
+{
+    // Native DLL import resolver for QuestPDF native libraries (QuestPdfSkia.dll)
+    var questPdfAssembly = typeof(QuestPDF.Settings).Assembly;
+    NativeLibrary.SetDllImportResolver(questPdfAssembly, (libraryName, assembly, searchPath) =>
+    {
+        if (libraryName.IndexOf("QuestPdfSkia", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            var candidateDirs = new List<string>();
+
+            if (!string.IsNullOrEmpty(AppContext.BaseDirectory))
+                candidateDirs.Add(AppContext.BaseDirectory);
+
+            var exeDir = Path.GetDirectoryName(Environment.ProcessPath);
+            if (!string.IsNullOrEmpty(exeDir))
+                candidateDirs.Add(exeDir);
+
+            var bundleDir = AppContext.GetData("BUNDLE_EXTRACT_BASE_DIR") as string;
+            if (!string.IsNullOrEmpty(bundleDir))
+                candidateDirs.Add(bundleDir);
+
+            foreach (var dir in candidateDirs)
+            {
+                var directFile = Path.Combine(dir, "QuestPdfSkia.dll");
+                if (File.Exists(directFile) && NativeLibrary.TryLoad(directFile, out var h1))
+                    return h1;
+
+                var runtimeFile = Path.Combine(dir, "runtimes", "win-x64", "native", "QuestPdfSkia.dll");
+                if (File.Exists(runtimeFile) && NativeLibrary.TryLoad(runtimeFile, out var h2))
+                    return h2;
+            }
+        }
+        return IntPtr.Zero;
+    });
+
+    QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+    builder.Services.AddSingleton<IPdfGenerator, HotelAutomation.Worker.Services.InvoicePdfGenerator>();
+    Console.WriteLine("[INFO] QuestPDF initialized successfully.");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[WARNING] QuestPDF native libraries unavailable: {ex.Message}. Falling back to FallbackPdfGenerator.");
+    builder.Services.AddSingleton<IPdfGenerator, HotelAutomation.Worker.Services.FallbackPdfGenerator>();
+}
 
 // ── Virtual Printer Installer (Phase 2) ────────────────────────────────
 // Runs at startup on Windows. Installs 'Hotel Sankalp Printer' automatically.
@@ -218,7 +264,6 @@ builder.Services.AddHostedService<OutboxProcessor>();
 builder.Services.AddHostedService<JobProcessor>();
 builder.Services.AddHostedService<CampaignProcessor>();
 builder.Services.AddHostedService<DateTriggerProcessor>();
-builder.Services.AddHostedService<WebhookRelayPoller>();
 builder.Services.AddHostedService<HotelAutomation.Worker.Services.TemplateSyncScheduler>();
 builder.Services.AddHostedService<HotelAutomation.Worker.Services.DatabaseBackupScheduler>();
 
@@ -311,16 +356,23 @@ using (var scope = app.Services.CreateScope())
     var hasher = scope.ServiceProvider.GetRequiredService<HotelAutomation.Core.Security.PasswordHasher>();
     var defaultHash = hasher.HashPassword("AdminPassword123");
     var srkHash = hasher.HashPassword("Scalifts$789!");
-    // Seed default accounts
-    userRepo.SeedDefaultOwnerAsync(defaultHash, srkHash).GetAwaiter().GetResult();
-
-    // ── Force-update SRKadmin password on every startup ──────────────────────
-    // This ensures the password is always current even if the account already existed.
-    var srkUser = userRepo.GetByUsernameAsync("SRKadmin").GetAwaiter().GetResult();
-    if (srkUser != null && !hasher.VerifyPassword("Scalifts$789!", srkUser.PasswordHash))
+    try
     {
-        srkUser.PasswordHash = srkHash;
-        userRepo.UpdateAsync(srkUser).GetAwaiter().GetResult();
+        // Seed default accounts
+        userRepo.SeedDefaultOwnerAsync(defaultHash, srkHash).GetAwaiter().GetResult();
+
+        // ── Force-update SRKadmin password on every startup ──────────────────────
+        // This ensures the password is always current even if the account already existed.
+        var srkUser = userRepo.GetByUsernameAsync("SRKadmin").GetAwaiter().GetResult();
+        if (srkUser != null && !hasher.VerifyPassword("Scalifts$789!", srkUser.PasswordHash))
+        {
+            srkUser.PasswordHash = srkHash;
+            userRepo.UpdateAsync(srkUser).GetAwaiter().GetResult();
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Startup] Non-fatal user initialization warning: {ex.Message}");
     }
 
 
@@ -3020,6 +3072,8 @@ app.MapDelete("/api/database/backups/{fileName}", (string fileName, HotelAutomat
     return Results.NotFound(new { error = "Backup file not found or could not be deleted." });
 });
 
+app.MapGet("/ping", () => Results.Ok("live"));
+
 // ── Open browser when server is ready ────────────────────────────────────────
 // Fires once Kestrel has bound the port and is accepting connections.
 app.Lifetime.ApplicationStarted.Register(() =>
@@ -3032,7 +3086,21 @@ app.Lifetime.ApplicationStarted.Register(() =>
     catch { /* ignore — browser may not be available */ }
 });
 
-app.Run();
+try
+{
+    app.Run();
+}
+catch (Exception ex)
+{
+    CrashLogger.LogCrash("Program.AppRun", ex);
+    Console.WriteLine($"[Fatal Error] Host terminated unexpectedly: {ex.Message}");
+    if (Environment.UserInteractive)
+    {
+        Console.WriteLine("\nPress any key to exit...");
+        try { Console.ReadKey(); } catch { }
+    }
+    throw;
+}
 
 public class WebhookPayload { public string From { get; set; } = ""; public string Body { get; set; } = ""; }
 

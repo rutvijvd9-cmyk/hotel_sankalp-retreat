@@ -35,53 +35,83 @@ public sealed class SqliteConnectionFactory
 
     public SqliteConnectionFactory(string connectionString)
     {
-        _connectionString = connectionString;
+        var builder = new SqliteConnectionStringBuilder(connectionString)
+        {
+            DefaultTimeout = 30 // Wait up to 30s automatically on locked transactions before throwing
+        };
+        _connectionString = builder.ToString();
     }
 
     public async Task<SqliteConnection> OpenAsync(CancellationToken ct = default)
     {
-        var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct);
-
-        // Apply per-connection PRAGMAs for reliability and performance.
-        // WAL mode: readers and writers don't block each other — critical for 24/7 multi-threaded operation.
-        // busy_timeout: automatically retry on a brief lock (up to 5 s) instead of throwing immediately.
-        // foreign_keys: enforce referential integrity.
-        // cache_size: keep 2 000 pages (≈8 MB) in memory to reduce disk reads.
-        await SetupConnectionAsync(connection, ct);
-
-        if (!_schemaEnsured)
+        const int maxRetries = 5;
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            await _lock.WaitAsync(ct);
             try
             {
+                var connection = new SqliteConnection(_connectionString);
+                await connection.OpenAsync(ct);
+
+                // Apply per-connection PRAGMAs for reliability and performance.
+                await SetupConnectionAsync(connection, ct);
+
                 if (!_schemaEnsured)
                 {
-                    await EnsureSchemaAsync(connection, ct);
-                    _schemaEnsured = true;
+                    await _lock.WaitAsync(ct);
+                    try
+                    {
+                        if (!_schemaEnsured)
+                        {
+                            await EnsureSchemaAsync(connection, ct);
+                            _schemaEnsured = true;
+                        }
+                    }
+                    finally
+                    {
+                        _lock.Release();
+                    }
                 }
+
+                return connection;
             }
-            finally
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 5 && attempt < maxRetries) // SQLite Error 5: SQLITE_BUSY / locked
             {
-                _lock.Release();
+                await Task.Delay(attempt * 300, ct);
             }
         }
 
-        return connection;
+        // Final attempt
+        var finalConn = new SqliteConnection(_connectionString);
+        await finalConn.OpenAsync(ct);
+        await SetupConnectionAsync(finalConn, ct);
+        return finalConn;
     }
 
     private static async Task SetupConnectionAsync(SqliteConnection connection, CancellationToken ct)
     {
         await using var cmd = connection.CreateCommand();
+        // 1. MUST set busy_timeout first so any subsequent PRAGMAs wait rather than failing immediately
         cmd.CommandText = """
-            PRAGMA journal_mode       = WAL;
-            PRAGMA busy_timeout       = 5000;
+            PRAGMA busy_timeout       = 10000;
             PRAGMA foreign_keys       = ON;
             PRAGMA cache_size         = -2000;
-            PRAGMA synchronous        = FULL;
+            PRAGMA synchronous        = NORMAL;
             PRAGMA wal_autocheckpoint = 100;
             """;
         await cmd.ExecuteNonQueryAsync(ct);
+
+        // 2. Setting journal_mode = WAL requires exclusive lock. Once set, it persists in the database header.
+        // Wrap in try-catch so transient readers never cause an unhandled 'database is locked' crash.
+        try
+        {
+            await using var walCmd = connection.CreateCommand();
+            walCmd.CommandText = "PRAGMA journal_mode = WAL;";
+            await walCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch (SqliteException)
+        {
+            // Database is already in WAL mode or busy with a concurrent reader; safe to continue.
+        }
     }
 
 

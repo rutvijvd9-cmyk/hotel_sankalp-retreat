@@ -1,5 +1,5 @@
 # sign_and_build.ps1 - Creates cert, signs exe, compiles installer
-$Root         = "E:\hotel_sankalp-retreat"
+$Root         = Split-Path -Parent $PSScriptRoot
 $CertName     = "Hotel Sankalp Retreat"
 $CertStore    = "Cert:\CurrentUser\My"
 $CerExport    = "$Root\Setup\HotelSankalp_CodeSign.cer"
@@ -67,13 +67,17 @@ if ($null -ne $Signtool) {
 Write-Host ""
 Write-Host "[3/4] Compiling Inno Setup installer..." -ForegroundColor Cyan
 
-$ISCC = "C:\Users\ASUS\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
-if (-not (Test-Path $ISCC)) {
-    # Fallback to standard path
-    $ISCC = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-}
-if (-not (Test-Path $ISCC)) {
-    Write-Host "  ERROR: Inno Setup 6 not found." -ForegroundColor Red
+$possibleIscc = @(
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 6\ISCC.exe",
+    "C:\Users\ASUS\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
+)
+$ISCC = $possibleIscc | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $ISCC) {
+    Write-Host "  ERROR: Inno Setup 6 (ISCC.exe) not found. Please install Inno Setup 6 from https://jrsoftware.org/isdl.php" -ForegroundColor Red
     exit 1
 }
 

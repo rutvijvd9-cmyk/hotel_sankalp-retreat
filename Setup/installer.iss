@@ -111,6 +111,9 @@ Filename: "{app}\{#AppExe}"; \
 [UninstallRun]
 ; Kill the running process before uninstalling
 Filename: "taskkill.exe"; Parameters: "/F /IM HotelAutomation.Worker.exe"; Flags: runhidden; RunOnceId: "KillApp"
+; Stop and delete watchdog and autostart scheduled tasks
+Filename: "schtasks.exe"; Parameters: "/Delete /TN ""TheSankalpRetreat\TheSankalpRetreatWatchdog"" /F"; Flags: runhidden; RunOnceId: "DeleteWatchdogTask"
+Filename: "schtasks.exe"; Parameters: "/Delete /TN ""TheSankalpRetreat\TheSankalpRetreatAutoStart"" /F"; Flags: runhidden; RunOnceId: "DeleteAutoStartTask"
 ; Remove the TheSankalpRetreat virtual printer and its port on uninstall
 Filename: "powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""Remove-Printer -Name 'TheSankalpRetreat' -ErrorAction SilentlyContinue; Remove-Printer -Name 'Scalifts' -ErrorAction SilentlyContinue; Get-PrinterPort | Where-Object {{ $_.Name -like '*sankalp_bill*' }} | ForEach-Object {{ Remove-PrinterPort -Name $_.Name -ErrorAction SilentlyContinue }}"""; Flags: runhidden; RunOnceId: "RemovePrinter"
 
@@ -126,8 +129,12 @@ begin
   Exec('schtasks.exe', '/Change /TN "Scalifts\ScaliftsWatchdog" /Disable', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('schtasks.exe', '/Change /TN "TheSankalpRetreat\TheSankalpRetreatWatchdog" /Disable', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-  // 2. Kill any running instance forcefully
+  // 2. Kill any running instance forcefully and free port 8000
   Exec('taskkill.exe', '/F /IM HotelAutomation.Worker.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('powershell.exe',
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ' +
+    '"Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
   // 3. Remove old "Hotel Sankalp Printer" if it exists (from previous installs)
   Exec('powershell.exe',
