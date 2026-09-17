@@ -97,7 +97,7 @@ Filename: "powershell.exe"; \
     Flags: runhidden waituntilterminated; \
     StatusMsg: "Installing TheSankalpRetreat printer..."
 
-; 2. Register auto-start (on boot) + watchdog (crash recovery every 2 min) scheduled tasks
+; 2. Register auto-start (on boot) + watchdog (crash recovery every 15 min) scheduled tasks
 Filename: "powershell.exe"; \
     Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\configure_autostart.ps1"" -InstallDir ""{app}"""; \
     Flags: runhidden waituntilterminated; \

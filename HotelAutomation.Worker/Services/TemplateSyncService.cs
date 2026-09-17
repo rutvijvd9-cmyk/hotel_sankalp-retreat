@@ -1,4 +1,4 @@
-﻿namespace HotelAutomation.Worker.Services;
+namespace HotelAutomation.Worker.Services;
 
 using System;
 using System.Collections.Generic;
@@ -53,116 +53,173 @@ public sealed class TemplateSyncService
 
             var localTemplates = await _repo.GetAllAsync();
             var localNames = localTemplates.Select(t => t.ExternalTemplateName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            int added = 0;
 
+            // Collect every name currently live on Meta for later stale-name detection
+            var metaNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in dataProp.EnumerateArray())
             {
-                if (item.TryGetProperty("name", out var nameProp))
+                if (item.TryGetProperty("name", out var np))
                 {
-                    var name = nameProp.GetString();
-                    if (string.IsNullOrEmpty(name) || localNames.Contains(name)) continue;
-
-                    var category = item.TryGetProperty("category", out var catProp) ? catProp.GetString() ?? "Utility" : "Utility";
-                    var lang = item.TryGetProperty("language", out var langProp) ? langProp.GetString() ?? "en" : "en";
-                    
-                    string bodyText = "";
-                    string headerText = "";
-                    string headerType = "None";
-                    string footerText = "";
-                    string buttonsJson = "[]";
-
-                    if (item.TryGetProperty("components", out var compsProp) && compsProp.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var comp in compsProp.EnumerateArray())
-                        {
-                            var type = comp.TryGetProperty("type", out var typeP) ? typeP.GetString() : "";
-                            if (type == "BODY")
-                            {
-                                bodyText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
-                            }
-                            else if (type == "HEADER")
-                            {
-                                headerType = comp.TryGetProperty("format", out var fmtP) ? fmtP.GetString() ?? "Text" : "Text";
-                                if (headerType == "TEXT")
-                                {
-                                    headerText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
-                                }
-                            }
-                            else if (type == "FOOTER")
-                            {
-                                footerText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
-                            }
-                            else if (type == "BUTTONS")
-                            {
-                                var btns = new List<object>();
-                                if (comp.TryGetProperty("buttons", out var btnsP) && btnsP.ValueKind == JsonValueKind.Array)
-                                {
-                                    foreach (var b in btnsP.EnumerateArray())
-                                    {
-                                        var bType = b.TryGetProperty("type", out var btP) ? btP.GetString() : "";
-                                        var bText = b.TryGetProperty("text", out var btTxt) ? btTxt.GetString() ?? "" : "";
-                                        if (bType == "QUICK_REPLY")
-                                        {
-                                            btns.Add(new { type = "QUICK_REPLY", text = bText });
-                                        }
-                                        else if (bType == "URL")
-                                        {
-                                            var bUrl = b.TryGetProperty("url", out var btUrl) ? btUrl.GetString() ?? "" : "";
-                                            btns.Add(new { type = "URL", text = bText, url = bUrl });
-                                        }
-                                        else if (bType == "PHONE_NUMBER")
-                                        {
-                                            var bPhone = b.TryGetProperty("phone_number", out var btPhone) ? btPhone.GetString() ?? "" : "";
-                                            btns.Add(new { type = "PHONE_NUMBER", text = bText, phone_number = bPhone });
-                                        }
-                                    }
-                                }
-                                buttonsJson = JsonSerializer.Serialize(btns);
-                            }
-                        }
-                    }
-
-                    // Parse parameter definitions from bodyText
-                    var matches = Regex.Matches(bodyText, @"\{\{(\d+)\}\}");
-                    var positions = matches.Cast<Match>().Select(m => int.Parse(m.Groups[1].Value)).Distinct().OrderBy(p => p).ToList();
-                    var defs = positions.Select(pos => new {
-                        Position = pos,
-                        Label = pos == 1 ? "Guest Name" : (pos == 2 ? "Hotel Name" : $"Variable {pos}"),
-                        SampleValue = pos == 1 ? "Dear Guest" : (pos == 2 ? "The Sankalp Retreat" : ""),
-                        SourceColumn = pos == 1 ? "FirstName" : "",
-                        DynamicKey = pos == 1 ? "Name" : (pos == 2 ? "HotelName" : "")
-                    }).ToList();
-
-                    var newT = new MessageTemplate
-                    {
-                        Name = name,
-                        ExternalTemplateName = name,
-                        LanguageCode = lang,
-                        Category = category,
-                        HeaderType = headerType,
-                        BodyText = bodyText,
-                        HeaderText = string.IsNullOrEmpty(headerText) ? null : headerText,
-                        FooterText = string.IsNullOrEmpty(footerText) ? null : footerText,
-                        ButtonsJson = buttonsJson,
-                        ParameterDefinitionsJson = JsonSerializer.Serialize(defs),
-                        BodyParamCount = defs.Count
-                    };
-
-                    await _repo.AddAsync(newT);
-                    added++;
+                    var n = np.GetString();
+                    if (!string.IsNullOrEmpty(n)) metaNames.Add(n);
                 }
             }
 
-            var msg = $"Sync completed successfully ({added} new templates added). Triggered by: {triggeredBy}";
-            _logger.LogInformation("{Message}", msg);
+            int added = 0;
+
+            // ── Phase 1: Add brand-new templates from Meta ────────────────────────────
+            foreach (var item in dataProp.EnumerateArray())
+            {
+                if (!item.TryGetProperty("name", out var nameProp)) continue;
+                var name = nameProp.GetString();
+                if (string.IsNullOrEmpty(name) || localNames.Contains(name)) continue;
+
+                var category = item.TryGetProperty("category", out var catProp) ? catProp.GetString() ?? "Utility" : "Utility";
+                var lang     = item.TryGetProperty("language", out var langProp) ? langProp.GetString() ?? "en" : "en";
+
+                string bodyText    = "";
+                string headerText  = "";
+                string headerType  = "None";
+                string footerText  = "";
+                string buttonsJson = "[]";
+
+                if (item.TryGetProperty("components", out var compsProp) && compsProp.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var comp in compsProp.EnumerateArray())
+                    {
+                        var type = comp.TryGetProperty("type", out var typeP) ? typeP.GetString() : "";
+                        if (type == "BODY")
+                        {
+                            bodyText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
+                        }
+                        else if (type == "HEADER")
+                        {
+                            headerType = comp.TryGetProperty("format", out var fmtP) ? fmtP.GetString() ?? "Text" : "Text";
+                            if (headerType == "TEXT")
+                                headerText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
+                        }
+                        else if (type == "FOOTER")
+                        {
+                            footerText = comp.TryGetProperty("text", out var textP) ? textP.GetString() ?? "" : "";
+                        }
+                        else if (type == "BUTTONS")
+                        {
+                            var btns = new List<object>();
+                            if (comp.TryGetProperty("buttons", out var btnsP) && btnsP.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var b in btnsP.EnumerateArray())
+                                {
+                                    var bType  = b.TryGetProperty("type", out var btP)   ? btP.GetString()   : "";
+                                    var bText  = b.TryGetProperty("text", out var btTxt) ? btTxt.GetString() ?? "" : "";
+                                    if (bType == "QUICK_REPLY")
+                                        btns.Add(new { type = "QUICK_REPLY", text = bText });
+                                    else if (bType == "URL")
+                                    {
+                                        var bUrl = b.TryGetProperty("url", out var btUrl) ? btUrl.GetString() ?? "" : "";
+                                        btns.Add(new { type = "URL", text = bText, url = bUrl });
+                                    }
+                                    else if (bType == "PHONE_NUMBER")
+                                    {
+                                        var bPhone = b.TryGetProperty("phone_number", out var btPhone) ? btPhone.GetString() ?? "" : "";
+                                        btns.Add(new { type = "PHONE_NUMBER", text = bText, phone_number = bPhone });
+                                    }
+                                }
+                            }
+                            buttonsJson = JsonSerializer.Serialize(btns);
+                        }
+                    }
+                }
+
+                // Parse parameter definitions from bodyText
+                var paramMatches = Regex.Matches(bodyText, @"\{\{(\d+)\}\}");
+                var positions    = paramMatches.Cast<Match>().Select(m => int.Parse(m.Groups[1].Value)).Distinct().OrderBy(p => p).ToList();
+                var defs = positions.Select(pos => new {
+                    Position    = pos,
+                    Label       = pos == 1 ? "Guest Name"  : (pos == 2 ? "Hotel Name" : $"Variable {pos}"),
+                    SampleValue = pos == 1 ? "Dear Guest"  : (pos == 2 ? "The Sankalp Retreat" : ""),
+                    SourceColumn = pos == 1 ? "FirstName"  : "",
+                    DynamicKey  = pos == 1 ? "Name"        : (pos == 2 ? "HotelName" : "")
+                }).ToList();
+
+                var newT = new MessageTemplate
+                {
+                    Name                     = name,
+                    ExternalTemplateName     = name,
+                    LanguageCode             = lang,
+                    Category                 = category,
+                    HeaderType               = headerType,
+                    BodyText                 = bodyText,
+                    HeaderText               = string.IsNullOrEmpty(headerText) ? null : headerText,
+                    FooterText               = string.IsNullOrEmpty(footerText) ? null : footerText,
+                    ButtonsJson              = buttonsJson,
+                    ParameterDefinitionsJson = JsonSerializer.Serialize(defs),
+                    BodyParamCount           = defs.Count
+                };
+
+                await _repo.AddAsync(newT);
+                added++;
+            }
+
+            // ── Phase 2: Repair stale template names ──────────────────────────────────
+            // When a template is renamed on Meta (e.g. "check_out" → "checkout_1") the old
+            // name stays in the local DB and automation rules continue pointing to it, causing
+            // WhatsApp API error 132001 ("template name does not exist in translation").
+            //
+            // Fix: detect local templates whose ExternalTemplateName is no longer on Meta,
+            // find the best matching current Meta name using normalised comparison, and update
+            // the record IN-PLACE.  The AutomationRule.TemplateId FK is untouched — no manual
+            // intervention is needed after this repair.
+            int repaired = 0;
+            var refreshedLocal = await _repo.GetAllAsync(); // re-fetch so newly-added rows are included
+            foreach (var local in refreshedLocal)
+            {
+                if (metaNames.Contains(local.ExternalTemplateName))
+                    continue; // still present on Meta — nothing to do
+
+                var normalizedLocal = NormalizeTemplateName(local.ExternalTemplateName);
+                var bestMatch = metaNames
+                    .Where(metaName => NormalizeTemplateName(metaName) == normalizedLocal)
+                    .OrderBy(metaName => metaName.Length) // prefer shorter / less versioned name
+                    .FirstOrDefault();
+
+                if (bestMatch is not null)
+                {
+                    _logger.LogWarning(
+                        "Stale template detected: local '{OldName}' (Id={Id}) no longer exists on Meta. " +
+                        "Auto-updating ExternalTemplateName → '{NewName}'. Automation rules are unaffected.",
+                        local.ExternalTemplateName, local.Id, bestMatch);
+
+                    await _repo.UpdateAsync(local.Id, local with { ExternalTemplateName = bestMatch, Name = bestMatch }, ct);
+                    repaired++;
+
+                    await _activityLog.LogAsync(
+                        "SYSTEM",
+                        "TEMPLATE_AUTO_REPAIRED",
+                        $"Stale template '{local.ExternalTemplateName}' (Id={local.Id}) auto-updated to '{bestMatch}'. Triggered by: {triggeredBy}",
+                        null, ct);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Stale template '{Name}' (Id={Id}) has no matching template on Meta WABA. " +
+                        "Automation rules using this template will fail with error 132001 until the template is recreated on Meta or the rule is updated manually.",
+                        local.ExternalTemplateName, local.Id);
+                }
+            }
+
+            var summary = added == 0 && repaired == 0
+                ? $"Sync completed — all templates already up to date. Triggered by: {triggeredBy}"
+                : $"Sync completed: {added} new template(s) added, {repaired} stale name(s) repaired. Triggered by: {triggeredBy}";
+
+            _logger.LogInformation("{Message}", summary);
             await _activityLog.LogAsync(
-                triggeredBy == "AutoScheduler" ? "SYSTEM" : "SRKadmin",
+                triggeredBy is "AutoScheduler" or "Startup" ? "SYSTEM" : "SRKadmin",
                 "TEMPLATE_SYNC",
-                $"WhatsApp templates synchronized with Meta WABA ({added} new added). Source: {triggeredBy}",
+                $"WhatsApp templates synchronized with Meta WABA ({added} new added, {repaired} repaired). Source: {triggeredBy}",
                 null,
                 ct);
 
-            return (true, added, msg);
+            return (true, added, summary);
         }
         catch (Exception ex)
         {
@@ -170,5 +227,18 @@ public sealed class TemplateSyncService
             await _activityLog.LogAsync("SYSTEM", "TEMPLATE_SYNC_ERROR", ex.Message, null, ct);
             return (false, 0, $"Sync failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Normalises a template name for fuzzy matching so renamed templates can be identified.
+    /// Strips trailing numeric version suffixes (_1, _2, …), removes underscores, hyphens,
+    /// and spaces, then lowercases — so "check_out" and "checkout_1" both collapse to "checkout".
+    /// </summary>
+    private static string NormalizeTemplateName(string name)
+    {
+        // Remove trailing _<digits> suffix (e.g. checkout_1 → checkout)
+        var stripped = Regex.Replace(name, @"_\d+$", "");
+        // Remove remaining separators and lowercase
+        return Regex.Replace(stripped, @"[_\- ]", "").ToLowerInvariant();
     }
 }

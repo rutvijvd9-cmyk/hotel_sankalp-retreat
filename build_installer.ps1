@@ -53,11 +53,43 @@ dotnet publish "$Root\HotelAutomation.Worker\HotelAutomation.Worker.csproj" `
 
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed." }
 
-# Copy database if needed
+# Copy seed database and strip all template/rule data so the installer never
+# ships stale template names.  On first run Program.cs copies this clean DB to
+# AppData, and the startup TemplateSyncScheduler immediately pulls the live
+# template list from Meta — so ExternalTemplateName is always correct.
 $dbSource = Join-Path $Root "HotelAutomation.Worker\hotel_automation.db"
 $dbDest   = Join-Path $publishOut "hotel_automation.db"
-if ((Test-Path $dbSource) -and -not (Test-Path $dbDest)) {
-    Copy-Item $dbSource $dbDest
+if (Test-Path $dbSource) {
+    Copy-Item $dbSource $dbDest -Force
+    Write-Host "Seed DB copied. Stripping MessageTemplates and AutomationRules rows..." -ForegroundColor Yellow
+
+    # Use sqlite3.exe if available; fall back to a .NET inline script
+    $sqlite3 = Get-Command sqlite3 -ErrorAction SilentlyContinue
+    if ($sqlite3) {
+        & sqlite3 $dbDest "DELETE FROM MessageTemplates; DELETE FROM AutomationRules; VACUUM;"
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Seed DB cleaned via sqlite3." -ForegroundColor Green
+        } else {
+            Write-Warning "sqlite3 cleanup returned non-zero exit code. Seed DB may still contain stale data."
+        }
+    } else {
+        # Inline .NET to clean the DB without requiring sqlite3 on PATH
+        Add-Type -Path (Get-ChildItem "$publishOut\Microsoft.Data.Sqlite.dll" | Select-Object -ExpandProperty FullName -ErrorAction SilentlyContinue)
+        try {
+            $cs  = "Data Source=$dbDest"
+            $con = New-Object Microsoft.Data.Sqlite.SqliteConnection($cs)
+            $con.Open()
+            foreach ($sql in @("DELETE FROM MessageTemplates;", "DELETE FROM AutomationRules;", "VACUUM;")) {
+                $cmd = $con.CreateCommand(); $cmd.CommandText = $sql; $cmd.ExecuteNonQuery() | Out-Null
+            }
+            $con.Close()
+            Write-Host "Seed DB cleaned via inline .NET SqliteConnection." -ForegroundColor Green
+        } catch {
+            Write-Warning "Could not clean seed DB automatically: $_. The startup TemplateSyncScheduler will repair stale names at runtime."
+        }
+    }
+} else {
+    Write-Host "No local hotel_automation.db found — installer will ship without a seed DB (fresh install)." -ForegroundColor Yellow
 }
 
 # --- STEP 4: Create & apply self-signed code-signing certificate ---

@@ -43,13 +43,33 @@ Register-ScheduledTask `
 
 Write-Host "TheSankalpRetreatAutoStart task registered." -ForegroundColor Green
 
-# ── Task 2: TheSankalpRetreatWatchdog — check every 2 minutes, restart if dead ─────────
+# ── Task 2: TheSankalpRetreatWatchdog — check every 5 minutes, restart if truly dead ─────────
 $watchdogScript = @"
 `$exePath = '$ExePath'
 `$workDir = '$InstallDir'
-if (-not (Get-Process -Name 'HotelAutomation.Worker' -ErrorAction SilentlyContinue)) {
+
+`$proc = Get-Process -Name 'HotelAutomation.Worker' -ErrorAction SilentlyContinue
+if (-not `$proc) {
+    # Process is completely dead -> launch it
     Start-Process -FilePath `"`$exePath`" -WorkingDirectory `"`$workDir`"
     Write-EventLog -LogName Application -Source 'TheSankalpRetreat' -EventId 1001 -EntryType Information -Message 'TheSankalpRetreatWatchdog: restarted HotelAutomation.Worker.exe' -ErrorAction SilentlyContinue
+} else {
+    # Process exists -> verify /ping health (give 5s timeout)
+    try {
+        `$res = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/ping' -TimeoutSec 5 -ErrorAction Stop
+    } catch {
+        # If /ping fails, sleep 10s and test again to prevent killing a process that is just busy or starting up
+        Start-Sleep -Seconds 10
+        try {
+            `$res = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/ping' -TimeoutSec 5 -ErrorAction Stop
+        } catch {
+            # Truly hung -> kill and restart
+            Stop-Process -Name 'HotelAutomation.Worker' -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+            Start-Process -FilePath `"`$exePath`" -WorkingDirectory `"`$workDir`"
+            Write-EventLog -LogName Application -Source 'TheSankalpRetreat' -EventId 1002 -EntryType Warning -Message 'TheSankalpRetreatWatchdog: process hung, restarted HotelAutomation.Worker.exe' -ErrorAction SilentlyContinue
+        }
+    }
 }
 "@
 
@@ -62,12 +82,12 @@ $action2 = New-ScheduledTaskAction `
     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$watchdogPath`"" `
     -WorkingDirectory $InstallDir
 
-# Repeat every 2 minutes, starting now, indefinitely
-$trigger2 = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 2) -Once -At (Get-Date)
+# Repeat every 15 minutes, starting now, indefinitely
+$trigger2 = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 15) -Once -At (Get-Date)
 
 $settings2 = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 1)
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 
 Register-ScheduledTask `
     -TaskName "$TaskFolder\TheSankalpRetreatWatchdog" `
@@ -78,5 +98,5 @@ Register-ScheduledTask `
     -User     "SYSTEM" `
     -Force | Out-Null
 
-Write-Host "TheSankalpRetreatWatchdog task registered (checks every 2 minutes)." -ForegroundColor Green
+Write-Host "TheSankalpRetreatWatchdog task registered (smart health checks every 15 minutes)." -ForegroundColor Green
 Write-Host "Auto-start and crash-recovery configured successfully." -ForegroundColor Cyan

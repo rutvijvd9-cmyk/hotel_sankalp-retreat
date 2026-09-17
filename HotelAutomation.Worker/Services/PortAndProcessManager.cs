@@ -9,20 +9,37 @@ using System.Threading;
 
 public static class PortAndProcessManager
 {
+    private static Mutex? _appMutex;
+
     /// <summary>
     /// Checks for duplicate worker processes or any zombie process listening on the specified port.
-    /// Terminates them automatically so that port binding and SQLite file access succeed cleanly.
+    /// Uses a system-wide Mutex to prevent multiple instances from racing or colliding.
+    /// Terminates stale instances so that port binding and SQLite file access succeed cleanly.
     /// </summary>
     public static void EnsurePortAndProcessAvailable(int port = 8000)
     {
-        // 0. If the server is already active and healthy, open the dashboard in browser and exit gracefully
-        if (IsServerAlreadyRunning(port))
+        const string mutexName = @"Global\HotelAutomation_Worker_SingleInstance_Mutex";
+        bool createdNew = false;
+
+        try
         {
-            Console.WriteLine($"[Startup] Hotel Automation server is already running on http://localhost:{port}.");
-            Console.WriteLine("[Startup] Opening dashboard in default browser...");
+            _appMutex = new Mutex(true, mutexName, out createdNew);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Startup] Mutex creation notice: {ex.Message}");
+        }
+
+        // If another instance already holds the mutex and is actively responding on /ping, exit gracefully
+        if (!createdNew && IsServerAlreadyRunning(port))
+        {
+            Console.WriteLine($"[Startup] Hotel Automation server is already running and healthy on http://localhost:{port}.");
             try
             {
-                Process.Start(new ProcessStartInfo($"http://localhost:{port}") { UseShellExecute = true });
+                if (Environment.UserInteractive)
+                {
+                    Process.Start(new ProcessStartInfo($"http://localhost:{port}") { UseShellExecute = true });
+                }
             }
             catch { }
             Environment.Exit(0);
@@ -81,21 +98,32 @@ public static class PortAndProcessManager
             Console.WriteLine($"[Startup] Port conflict check error: {ex.Message}");
         }
 
-        // 3. If any conflicting processes were killed, pause to allow socket and file handles to be released
+        // 3. If any conflicting processes were killed, give Windows a quick 500ms to clean socket
         if (killedAny)
         {
-            Console.WriteLine($"[Startup] Cleaned up conflicting processes on port {port}. Waiting 1s for port and file locks to release...");
-            Thread.Sleep(1000);
+            Console.WriteLine($"[Startup] Conflicting process killed on port {port}. Waiting 500ms for socket release...");
+            Thread.Sleep(500);
         }
     }
 
     private static bool KillProcessesOnPortWindows(int port, int currentPid)
     {
         bool killed = false;
-        var pids = new HashSet<int>();
 
         try
         {
+            // Fast native check: is port even in use? (Takes < 2ms)
+            var activeListeners = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners();
+            bool isPortListening = activeListeners.Any(endpoint => endpoint.Port == port);
+            if (!isPortListening)
+            {
+                // Port 8000 is completely free, no delay needed!
+                return false;
+            }
+
+            var pids = new HashSet<int>();
+
+            // Port is actually occupied — only then run netstat to find and kill the culprit PID
             var startInfo = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
@@ -109,7 +137,7 @@ public static class PortAndProcessManager
             if (process != null)
             {
                 string output = process.StandardOutput.ReadToEnd();
-                process.WaitForExit(2000);
+                process.WaitForExit(1000);
 
                 var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 foreach (var line in lines)
@@ -124,39 +152,24 @@ public static class PortAndProcessManager
                     }
                 }
             }
-        }
-        catch { }
 
-        foreach (var pid in pids)
-        {
-            if (pid == currentPid) continue;
+            foreach (var pid in pids)
+            {
+                if (pid == currentPid) continue;
 
-            Console.WriteLine($"[Startup] Process PID {pid} is occupying port {port}. Freeing port...");
-            try
-            {
-                using var proc = Process.GetProcessById(pid);
-                proc.Kill(true);
-                proc.WaitForExit(2000);
-                killed = true;
-                Console.WriteLine($"[Startup] Killed process {pid} occupying port {port}.");
-            }
-            catch
-            {
+                Console.WriteLine($"[Startup] Process PID {pid} is occupying port {port}. Freeing port...");
                 try
                 {
-                    using var killProc = Process.Start(new ProcessStartInfo
-                    {
-                        FileName = "taskkill.exe",
-                        Arguments = $"/F /T /PID {pid}",
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    });
-                    killProc?.WaitForExit(2000);
+                    using var proc = Process.GetProcessById(pid);
+                    proc.Kill(true);
+                    proc.WaitForExit(1000);
                     killed = true;
+                    Console.WriteLine($"[Startup] Killed process {pid} occupying port {port}.");
                 }
                 catch { }
             }
         }
+        catch { }
 
         return killed;
     }

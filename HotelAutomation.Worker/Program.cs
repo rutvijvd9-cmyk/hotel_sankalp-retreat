@@ -3090,6 +3090,22 @@ try
 {
     app.Run();
 }
+catch (System.IO.IOException ioEx) when (ioEx.InnerException is Microsoft.AspNetCore.Connections.AddressInUseException || ioEx.Message.Contains("address already in use", StringComparison.OrdinalIgnoreCase))
+{
+    CrashLogger.LogCrash("Program.PortConflict", ioEx, "Port 8000 was in use despite pre-flight checks. Retrying on port 8001...");
+    Console.WriteLine("[Warning] Port 8000 was locked. Falling back to port 8001 so background automations continue...");
+
+    try
+    {
+        // Try starting on 8001 or dynamic fallback so background automations NEVER die
+        app.Run("http://localhost:8001");
+    }
+    catch (Exception fallbackEx)
+    {
+        CrashLogger.LogCrash("Program.FallbackRun", fallbackEx);
+        Console.WriteLine($"[Fatal Error] Could not bind fallback web port: {fallbackEx.Message}");
+    }
+}
 catch (Exception ex)
 {
     CrashLogger.LogCrash("Program.AppRun", ex);
