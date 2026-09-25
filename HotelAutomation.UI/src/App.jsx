@@ -1771,13 +1771,15 @@ export default function App() {
     }
 
     if (activeTab === 'templates') {
-      const handleSaveTemplate = async () => {
+      const handleSaveTemplate = async (localOnly = false) => {
         if (!newTemplate.Name || !newTemplate.ExternalTemplateName) {
           alert('Name and External Template Name are required');
           return;
         }
         try {
-          const url = isEditingTemplate ? `${API_BASE}/templates/${editingTemplateId}` : `${API_BASE}/templates`;
+          const url = isEditingTemplate 
+            ? `${API_BASE}/templates/${editingTemplateId}` 
+            : `${API_BASE}/templates${localOnly ? '?localOnly=true' : ''}`;
           const method = isEditingTemplate ? 'PUT' : 'POST';
           const res = await fetch(url, {
             method,
@@ -1794,7 +1796,14 @@ export default function App() {
             try {
               const errData = await res.json();
               const metaMsg = errData?.message || 'Failed to save template';
-              alert(`Failed to save template:\n\n${metaMsg}`);
+              if (errData?.isRateLimited || metaMsg.includes('80008')) {
+                if (window.confirm(`${metaMsg}\n\nWould you like to save this template LOCALLY without calling Meta API right now?`)) {
+                  handleSaveTemplate(true);
+                  return;
+                }
+              } else {
+                alert(`Failed to save template:\n\n${metaMsg}`);
+              }
             } catch {
               alert('Failed to save template');
             }
@@ -2442,7 +2451,14 @@ export default function App() {
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid var(--border-color, #eee)', paddingTop: '16px', marginTop: '16px' }}>
                   <button className="btn btn-secondary" onClick={() => setShowTemplateModal(false)}>Cancel</button>
-                  <button className="btn btn-primary" onClick={handleSaveTemplate}>Save Template</button>
+                  <button 
+                    className="btn btn-secondary" 
+                    onClick={() => handleSaveTemplate(true)}
+                    title="Save template directly into local database without calling Meta API (useful if Meta is rate-limiting)"
+                  >
+                    💾 Save Locally
+                  </button>
+                  <button className="btn btn-primary" onClick={() => handleSaveTemplate(false)}>Save to Meta & System</button>
                 </div>
               </div>
             </div>

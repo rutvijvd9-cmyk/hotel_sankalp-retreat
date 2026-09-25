@@ -40,13 +40,13 @@ TaskScheduler.UnobservedTaskException += (sender, eventArgs) =>
     eventArgs.SetObserved();
 };
 
-// ── Free Port 8000 and Stop Any Stuck/Duplicate Worker Instances ──────────────
-PortAndProcessManager.EnsurePortAndProcessAvailable(8000);
+// ── Free Port 8001 and Stop Any Stuck/Duplicate Worker Instances ──────────────
+PortAndProcessManager.EnsurePortAndProcessAvailable(8001);
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Always bind to localhost:8000 regardless of environment or launchSettings ──
-builder.WebHost.UseUrls("http://localhost:8000");
+// ── Always bind to localhost:8001 regardless of environment or launchSettings ──
+builder.WebHost.UseUrls("http://localhost:8001");
 
 builder.WebHost.ConfigureKestrel(options => 
 {
@@ -280,7 +280,7 @@ unifiedLoggerProvider.SetRepository(sysLogRepository);
 // Log application startup details
 var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
 startupLogger.LogInformation("=================================================");
-startupLogger.LogInformation("Hotel Automation System starting up on {Url}", "http://localhost:8000");
+startupLogger.LogInformation("Hotel Automation System starting up on {Url}", "http://localhost:8001");
 startupLogger.LogInformation("AppData: {AppDataDir} | Logs: {LogsDir}", appDataDir, logsDir);
 startupLogger.LogInformation("OS: {OS} | Process ID: {PID} | CLR: {Version}", Environment.OSVersion, Environment.ProcessId, Environment.Version);
 startupLogger.LogInformation("=================================================");
@@ -1067,7 +1067,7 @@ app.MapGet("/api/logs", async (EventLogRepository repo) =>
 });
 
 // Boilerplate stubs to support UI Builder saves if not implemented
-app.MapPost("/api/templates", async (HotelAutomation.Core.Models.MessageTemplate template, ITemplateRepository repo, WhatsAppApiClient whatsappClient, Microsoft.Extensions.Logging.ILogger<Program> logger) => 
+app.MapPost("/api/templates", async (HotelAutomation.Core.Models.MessageTemplate template, ITemplateRepository repo, WhatsAppApiClient whatsappClient, Microsoft.Extensions.Logging.ILogger<Program> logger, bool localOnly = false) => 
 {
     var trimmed = template with 
     { 
@@ -1092,6 +1092,14 @@ app.MapPost("/api/templates", async (HotelAutomation.Core.Models.MessageTemplate
     }
 
     var finalTemplate = trimmed with { BodyParamCount = paramCount };
+
+    // If localOnly was explicitly requested, bypass Meta API completely and save directly to local SQLite
+    if (localOnly)
+    {
+        logger.LogInformation("Saving template '{Name}' locally (bypassing Meta API call).", finalTemplate.Name);
+        var localId = await repo.AddAsync(finalTemplate);
+        return Results.Ok(new { id = localId, message = "Template saved locally." });
+    }
 
     // Build ordered sample values list (position 1..N), falling back to placeholder if blank
     var orderedSamples = new List<string>();
@@ -1229,7 +1237,13 @@ app.MapPost("/api/templates", async (HotelAutomation.Core.Models.MessageTemplate
     if (!success)
     {
         logger.LogError("Meta API rejected template creation. Response: {MetaError}", error ?? "Unknown error");
-        return Results.BadRequest(new { message = $"Meta API Error: {error ?? "Unknown error"}" });
+        var rawErr = error ?? "Unknown error";
+        return Results.BadRequest(new { 
+            message = rawErr.Contains("80008") 
+                ? "Meta Rate Limit (#80008): Meta is currently throttling requests. You can save this template locally by clicking 'Save Locally'."
+                : $"Meta API Error: {rawErr}",
+            isRateLimited = rawErr.Contains("80008")
+        });
     }
 
     var id = await repo.AddAsync(finalTemplate);
@@ -1348,9 +1362,9 @@ app.MapDelete("/api/templates/{id}", async (int id, ITemplateRepository repo, Wh
 app.MapPost("/api/templates/sync", async (HotelAutomation.Worker.Services.TemplateSyncService syncService, HttpContext context) => 
 {
     var triggeredBy = context.User.Identity?.Name ?? "Manual";
-    var (success, count, message) = await syncService.SyncTemplatesAsync(triggeredBy);
+    var (success, count, removedCount, message) = await syncService.SyncTemplatesAsync(triggeredBy);
     return success 
-        ? Results.Ok(new { message, addedCount = count }) 
+        ? Results.Ok(new { message, addedCount = count, removedCount }) 
         : Results.BadRequest(new { message });
 });
 
@@ -3081,7 +3095,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
     try
     {
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-            "http://localhost:8000") { UseShellExecute = true });
+            "http://localhost:8001") { UseShellExecute = true });
     }
     catch { /* ignore — browser may not be available */ }
 });

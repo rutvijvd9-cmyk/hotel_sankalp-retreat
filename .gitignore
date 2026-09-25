@@ -53,6 +53,7 @@ Setup/wwwroot/
 installer_output/
 publish_output/
 ALL_SETUPS/
+ALL_SETUPS_ZIP/
 HotelSankalpRetreat_Setup.exe
 PDFs/
 contacts/

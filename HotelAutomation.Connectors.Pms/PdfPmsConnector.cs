@@ -110,11 +110,13 @@ public sealed class PdfPmsConnector : IPmsEventSource
 
         _printerFileWatcher = new FileSystemWatcher(printerFileDir, printerFileName)
         {
-            NotifyFilter          = NotifyFilters.LastWrite | NotifyFilters.Size,
+            NotifyFilter          = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.CreationTime,
             EnableRaisingEvents   = true,
             IncludeSubdirectories = false
         };
         _printerFileWatcher.Changed += OnPrinterFileChanged;
+        _printerFileWatcher.Created += OnPrinterFileChanged;
+        _printerFileWatcher.Renamed += (s, e) => OnPrinterFileChanged(s, new FileSystemEventArgs(WatcherChangeTypes.Changed, printerFileDir, e.Name));
         _printerFileWatcher.Error   += OnWatcherError;
 
         _logger.LogInformation(
@@ -140,11 +142,38 @@ public sealed class PdfPmsConnector : IPmsEventSource
     public void ScanNow()
     {
         _logger.LogInformation("PDF Bridge: manual scan triggered.");
+
+        // Check if the printer output file has unprocessed content
+        if (File.Exists(_options.PrinterOutputFile))
+        {
+            try
+            {
+                var currentHash = ComputeFileHash(_options.PrinterOutputFile);
+                if (currentHash != null && currentHash != _lastPrinterFileHash)
+                {
+                    _logger.LogInformation("PDF Bridge: found unprocessed printer output file during scan.");
+                    lock (_hashLock)
+                    {
+                        _lastPrinterFileHash = currentHash;
+                    }
+                    var archiveCopy = ArchivePrinterOutput(_options.PrinterOutputFile);
+                    if (archiveCopy != null)
+                    {
+                        ProcessPdf(archiveCopy, archive: false);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "PDF Bridge: error checking printer output file during ScanNow.");
+            }
+        }
+
         var files = Directory.GetFiles(_options.WatchFolder, "*.pdf");
         _logger.LogInformation("PDF Bridge: found {Count} PDF(s) in watch folder.", files.Length);
         foreach (var file in files)
         {
-            // Skip the printer output file here — it is handled by the printer file watcher
+            // Skip the printer output file here — it was handled above
             if (string.Equals(file, _options.PrinterOutputFile, StringComparison.OrdinalIgnoreCase))
                 continue;
             ProcessPdf(file, archive: _options.ArchiveProcessed);

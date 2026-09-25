@@ -460,6 +460,14 @@ public sealed class WhatsAppMessageSender : IMessageChannel
                         {
                             failureReason = "Message Undeliverable: The recipient number cannot receive WhatsApp messages or has blocked the business.";
                         }
+                        else if (errorCode == 132001)
+                        {
+                            // Template name does not exist on Meta WABA for the given language.
+                            // Most common cause: template was renamed/deleted on Meta dashboard
+                            // but the local DB still has the old ExternalTemplateName.
+                            failureReason = $"Template '{template.ExternalTemplateName}' does not exist on Meta WABA for language '{template.LanguageCode}'. " +
+                                            $"ACTION REQUIRED: Go to Templates → Sync from Meta, then verify the checkout rule points to the correct approved template.";
+                        }
                         else
                         {
                             failureReason = details ?? errorMsg ?? $"API request rejected by Meta (Code: {errorCode}, Subcode: {errorSubcode}).";

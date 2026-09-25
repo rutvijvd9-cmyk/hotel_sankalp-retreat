@@ -10,7 +10,7 @@
 #define AppName      "TheSankalpRetreat"
 #define AppVersion   "1.0"
 #define AppPublisher "TheSankalpRetreat"
-#define AppURL       "http://localhost:8000"
+#define AppURL       "http://localhost:8001"
 #define AppExe       "HotelAutomation.Worker.exe"
 
 [Setup]
@@ -55,8 +55,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 ; Desktop shortcut — checked by default
 Name: "desktopicon"; Description: "Create a &Desktop shortcut"; GroupDescription: "Additional icons:"; Flags: checkedonce
-; Run at Windows startup
-Name: "startup"; Description: "Start automatically when &Windows starts"; GroupDescription: "Startup:"; Flags: unchecked
+; Run at Windows startup — checked by default so it keeps running continuously
+Name: "startup"; Description: "Start automatically when &Windows starts"; GroupDescription: "Startup:"; Flags: checkedonce
 
 [Files]
 ; All published output files → installed to {app}
@@ -123,17 +123,19 @@ function InitializeSetup(): Boolean;
 var
   ResultCode: Integer;
 begin
-  // 1. Stop and disable any scheduled watchdog tasks so they don't restart the app during install
+  // 1. Stop, disable, and delete any legacy scheduled watchdog tasks
   Exec('schtasks.exe', '/End /TN "Scalifts\ScaliftsWatchdog"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('schtasks.exe', '/End /TN "TheSankalpRetreat\TheSankalpRetreatWatchdog"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('schtasks.exe', '/Change /TN "Scalifts\ScaliftsWatchdog" /Disable', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('schtasks.exe', '/Change /TN "TheSankalpRetreat\TheSankalpRetreatWatchdog" /Disable', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('schtasks.exe', '/End /TN "TheSankalpRetreat\TheSankalpRetreatAutoStart"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('schtasks.exe', '/Delete /TN "Scalifts\ScaliftsWatchdog" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('schtasks.exe', '/Delete /TN "TheSankalpRetreat\TheSankalpRetreatWatchdog" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('schtasks.exe', '/Delete /TN "TheSankalpRetreat\TheSankalpRetreatAutoStart" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-  // 2. Kill any running instance forcefully and free port 8000
+  // 2. Kill any running instance forcefully and free port 8001 and 8000
   Exec('taskkill.exe', '/F /IM HotelAutomation.Worker.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('powershell.exe',
     '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ' +
-    '"Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"',
+    '"Get-NetTCPConnection -LocalPort 8001,8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
   // 3. Remove old "Hotel Sankalp Printer" if it exists (from previous installs)

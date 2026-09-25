@@ -76,7 +76,7 @@ public sealed class TrayIconService : IHostedService, IDisposable
                 Text = "TheSankalpRetreat",
                 Visible = true,
                 BalloonTipTitle = "TheSankalpRetreat",
-                BalloonTipText = "Running on http://localhost:8000\nDouble-click to open Dashboard.",
+                BalloonTipText = "Running on http://localhost:8001\nDouble-click to open Dashboard.",
                 BalloonTipIcon = ToolTipIcon.Info
             };
 
@@ -143,7 +143,7 @@ public sealed class TrayIconService : IHostedService, IDisposable
     {
         try
         {
-            Process.Start(new ProcessStartInfo("http://localhost:8000")
+            Process.Start(new ProcessStartInfo("http://localhost:8001")
             {
                 UseShellExecute = true
             });

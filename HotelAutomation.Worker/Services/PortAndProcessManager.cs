@@ -4,34 +4,22 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Runtime.InteropServices;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Threading;
 
 public static class PortAndProcessManager
 {
-    private static Mutex? _appMutex;
-
     /// <summary>
     /// Checks for duplicate worker processes or any zombie process listening on the specified port.
-    /// Uses a system-wide Mutex to prevent multiple instances from racing or colliding.
     /// Terminates stale instances so that port binding and SQLite file access succeed cleanly.
+    /// If the server is already running and healthy, opens the browser and exits gracefully.
     /// </summary>
-    public static void EnsurePortAndProcessAvailable(int port = 8000)
+    public static void EnsurePortAndProcessAvailable(int port = 8001)
     {
-        const string mutexName = @"Global\HotelAutomation_Worker_SingleInstance_Mutex";
-        bool createdNew = false;
-
-        try
-        {
-            _appMutex = new Mutex(true, mutexName, out createdNew);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Startup] Mutex creation notice: {ex.Message}");
-        }
-
-        // If another instance already holds the mutex and is actively responding on /ping, exit gracefully
-        if (!createdNew && IsServerAlreadyRunning(port))
+        // If the server is already running and healthy, open the browser and return gracefully
+        if (IsServerAlreadyRunning(port))
         {
             Console.WriteLine($"[Startup] Hotel Automation server is already running and healthy on http://localhost:{port}.");
             try
@@ -46,181 +34,181 @@ public static class PortAndProcessManager
             return;
         }
 
-        bool killedAny = false;
         int currentPid = Environment.ProcessId;
+        Console.WriteLine($"[Startup] Starting Hotel Automation server on port {port}...");
 
-        // 1. Terminate any other instances of HotelAutomation.Worker
-        try
+        if (IsPortInUse(port))
         {
-            string currentProcName = Process.GetCurrentProcess().ProcessName;
-            var otherInstances = Process.GetProcessesByName(currentProcName)
-                .Concat(Process.GetProcessesByName("HotelAutomation.Worker"))
-                .Where(p => p.Id != currentPid)
-                .GroupBy(p => p.Id)
-                .Select(g => g.First())
-                .ToList();
-
-            foreach (var proc in otherInstances)
-            {
-                try
-                {
-                    Console.WriteLine($"[Startup] Found previous worker instance (PID: {proc.Id}). Terminating...");
-                    proc.Kill(entireProcessTree: true);
-                    proc.WaitForExit(3000);
-                    killedAny = true;
-                    Console.WriteLine($"[Startup] Successfully stopped previous worker (PID: {proc.Id}).");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[Startup] Warning: Could not stop process {proc.Id}: {ex.Message}");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Startup] Duplicate instance check error: {ex.Message}");
-        }
-
-        // 2. Terminate any other process listening on the target port
-        try
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                killedAny |= KillProcessesOnPortWindows(port, currentPid);
-            }
-            else
-            {
-                killedAny |= KillProcessesOnPortUnix(port, currentPid);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Startup] Port conflict check error: {ex.Message}");
-        }
-
-        // 3. If any conflicting processes were killed, give Windows a quick 500ms to clean socket
-        if (killedAny)
-        {
-            Console.WriteLine($"[Startup] Conflicting process killed on port {port}. Waiting 500ms for socket release...");
-            Thread.Sleep(500);
+            Console.WriteLine($"[Startup] Port {port} is occupied by an unresponsive process. Freeing...");
+            KillProcessesOnPort(port, currentPid);
+            WaitUntilPortBindable(port, 3);
         }
     }
 
-    private static bool KillProcessesOnPortWindows(int port, int currentPid)
-    {
-        bool killed = false;
+    // ── Port helpers ──────────────────────────────────────────────────────────────
 
+    /// <summary>Uses .NET IPGlobalProperties - no external process, always reliable.</summary>
+    private static bool IsPortInUse(int port)
+    {
         try
         {
-            // Fast native check: is port even in use? (Takes < 2ms)
-            var activeListeners = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners();
-            bool isPortListening = activeListeners.Any(endpoint => endpoint.Port == port);
-            if (!isPortListening)
+            return IPGlobalProperties.GetIPGlobalProperties()
+                .GetActiveTcpListeners()
+                .Any(ep => ep.Port == port);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Actively probes whether port is truly bindable by attempting TcpListener.Start()
+    /// in a retry loop. This catches Windows TIME_WAIT / close-wait states that
+    /// IPGlobalProperties.GetActiveTcpListeners() misses (it only shows LISTEN state).
+    /// Returns when the port is confirmed bindable, or logs a warning after timeout.
+    /// </summary>
+    private static void WaitUntilPortBindable(int port, int timeoutSeconds = 3)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+        int attempt = 0;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            attempt++;
+            TcpListener? probe = null;
+            try
             {
-                // Port 8000 is completely free, no delay needed!
-                return false;
+                probe = new TcpListener(IPAddress.Loopback, port);
+                probe.Start();
+                probe.Stop();
+                if (attempt > 1)
+                    Console.WriteLine($"[Startup] Port {port} confirmed bindable after {attempt} probe(s).");
+                return; // Port is free — safe for Kestrel to bind
             }
-
-            var pids = new HashSet<int>();
-
-            // Port is actually occupied — only then run netstat to find and kill the culprit PID
-            var startInfo = new ProcessStartInfo
+            catch (SocketException)
             {
-                FileName = "cmd.exe",
-                Arguments = $"/c netstat -ano -p tcp | findstr \":{port} \"",
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(startInfo);
-            if (process != null)
-            {
-                string output = process.StandardOutput.ReadToEnd();
-                process.WaitForExit(1000);
-
-                var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var line in lines)
-                {
-                    if (line.Contains("LISTENING", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var parts = line.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length > 0 && int.TryParse(parts[^1], out int pid) && pid > 0)
-                        {
-                            pids.Add(pid);
-                        }
-                    }
-                }
+                // Port still in TIME_WAIT or held by another process — retry
+                if (attempt == 1)
+                    Console.WriteLine($"[Startup] Port {port} not yet bindable (Windows TIME_WAIT). Probing...");
+                Thread.Sleep(200);
             }
-
-            foreach (var pid in pids)
+            finally
             {
-                if (pid == currentPid) continue;
+                try { probe?.Stop(); } catch { }
+            }
+        }
 
-                Console.WriteLine($"[Startup] Process PID {pid} is occupying port {port}. Freeing port...");
+        // Timeout reached — log a warning but let Kestrel try anyway (may still succeed)
+        Console.WriteLine($"[Startup] WARNING: Port {port} bind probe timed out after {timeoutSeconds}s. Kestrel will attempt binding anyway.");
+    }
+
+    /// <summary>
+    /// Kills every process (except currentPid) currently LISTENING on the given port.
+    /// Resolves PIDs by parsing netstat -ano output.
+    /// </summary>
+    private static bool KillProcessesOnPort(int port, int currentPid)
+    {
+        if (!IsPortInUse(port))
+            return false;
+
+        bool killed = false;
+
+        foreach (var pid in GetPidsOnPort(port))
+        {
+            if (pid == currentPid) continue;
+
+            Console.WriteLine($"[Startup] PID {pid} is occupying port {port}. Freeing...");
+            try
+            {
+                using var proc = Process.GetProcessById(pid);
+                proc.Kill(entireProcessTree: true);
+                proc.WaitForExit(800);
+                killed = true;
+                Console.WriteLine($"[Startup] Killed PID {pid}.");
+            }
+            catch
+            {
+                // Fallback via taskkill /F /T
                 try
                 {
-                    using var proc = Process.GetProcessById(pid);
-                    proc.Kill(true);
-                    proc.WaitForExit(1000);
+                    using var kp = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "taskkill.exe",
+                        Arguments = $"/F /T /PID {pid}",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
+                    kp?.WaitForExit(1000);
                     killed = true;
                     Console.WriteLine($"[Startup] Killed process {pid} occupying port {port}.");
                 }
                 catch { }
             }
         }
-        catch { }
 
         return killed;
     }
 
-    private static bool KillProcessesOnPortUnix(int port, int currentPid)
+    /// <summary>
+    /// Parses netstat -ano to find PIDs that own a LISTENING TCP socket on the given port.
+    /// Matches both 0.0.0.0:{port} and 127.0.0.1:{port} correctly.
+    /// </summary>
+    private static HashSet<int> GetPidsOnPort(int port)
     {
-        bool killed = false;
+        var pids = new HashSet<int>();
         try
         {
-            var startInfo = new ProcessStartInfo
+            using var process = Process.Start(new ProcessStartInfo
             {
-                FileName = "/bin/sh",
-                Arguments = $"-c \"lsof -ti :{port}\"",
+                FileName = "cmd.exe",
+                Arguments = "/c netstat -ano -p tcp",
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
-            };
+            });
 
-            using var process = Process.Start(startInfo);
-            if (process != null)
+            if (process == null) return pids;
+
+            string output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit(2000);
+
+            string portToken = $":{port}";
+            foreach (var rawLine in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                string output = process.StandardOutput.ReadToEnd();
-                var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var line in lines)
-                {
-                    if (int.TryParse(line.Trim(), out int pid) && pid != currentPid && pid > 0)
-                    {
-                        Console.WriteLine($"[Startup] Process PID {pid} is occupying port {port}. Freeing port...");
-                        try
-                        {
-                            using var proc = Process.GetProcessById(pid);
-                            proc.Kill(true);
-                            proc.WaitForExit(2000);
-                            killed = true;
-                        }
-                        catch { }
-                    }
-                }
+                string line = rawLine.Trim();
+                if (!line.Contains("LISTENING", StringComparison.OrdinalIgnoreCase)) continue;
+
+                // netstat columns: Proto  LocalAddress  ForeignAddress  State  PID
+                var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 5) continue;
+
+                // parts[1] is the local address, e.g. "127.0.0.1:8001" or "0.0.0.0:8001"
+                if (!parts[1].EndsWith(portToken, StringComparison.Ordinal)) continue;
+
+                if (int.TryParse(parts[^1], out int pid) && pid > 0)
+                    pids.Add(pid);
             }
         }
         catch { }
 
-        return killed;
+        return pids;
     }
+
+    // ── Liveness check ────────────────────────────────────────────────────────────
 
     private static bool IsServerAlreadyRunning(int port)
     {
         try
         {
-            using var handler = new System.Net.Http.SocketsHttpHandler { ConnectTimeout = TimeSpan.FromMilliseconds(600) };
-            using var client = new System.Net.Http.HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(1000) };
+            using var handler = new System.Net.Http.SocketsHttpHandler
+            {
+                ConnectTimeout = TimeSpan.FromMilliseconds(300)
+            };
+            using var client = new System.Net.Http.HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromMilliseconds(500)
+            };
             var response = client.GetAsync($"http://127.0.0.1:{port}/ping").GetAwaiter().GetResult();
             return response.IsSuccessStatusCode;
         }
