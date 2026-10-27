@@ -32,9 +32,18 @@ try {
     $root.CreateFolder($TaskFolder) | Out-Null
 }
 
+# ── Clean up any legacy shell startup shortcuts so Task Scheduler remains sole trigger
+try {
+    $commonStartup = [Environment]::GetFolderPath('CommonStartup')
+    $userStartup = [Environment]::GetFolderPath('Startup')
+    Remove-Item (Join-Path $commonStartup "TheSankalpRetreat.lnk") -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $userStartup "TheSankalpRetreat.lnk") -Force -ErrorAction SilentlyContinue
+} catch { }
+
 # ── 3. Task: TheSankalpRetreatAutoStart — run at user logon in interactive session
 $action1 = New-ScheduledTaskAction -Execute "`"$ExePath`"" -WorkingDirectory $InstallDir
-$trigger1 = New-ScheduledTaskTrigger -AtLogOn
+# 15s delay ensures Explorer desktop and network stack are fully initialized after Windows updates/reboots
+$trigger1 = New-ScheduledTaskTrigger -AtLogOn -UserRandomDelay (New-TimeSpan -Seconds 15)
 $settings1 = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -RestartCount 3 `

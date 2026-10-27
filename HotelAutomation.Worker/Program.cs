@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Logging;
 using Dapper;
 using System.Runtime.InteropServices;
+using Microsoft.AspNetCore.DataProtection;
 
 // ── App Data & Logs Directory Initialization ─────────────────────────────────
 var appDataDir = Path.Combine(
@@ -39,6 +40,14 @@ TaskScheduler.UnobservedTaskException += (sender, eventArgs) =>
     CrashLogger.LogCrash("TaskScheduler.UnobservedTaskException", eventArgs.Exception);
     eventArgs.SetObserved();
 };
+
+// ── Single-Instance Global Mutex (Guarantees only one instance can run) ─────
+using var singleInstanceMutex = new Mutex(true, @"Global\HotelAutomation_TheSankalpRetreat_Worker", out bool isNewInstance);
+if (!isNewInstance)
+{
+    Console.WriteLine("[Startup] Another instance of HotelAutomation.Worker is already running. Exiting cleanly.");
+    return;
+}
 
 // ── Free Port 8001 and Stop Any Stuck/Duplicate Worker Instances ──────────────
 PortAndProcessManager.EnsurePortAndProcessAvailable(8001);
@@ -131,6 +140,13 @@ builder.Services.Configure<HotelAutomation.Worker.Services.EmailAlertOptions>(
 builder.Services.AddSingleton<HotelAutomation.Worker.Services.EmailAlertService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<HotelAutomation.Worker.Services.EmailAlertService>());
 
+// ── Data Protection (Persist encryption keys across app restarts/reboots) ──
+var dataProtectionKeysDir = Path.Combine(appDataDir, "data_protection_keys");
+Directory.CreateDirectory(dataProtectionKeysDir);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysDir))
+    .SetApplicationName("HotelSankalpRetreat");
+
 // ── Security & Authentication ──────────────────────────────────────────────────
 builder.Services.AddSingleton<HotelAutomation.Core.Security.PasswordHasher>();
 builder.Services.AddSingleton<UserRepository>();
@@ -141,10 +157,10 @@ builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.Cookies.C
         options.Cookie.Name        = "HotelAuth";
         options.Cookie.IsEssential = true;
         options.Cookie.SecurePolicy = Microsoft.AspNetCore.Http.CookieSecurePolicy.None; // localhost HTTP
-        // Persist cookie for 30 days so sessions survive server restarts (e.g. after power cuts)
-        options.ExpireTimeSpan     = TimeSpan.FromDays(30);
+        // Persist cookie for 365 days with sliding expiration so staff remain logged in
+        options.ExpireTimeSpan     = TimeSpan.FromDays(365);
         options.SlidingExpiration  = true;
-        options.Cookie.MaxAge      = TimeSpan.FromDays(30);
+        options.Cookie.MaxAge      = TimeSpan.FromDays(365);
         options.Events.OnRedirectToLogin = context =>
         {
             context.Response.StatusCode = Microsoft.AspNetCore.Http.StatusCodes.Status401Unauthorized;
@@ -2552,18 +2568,39 @@ app.Lifetime.ApplicationStarted.Register(() =>
         }
 
 
-        // Open browser automatically
-        var url = app.Urls.FirstOrDefault() ?? "http://localhost:5000";
-        var processStartInfo = new System.Diagnostics.ProcessStartInfo
+        // ── Open browser automatically (non-fatal) ───────────────────────────
+        if (Environment.UserInteractive)
         {
-            FileName = url,
-            UseShellExecute = true
-        };
-        System.Diagnostics.Process.Start(processStartInfo);
+            try
+            {
+                var url = app.Urls.FirstOrDefault() ?? "http://localhost:8001";
+                var processStartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true
+                };
+                System.Diagnostics.Process.Start(processStartInfo);
+            }
+            catch
+            {
+                try
+                {
+                    var url = app.Urls.FirstOrDefault() ?? "http://localhost:8001";
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", url)
+                    {
+                        UseShellExecute = false
+                    });
+                }
+                catch (Exception browserEx)
+                {
+                    app.Logger.LogWarning(browserEx, "Could not open browser automatically. Please open http://localhost:8001 manually.");
+                }
+            }
+        }
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "Failed to initialize DB or open browser");
+        app.Logger.LogError(ex, "Failed to initialize DB on startup");
     }
 });
 
@@ -3087,18 +3124,6 @@ app.MapDelete("/api/database/backups/{fileName}", (string fileName, HotelAutomat
 });
 
 app.MapGet("/ping", () => Results.Ok("live"));
-
-// ── Open browser when server is ready ────────────────────────────────────────
-// Fires once Kestrel has bound the port and is accepting connections.
-app.Lifetime.ApplicationStarted.Register(() =>
-{
-    try
-    {
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-            "http://localhost:8001") { UseShellExecute = true });
-    }
-    catch { /* ignore — browser may not be available */ }
-});
 
 try
 {

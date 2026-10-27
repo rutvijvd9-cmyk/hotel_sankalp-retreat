@@ -83,9 +83,6 @@ Name: "{group}\Uninstall {#AppName}";        Filename: "{uninstallexe}"
 ; Desktop shortcut (only when task selected)
 Name: "{autodesktop}\{#AppName}";            Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
-; Windows startup entry (only when task selected) — use commonstartup (all-users) since installer runs as admin
-Name: "{commonstartup}\{#AppName}";          Filename: "{app}\{#AppExe}"; Tasks: startup
-
 [Registry]
 ; Store install path for reference
 Root: HKLM; Subkey: "Software\HotelSankalpRetreat"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletekey
@@ -137,6 +134,10 @@ begin
     '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ' +
     '"Get-NetTCPConnection -LocalPort 8001,8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  // Clean up duplicate legacy shortcuts from startup folders (Task Scheduler is our single source of truth)
+  DeleteFile(ExpandConstant('{commonstartup}\{#AppName}.lnk'));
+  DeleteFile(ExpandConstant('{userstartup}\{#AppName}.lnk'));
 
   // 3. Remove old "Hotel Sankalp Printer" if it exists (from previous installs)
   Exec('powershell.exe',
