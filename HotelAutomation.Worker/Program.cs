@@ -1378,9 +1378,9 @@ app.MapDelete("/api/templates/{id}", async (int id, ITemplateRepository repo, Wh
 app.MapPost("/api/templates/sync", async (HotelAutomation.Worker.Services.TemplateSyncService syncService, HttpContext context) => 
 {
     var triggeredBy = context.User.Identity?.Name ?? "Manual";
-    var (success, count, removedCount, message) = await syncService.SyncTemplatesAsync(triggeredBy);
+    var (success, count, message) = await syncService.SyncTemplatesAsync(triggeredBy);
     return success 
-        ? Results.Ok(new { message, addedCount = count, removedCount }) 
+        ? Results.Ok(new { message, addedCount = count }) 
         : Results.BadRequest(new { message });
 });
 
