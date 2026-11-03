@@ -1,4 +1,4 @@
-﻿namespace HotelAutomation.Data.Repositories;
+namespace HotelAutomation.Data.Repositories;
 
 using Dapper;
 
@@ -45,5 +45,13 @@ public sealed class ActivityLogRepository
         return await conn.QueryAsync(
             "SELECT Id, Username, Action, Details, IpAddress, OccurredAt FROM ActivityLog WHERE Username = @username ORDER BY OccurredAt DESC LIMIT @limit",
             new { username, limit });
+    }
+
+    /// <summary>Prunes activity logs older than specified days to prevent unbounded database growth.</summary>
+    public async Task<int> ClearLogsAsync(int olderThanDays = 90, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-olderThanDays).ToString("O");
+        return await conn.ExecuteAsync("DELETE FROM ActivityLog WHERE OccurredAt < @Cutoff;", new { Cutoff = cutoff });
     }
 }

@@ -31,8 +31,8 @@ public sealed class SystemLogRepository
                 Category = category ?? "General",
                 Source = source ?? "",
                 Message = message ?? "",
-                Details = details,
-                Exception = exception
+                Details = string.IsNullOrEmpty(details) ? null : (details.Length > 2000 ? details.Substring(0, 2000) + "... [truncated]" : details),
+                Exception = string.IsNullOrEmpty(exception) ? null : (exception.Length > 2000 ? exception.Substring(0, 2000) + "... [truncated]" : exception)
             });
         }
         catch

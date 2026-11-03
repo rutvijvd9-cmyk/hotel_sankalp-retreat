@@ -97,6 +97,7 @@ public sealed class SqliteConnectionFactory
             PRAGMA cache_size         = -2000;
             PRAGMA synchronous        = NORMAL;
             PRAGMA wal_autocheckpoint = 100;
+            PRAGMA auto_vacuum        = INCREMENTAL;
             """;
         await cmd.ExecuteNonQueryAsync(ct);
 

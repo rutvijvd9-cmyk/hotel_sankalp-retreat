@@ -49,4 +49,13 @@ public sealed class OutboxRepository : IOutboxRepository
             WHERE Id = @id
             """, new { id, status, retryCount, sentAt = sentAt?.ToString("O"), externalMessageId, failureReason });
     }
+
+    public async Task<int> ClearOldMessagesAsync(int olderThanDays = 90, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-olderThanDays).ToString("O");
+        return await conn.ExecuteAsync(
+            "DELETE FROM OutboxMessages WHERE Status IN ('Sent', 'Delivered', 'Read', 'Failed') AND CreatedAt < @Cutoff",
+            new { Cutoff = cutoff });
+    }
 }

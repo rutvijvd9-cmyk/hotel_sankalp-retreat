@@ -282,6 +282,7 @@ builder.Services.AddHostedService<CampaignProcessor>();
 builder.Services.AddHostedService<DateTriggerProcessor>();
 builder.Services.AddHostedService<HotelAutomation.Worker.Services.TemplateSyncScheduler>();
 builder.Services.AddHostedService<HotelAutomation.Worker.Services.DatabaseBackupScheduler>();
+builder.Services.AddHostedService<HotelAutomation.Worker.Services.DatabaseMaintenanceScheduler>();
 
 #if WINDOWS
 builder.Services.AddHostedService<TrayIconService>();
@@ -349,6 +350,7 @@ app.Use(async (context, next) =>
 // the PDF connector always stamps the correct user's signature even when the
 // printer fires outside a normal HTTP request cycle.
 string? _activeSignatureUsername = null;
+var _lastActiveMap = new System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
 app.UseCors();
 
 app.UseAuthentication();
@@ -360,7 +362,22 @@ app.Use(async (context, next) =>
     {
         _activeSignatureUsername = context.User.Identity.Name;
         var userRepo = context.RequestServices.GetRequiredService<UserRepository>();
-        await userRepo.UpdateLastActiveAsync(context.User.Identity.Name);
+        // Throttle DB updates: only write LastActiveAt to SQLite once every 5 minutes per user
+        var now = DateTimeOffset.UtcNow;
+        if (!_lastActiveMap.TryGetValue(context.User.Identity.Name, out var lastWritten) || (now - lastWritten).TotalMinutes >= 5)
+        {
+            _lastActiveMap[context.User.Identity.Name] = now;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = app.Services.CreateScope();
+                    var repo = scope.ServiceProvider.GetRequiredService<UserRepository>();
+                    await repo.UpdateLastActiveAsync(context.User.Identity!.Name!);
+                }
+                catch { /* Non-critical failure */ }
+            });
+        }
     }
     await next();
 });

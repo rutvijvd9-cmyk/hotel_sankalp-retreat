@@ -88,20 +88,27 @@ public sealed class UnifiedLoggerProvider : ILoggerProvider, IAsyncDisposable
         _channel.Writer.TryWrite(item);
 
         // 3. Queue for email alert notification if ERROR or FATAL
+        // 3. Queue for email alert notification if ERROR or FATAL (circuit breaker for DB alert loops)
         if (logLevel == LogLevel.Error || logLevel == LogLevel.Critical)
         {
-            try
+            bool isDbLoop = source.Contains("SystemLog", StringComparison.OrdinalIgnoreCase) ||
+                            source.Contains("UnifiedLogger", StringComparison.OrdinalIgnoreCase) ||
+                            message.Contains("SQLite Error 13", StringComparison.OrdinalIgnoreCase);
+            if (!isDbLoop)
             {
-                HotelAutomation.Worker.Services.EmailAlertService.Instance?.EnqueueAlert(
-                    levelStr,
-                    category,
-                    source,
-                    message,
-                    null,
-                    exString
-                );
+                try
+                {
+                    HotelAutomation.Worker.Services.EmailAlertService.Instance?.EnqueueAlert(
+                        levelStr,
+                        category,
+                        source,
+                        message,
+                        null,
+                        exString
+                    );
+                }
+                catch { }
             }
-            catch { }
         }
     }
 

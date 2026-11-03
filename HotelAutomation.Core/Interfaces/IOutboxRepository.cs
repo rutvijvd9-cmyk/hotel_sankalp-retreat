@@ -8,4 +8,5 @@ public interface IOutboxRepository
     Task<IReadOnlyList<OutboxMessage>> GetPendingAsync(int limit, CancellationToken cancellationToken = default);
     Task UpdateStatusAsync(int id, string status, int retryCount, DateTimeOffset? sentAt, string? externalMessageId,
         string? failureReason = null, CancellationToken cancellationToken = default);
+    Task<int> ClearOldMessagesAsync(int olderThanDays = 90, CancellationToken cancellationToken = default);
 }
