@@ -191,3 +191,12 @@ CREATE INDEX IF NOT EXISTS IX_ScheduledJobs_Status_TriggerTime ON ScheduledJobs(
 CREATE INDEX IF NOT EXISTS IX_EventLog_OccurredAt ON EventLog(OccurredAt);
 CREATE INDEX IF NOT EXISTS IX_ActivityLog_OccurredAt ON ActivityLog(OccurredAt);
 CREATE INDEX IF NOT EXISTS IX_ContactCampaignProgress_Status_NextTime ON ContactCampaignProgress(Status, NextExecutionTime);
+
+CREATE TABLE IF NOT EXISTS ConversationReplies (
+    Id          TEXT PRIMARY KEY,
+    PhoneNumber TEXT NOT NULL,
+    Sender      TEXT NOT NULL,
+    Content     TEXT NOT NULL,
+    SentAt      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS IX_ConversationReplies_SentAt ON ConversationReplies(SentAt);

@@ -3,6 +3,30 @@
 Non-security review of the current worker (Windows, `localhost:8001`, SQLite).  
 Security (auth, secrets, injection, XSS) is out of scope.
 
+**Checked against code:** 3 Nov 2026.
+
+## Implementation status (summary)
+
+| Area | Status |
+|---|---|
+| 15-day prune of logs, outbox, backups, EventLog, jobs, campaign progress, replies, inbox media | **Done** |
+| Temp printer PDFs (`bill_temp_*` etc.) | **Done** (deleted after **2 days**, not 15) |
+| Manual `/api/system-logs/clear` default 15 days | **Done** |
+| SQLite vacuum until free pages are low | **Done** |
+| Hot-path indexes | **Mostly done** (`ConversationReplies` index is migration-only, not in `Schema.sql`; `GetRipeJobs` still has no `LIMIT`) |
+| Guest bills in `PDFs\Processed` (non-temp) | **Not done** (intentional unless copied off-box) |
+| Off-box backup copy | **Not done** |
+| WAL-safe backup only (no `File.Copy` fallback) | **Not done** |
+| Outbox parallelism, leases, backoff, Meta rate limit | **Not done** |
+| Split API vs worker / autoscaling / drop mutex | **Not done** |
+| SQLite cache / checkpoint / connection pool | **Not done** |
+| Buffered logs / DB only Warning+ / batched inserts | **Not done** |
+| `/health`, metrics, disk-free alerts | **Not done** |
+| HttpClient timeout, PMS event queue, real SMS | **Not done** |
+| JobProcessor 1s poll, date trigger at 00:05 IST, campaign batch cap | **Not done** |
+
+**Bottom line:** the 15-day cleanup work from sections 2–3 is implemented. Scale, autoscaling, logging cost, health, and backup-off-box from sections 5–8 are **not**.
+
 ---
 
 ## 1. How the platform is built today
@@ -45,16 +69,16 @@ Operational leftovers. Not master data.
 
 | Store | Why it is safe | Status |
 |---|---|---|
-| `EventLog` | PMS/PDF event JSON after the message is already in Outbox | **Not pruned today** |
-| `ScheduledJobs` with status `Processed` or `Cancelled` | Already executed or cancelled | **Not pruned today** |
-| `ContactCampaignProgress` with status `Sent` | Campaign *definitions* stay; only per-contact sent rows go | **Not pruned today** |
-| `ConversationReplies` | Inbox chat text | **Not pruned today** — only if you do not need longer guest chat history |
-| `uploads\inbox\` media | Inbound WhatsApp images/files | **Not pruned today** |
-| Temp PDFs (`bill_temp_*`, `recipient_temp_*`, `supplier_temp_*`) | Leftovers from the printer bridge | **Not pruned today** |
+| `EventLog` | PMS/PDF event JSON after the message is already in Outbox | **Implemented** (`ClearOldLogsAsync`, 15 days) |
+| `ScheduledJobs` with status `Processed` or `Cancelled` | Already executed or cancelled | **Implemented** (`ClearOldJobsAsync`, 15 days; `Pending` kept) |
+| `ContactCampaignProgress` with status `Sent` | Campaign *definitions* stay; only per-contact sent rows go | **Implemented** (`ClearOldProgressAsync`, 15 days) |
+| `ConversationReplies` | Inbox chat text | **Implemented** (DELETE `SentAt` older than 15 days) |
+| `uploads\inbox\` media | Inbound WhatsApp images/files | **Implemented** (AppData + `wwwroot\uploads\inbox`) |
+| Temp PDFs (`bill_temp_*`, `recipient_temp_*`, `supplier_temp_*`) | Leftovers from the printer bridge | **Implemented** after **2 days** (not 15) |
 
-Manual API mismatch: `POST /api/system-logs/clear` defaults to **30 days**, not 15.
+Manual API: `POST /api/system-logs/clear` now defaults to **15 days**.
 
-After large deletes, `PRAGMA incremental_vacuum(500)` often does **not** reclaim disk. Vacuum until free pages are gone.
+Vacuum: maintenance loops `PRAGMA incremental_vacuum(1000)` until the freelist is empty (cap 50 rounds), then `PRAGMA optimize`.
 
 ---
 

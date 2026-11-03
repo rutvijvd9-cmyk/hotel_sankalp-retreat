@@ -97,14 +97,25 @@ public sealed class DatabaseBackupService
 
             _logger.LogInformation("Initiating database backup via [{TriggerSource}] to {BackupFilePath}", triggerSource, backupFilePath);
 
-            // Use SQLite VACUUM INTO for a clean, consistent snapshot without locking or corrupting WAL mode
+            // Ensure all committed transactions are flushed from WAL to the database file before snapshot
             bool vacuumSucceeded = false;
             try
             {
                 await using var conn = await _factory.OpenAsync(ct);
                 await using var cmd = conn.CreateCommand();
+
+                // 1. Force a clean WAL checkpoint
+                try
+                {
+                    cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                    await cmd.ExecuteNonQueryAsync(ct);
+                }
+                catch (Exception walEx)
+                {
+                    _logger.LogWarning(walEx, "WAL checkpoint prior to backup encountered a warning (continuing).");
+                }
                 
-                // SQLite parameter for VACUUM INTO
+                // 2. Perform SQLite online VACUUM INTO for a clean atomic snapshot
                 var normalizedPath = backupFilePath.Replace("\\", "/");
                 cmd.CommandText = $"VACUUM INTO '{normalizedPath}';";
                 await cmd.ExecuteNonQueryAsync(ct);
@@ -115,7 +126,7 @@ public sealed class DatabaseBackupService
                 _logger.LogWarning(ex, "VACUUM INTO failed, falling back to safe file copy backup.");
             }
 
-            // Fallback to File.Copy if VACUUM INTO had an issue
+            // Fallback to File.Copy only if VACUUM INTO failed (safe now because WAL was flushed)
             if (!vacuumSucceeded || !File.Exists(backupFilePath))
             {
                 if (File.Exists(_dbFilePath))

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,9 +32,12 @@ namespace HotelAutomation.Worker
             
             while (!stoppingToken.IsCancellationRequested)
             {
+                int processedCount = 0;
                 try
                 {
-                    var ripeJobs = await _jobRepository.GetRipeJobsAsync();
+                    var ripeJobs = (await _jobRepository.GetRipeJobsAsync(limit: 50)).ToList();
+                    processedCount = ripeJobs.Count;
+
                     foreach (var job in ripeJobs)
                     {
                         var variantId = await _variantSelector.SelectVariantIdAsync(job.TemplateId);
@@ -61,7 +65,9 @@ namespace HotelAutomation.Worker
 
                 try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+                    // If jobs were found and processed, check next batch quickly (500ms); otherwise back off 3s to reduce SQLite contention
+                    var delay = processedCount > 0 ? TimeSpan.FromMilliseconds(500) : TimeSpan.FromSeconds(3);
+                    await Task.Delay(delay, stoppingToken);
                 }
                 catch (OperationCanceledException)
                 {

@@ -36,14 +36,16 @@ namespace HotelAutomation.Data.Repositories
             });
         }
 
-        public async Task<IEnumerable<ScheduledJob>> GetRipeJobsAsync()
+        public async Task<IEnumerable<ScheduledJob>> GetRipeJobsAsync(int limit = 50)
         {
             using var connection = await _dbFactory.OpenAsync();
             const string sql = @"
                 SELECT * FROM ScheduledJobs 
-                WHERE Status = 'Pending' AND TriggerTime <= @Now";
+                WHERE Status = 'Pending' AND TriggerTime <= @Now
+                ORDER BY TriggerTime ASC
+                LIMIT @Limit";
             
-            return await connection.QueryAsync<ScheduledJob>(sql, new { Now = DateTimeOffset.UtcNow.ToString("o") });
+            return await connection.QueryAsync<ScheduledJob>(sql, new { Now = DateTimeOffset.UtcNow.ToString("o"), Limit = limit });
         }
 
         public async Task MarkAsProcessedAsync(string id)
