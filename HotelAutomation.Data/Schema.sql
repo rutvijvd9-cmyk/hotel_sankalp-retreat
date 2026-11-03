@@ -185,3 +185,9 @@ CREATE INDEX IF NOT EXISTS IX_SystemLogs_Timestamp ON SystemLogs(Timestamp DESC)
 CREATE INDEX IF NOT EXISTS IX_SystemLogs_Category ON SystemLogs(Category);
 CREATE INDEX IF NOT EXISTS IX_SystemLogs_LogLevel ON SystemLogs(LogLevel);
 
+
+CREATE INDEX IF NOT EXISTS IX_OutboxMessages_Status_CreatedAt ON OutboxMessages(Status, CreatedAt);
+CREATE INDEX IF NOT EXISTS IX_ScheduledJobs_Status_TriggerTime ON ScheduledJobs(Status, TriggerTime);
+CREATE INDEX IF NOT EXISTS IX_EventLog_OccurredAt ON EventLog(OccurredAt);
+CREATE INDEX IF NOT EXISTS IX_ActivityLog_OccurredAt ON ActivityLog(OccurredAt);
+CREATE INDEX IF NOT EXISTS IX_ContactCampaignProgress_Status_NextTime ON ContactCampaignProgress(Status, NextExecutionTime);

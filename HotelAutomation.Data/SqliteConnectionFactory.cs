@@ -480,5 +480,28 @@ public sealed class SqliteConnectionFactory
             await migCmd.ExecuteNonQueryAsync(ct);
         }
         catch { }
+
+        // Performance Indexes migration for hot paths & 15-day auto-pruning
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = @"
+                CREATE INDEX IF NOT EXISTS IX_OutboxMessages_Status_CreatedAt ON OutboxMessages(Status, CreatedAt);
+                CREATE INDEX IF NOT EXISTS IX_ScheduledJobs_Status_TriggerTime ON ScheduledJobs(Status, TriggerTime);
+                CREATE INDEX IF NOT EXISTS IX_EventLog_OccurredAt ON EventLog(OccurredAt);
+                CREATE INDEX IF NOT EXISTS IX_ActivityLog_OccurredAt ON ActivityLog(OccurredAt);
+                CREATE INDEX IF NOT EXISTS IX_ContactCampaignProgress_Status_NextTime ON ContactCampaignProgress(Status, NextExecutionTime);
+            ";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
+
+        try
+        {
+            await using var migCmd = connection.CreateCommand();
+            migCmd.CommandText = "CREATE INDEX IF NOT EXISTS IX_ConversationReplies_SentAt ON ConversationReplies(SentAt);";
+            await migCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch { }
     }
 }

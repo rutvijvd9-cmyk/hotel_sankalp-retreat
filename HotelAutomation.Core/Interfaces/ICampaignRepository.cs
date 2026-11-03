@@ -12,4 +12,5 @@ public interface ICampaignRepository
     Task<int> CreateAsync(Campaign campaign, CancellationToken cancellationToken = default);
     Task<bool> UpdateAsync(int id, Campaign campaign, CancellationToken cancellationToken = default);
     Task<bool> DeleteAsync(int id, CancellationToken cancellationToken = default);
+    Task<int> ClearOldProgressAsync(int olderThanDays = 15, CancellationToken cancellationToken = default);
 }

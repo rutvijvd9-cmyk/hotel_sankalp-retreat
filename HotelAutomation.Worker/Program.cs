@@ -925,7 +925,7 @@ app.MapGet("/api/system-logs/crash-files/{filename}", async (string filename, Ht
     return Results.File(bytes, "text/plain", safeFilename);
 }).RequireAuthorization();
 
-app.MapPost("/api/system-logs/clear", async (SystemLogRepository logRepo, HttpContext context, int olderThanDays = 30) =>
+app.MapPost("/api/system-logs/clear", async (SystemLogRepository logRepo, HttpContext context, int olderThanDays = 15) =>
 {
     if (!context.User.IsInRole("Owner") && !context.User.IsInRole("Developer"))
         return Results.Forbid();

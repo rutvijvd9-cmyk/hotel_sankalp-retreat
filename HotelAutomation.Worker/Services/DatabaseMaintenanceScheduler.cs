@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Dapper;
 using HotelAutomation.Core.Interfaces;
 using HotelAutomation.Data;
 using HotelAutomation.Data.Repositories;
@@ -14,10 +15,16 @@ using Microsoft.Extensions.Logging;
 /// BackgroundService that performs automatic daily database and file maintenance:
 /// - Prunes SystemLogs older than 15 days
 /// - Prunes ActivityLogs older than 15 days
-/// - Prunes old processed OutboxMessages older than 15 days
+/// - Prunes sent/delivered/read/failed OutboxMessages older than 15 days
+/// - Prunes PMS/PDF EventLog records older than 15 days
+/// - Prunes Processed/Cancelled ScheduledJobs older than 15 days
+/// - Prunes Sent ContactCampaignProgress rows older than 15 days
+/// - Prunes ConversationReplies older than 15 days
 /// - Autodeletes database backups older than 15 days from 'backup_date' folder
-/// - Autodeletes rolling disk log files (.log) and crash dump files older than 15 days from 'logs' folder
-/// - Runs incremental vacuum / optimizes SQLite pages to reclaim disk space
+/// - Autodeletes rolling disk log files (.log) and crash dumps older than 15 days
+/// - Autodeletes guest media in uploads/inbox older than 15 days
+/// - Autodeletes temporary printer bridge PDFs (bill_temp_*, recipient_temp_*, supplier_temp_*)
+/// - Loops PRAGMA incremental_vacuum to reclaim all unused SQLite database pages
 /// </summary>
 public sealed class DatabaseMaintenanceScheduler : BackgroundService
 {
@@ -25,15 +32,22 @@ public sealed class DatabaseMaintenanceScheduler : BackgroundService
     private readonly SystemLogRepository _systemLogRepo;
     private readonly ActivityLogRepository _activityLogRepo;
     private readonly IOutboxRepository _outboxRepo;
+    private readonly EventLogRepository _eventLogRepo;
+    private readonly JobRepository _jobRepo;
+    private readonly ICampaignRepository _campaignRepo;
     private readonly DatabaseBackupService _backupService;
     private readonly ILogger<DatabaseMaintenanceScheduler> _logger;
     private readonly string _logsDirectory;
+    private readonly string _appDataUploadsDir;
 
     public DatabaseMaintenanceScheduler(
         SqliteConnectionFactory factory,
         SystemLogRepository systemLogRepo,
         ActivityLogRepository activityLogRepo,
         IOutboxRepository outboxRepo,
+        EventLogRepository eventLogRepo,
+        JobRepository jobRepo,
+        ICampaignRepository campaignRepo,
         DatabaseBackupService backupService,
         ILogger<DatabaseMaintenanceScheduler> logger)
     {
@@ -41,6 +55,9 @@ public sealed class DatabaseMaintenanceScheduler : BackgroundService
         _systemLogRepo = systemLogRepo;
         _activityLogRepo = activityLogRepo;
         _outboxRepo = outboxRepo;
+        _eventLogRepo = eventLogRepo;
+        _jobRepo = jobRepo;
+        _campaignRepo = campaignRepo;
         _backupService = backupService;
         _logger = logger;
 
@@ -48,6 +65,7 @@ public sealed class DatabaseMaintenanceScheduler : BackgroundService
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "HotelSankalpRetreat");
         _logsDirectory = Path.Combine(appDataDir, "logs");
+        _appDataUploadsDir = Path.Combine(appDataDir, "uploads");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -109,23 +127,98 @@ public sealed class DatabaseMaintenanceScheduler : BackgroundService
             if (deletedOutbox > 0)
                 _logger.LogInformation("Auto-pruned {Count} old outbox messages (older than 15 days).", deletedOutbox);
 
-            // 4. Autodelete database backups in 'backup_date' folder older than 15 days
+            // 4. Prune PMS/PDF EventLog older than 15 days
+            var deletedEvents = await _eventLogRepo.ClearOldLogsAsync(olderThanDays: 15, ct);
+            if (deletedEvents > 0)
+                _logger.LogInformation("Auto-pruned {Count} old PMS/PDF event log entries (older than 15 days).", deletedEvents);
+
+            // 5. Prune Processed/Cancelled ScheduledJobs older than 15 days
+            var deletedJobs = await _jobRepo.ClearOldJobsAsync(olderThanDays: 15, ct);
+            if (deletedJobs > 0)
+                _logger.LogInformation("Auto-pruned {Count} old processed/cancelled scheduled jobs (older than 15 days).", deletedJobs);
+
+            // 6. Prune Sent ContactCampaignProgress older than 15 days
+            var deletedProgress = await _campaignRepo.ClearOldProgressAsync(olderThanDays: 15, ct);
+            if (deletedProgress > 0)
+                _logger.LogInformation("Auto-pruned {Count} old campaign progress records (older than 15 days).", deletedProgress);
+
+            // 7. Prune ConversationReplies older than 15 days
+            await PruneConversationRepliesAsync(olderThanDays: 15, ct);
+
+            // 8. Autodelete database backups in 'backup_date' folder older than 15 days
             CleanupOldBackups(olderThanDays: 15);
 
-            // 5. Autodelete rolling disk log files (.log) and crash dumps older than 15 days
+            // 9. Autodelete rolling disk log files (.log) and crash dumps older than 15 days
             CleanupOldLogFiles(olderThanDays: 15);
 
-            // 6. Reclaim free pages incrementally in SQLite
-            await using var conn = await _factory.OpenAsync(ct);
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "PRAGMA incremental_vacuum(500); PRAGMA optimize;";
-            await cmd.ExecuteNonQueryAsync(ct);
+            // 10. Autodelete inbox media uploads older than 15 days
+            CleanupInboxMedia(olderThanDays: 15);
 
-            _logger.LogInformation("Database & backup maintenance cycle completed successfully.");
+            // 11. Autodelete temporary printer bridge PDFs
+            CleanupTempPdfFiles(olderThanDays: 2);
+
+            // 12. Reclaim free pages incrementally in SQLite until freelist is exhausted
+            await CompactDatabasePagesAsync(ct);
+
+            _logger.LogInformation("Database & disk maintenance cycle completed successfully.");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Database maintenance cycle encountered an error.");
+        }
+    }
+
+    private async Task PruneConversationRepliesAsync(int olderThanDays, CancellationToken ct)
+    {
+        try
+        {
+            await using var conn = await _factory.OpenAsync(ct);
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-olderThanDays).ToString("O");
+            var deleted = await conn.ExecuteAsync(
+                "DELETE FROM ConversationReplies WHERE SentAt < @Cutoff;",
+                new { Cutoff = cutoff });
+            if (deleted > 0)
+                _logger.LogInformation("Auto-pruned {Count} old conversation replies (older than 15 days).", deleted);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "ConversationReplies cleanup skipped or table does not exist.");
+        }
+    }
+
+    private async Task CompactDatabasePagesAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var conn = await _factory.OpenAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = "PRAGMA freelist_count;";
+            var freelistObj = await cmd.ExecuteScalarAsync(ct);
+            var freelistCount = Convert.ToInt32(freelistObj);
+
+            if (freelistCount > 0)
+            {
+                _logger.LogInformation("Reclaiming {Count} unused database pages via incremental vacuum...", freelistCount);
+                int safety = 50;
+                while (freelistCount > 0 && safety-- > 0)
+                {
+                    cmd.CommandText = "PRAGMA incremental_vacuum(1000);";
+                    await cmd.ExecuteNonQueryAsync(ct);
+
+                    cmd.CommandText = "PRAGMA freelist_count;";
+                    var nextCount = Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
+                    if (nextCount >= freelistCount) break; // Not incremental vacuum or pages can't be released
+                    freelistCount = nextCount;
+                }
+            }
+
+            cmd.CommandText = "PRAGMA optimize;";
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to compact database pages during maintenance.");
         }
     }
 
@@ -191,6 +284,96 @@ public sealed class DatabaseMaintenanceScheduler : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to cleanup old disk log files.");
+        }
+    }
+
+    private void CleanupInboxMedia(int olderThanDays)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-olderThanDays);
+        var searchDirs = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "wwwroot", "uploads", "inbox"),
+            Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "inbox"),
+            Path.Combine(_appDataUploadsDir, "inbox"),
+            _appDataUploadsDir
+        };
+
+        int deleted = 0;
+        foreach (var dir in searchDirs)
+        {
+            try
+            {
+                if (!Directory.Exists(dir)) continue;
+
+                foreach (var file in Directory.GetFiles(dir))
+                {
+                    var fi = new FileInfo(file);
+                    if (fi.LastWriteTimeUtc < cutoff)
+                    {
+                        try
+                        {
+                            fi.Delete();
+                            deleted++;
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        if (deleted > 0)
+        {
+            _logger.LogInformation("Auto-deleted {Count} inbox media file(s) older than {Days} days.", deleted, olderThanDays);
+        }
+    }
+
+    private void CleanupTempPdfFiles(int olderThanDays)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-olderThanDays);
+        var baseDir = AppContext.BaseDirectory;
+        var searchDirs = new[]
+        {
+            Path.Combine(baseDir, "PDFs"),
+            Path.Combine(baseDir, "PDFs", "Processed"),
+            @"C:\HotelPrints\Output",
+            @"C:\HotelPrints\Processed"
+        };
+
+        int deleted = 0;
+        foreach (var dir in searchDirs)
+        {
+            try
+            {
+                if (!Directory.Exists(dir)) continue;
+
+                foreach (var file in Directory.GetFiles(dir))
+                {
+                    var name = Path.GetFileName(file);
+                    if (name.StartsWith("bill_temp_", StringComparison.OrdinalIgnoreCase) ||
+                        name.StartsWith("recipient_temp_", StringComparison.OrdinalIgnoreCase) ||
+                        name.StartsWith("supplier_temp_", StringComparison.OrdinalIgnoreCase) ||
+                        name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var fi = new FileInfo(file);
+                        if (fi.LastWriteTimeUtc < cutoff)
+                        {
+                            try
+                            {
+                                fi.Delete();
+                                deleted++;
+                            }
+                            catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        if (deleted > 0)
+        {
+            _logger.LogInformation("Auto-deleted {Count} temporary printer bridge PDF file(s).", deleted);
         }
     }
 }

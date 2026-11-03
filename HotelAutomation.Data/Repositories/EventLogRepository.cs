@@ -29,4 +29,11 @@ public sealed class EventLogRepository
         await using var conn = await _factory.OpenAsync(ct);
         return await conn.QueryAsync("SELECT * FROM EventLog ORDER BY OccurredAt DESC LIMIT @Limit", new { Limit = limit });
     }
+
+    public async Task<int> ClearOldLogsAsync(int olderThanDays = 15, CancellationToken ct = default)
+    {
+        await using var conn = await _factory.OpenAsync(ct);
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-olderThanDays).ToString("O");
+        return await conn.ExecuteAsync("DELETE FROM EventLog WHERE OccurredAt < @Cutoff;", new { Cutoff = cutoff });
+    }
 }

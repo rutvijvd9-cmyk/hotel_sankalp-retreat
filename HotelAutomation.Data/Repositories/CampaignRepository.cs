@@ -97,7 +97,7 @@ public sealed class CampaignRepository : ICampaignRepository
     {
         await using var conn = await _factory.OpenAsync(cancellationToken);
         using var transaction = conn.BeginTransaction();
-
+        
         var sql = "UPDATE Campaigns SET Name = @Name, IsEnabled = @IsEnabled WHERE Id = @id";
         var rows = await conn.ExecuteAsync(sql, new { campaign.Name, campaign.IsEnabled, id }, transaction);
         
@@ -138,5 +138,14 @@ public sealed class CampaignRepository : ICampaignRepository
         
         transaction.Commit();
         return rows > 0;
+    }
+
+    public async Task<int> ClearOldProgressAsync(int olderThanDays = 15, CancellationToken cancellationToken = default)
+    {
+        await using var conn = await _factory.OpenAsync(cancellationToken);
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-olderThanDays).ToString("O");
+        return await conn.ExecuteAsync(
+            "DELETE FROM ContactCampaignProgress WHERE Status = 'Sent' AND NextExecutionTime < @Cutoff;",
+            new { Cutoff = cutoff });
     }
 }

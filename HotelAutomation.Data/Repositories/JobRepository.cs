@@ -2,6 +2,7 @@ using Dapper;
 using HotelAutomation.Core.Models;
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace HotelAutomation.Data.Repositories
@@ -76,6 +77,21 @@ namespace HotelAutomation.Data.Repositories
             var cutoff = DateTimeOffset.UtcNow.AddMinutes(-windowMinutes).ToString("o");
             var count = await connection.ExecuteScalarAsync<int>(sql, new { PhoneNumber = phoneNumber, RuleId = ruleId, Cutoff = cutoff });
             return count > 0;
+        }
+
+        /// <summary>
+        /// Deletes executed ('Processed') or 'Cancelled' jobs older than the specified retention days.
+        /// Pending jobs are never deleted.
+        /// </summary>
+        public async Task<int> ClearOldJobsAsync(int olderThanDays = 15, CancellationToken ct = default)
+        {
+            using var connection = await _dbFactory.OpenAsync(ct);
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-olderThanDays).ToString("o");
+            return await connection.ExecuteAsync(@"
+                DELETE FROM ScheduledJobs 
+                WHERE Status IN ('Processed', 'Cancelled') 
+                  AND (TriggerTime < @Cutoff OR CreatedAt < @Cutoff);", 
+                new { Cutoff = cutoff });
         }
     }
 }
