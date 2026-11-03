@@ -54,8 +54,20 @@ public sealed class OutboxRepository : IOutboxRepository
     {
         await using var conn = await _factory.OpenAsync(ct);
         var cutoff = DateTimeOffset.UtcNow.AddDays(-olderThanDays).ToString("O");
+        
+        // 1. Delete or un-reference child records that point to these old OutboxMessages
+        await conn.ExecuteAsync("""
+            DELETE FROM ShortenedLinks WHERE OutboxMessageId IN (
+                SELECT Id FROM OutboxMessages WHERE Status IN ('Sent', 'Delivered', 'Read', 'Failed') AND CreatedAt < @Cutoff
+            );
+            UPDATE EventLog SET OutboxMessageId = NULL WHERE OutboxMessageId IN (
+                SELECT Id FROM OutboxMessages WHERE Status IN ('Sent', 'Delivered', 'Read', 'Failed') AND CreatedAt < @Cutoff
+            );
+            """, new { Cutoff = cutoff });
+
+        // 2. Safely delete the outbox records
         return await conn.ExecuteAsync(
-            "DELETE FROM OutboxMessages WHERE Status IN ('Sent', 'Delivered', 'Read', 'Failed') AND CreatedAt < @Cutoff",
+            "DELETE FROM OutboxMessages WHERE Status IN ('Sent', 'Delivered', 'Read', 'Failed') AND CreatedAt < @Cutoff;",
             new { Cutoff = cutoff });
     }
 }
